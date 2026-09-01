@@ -1,5 +1,44 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **A process interface: `run(program, argv, dir) -> Res[Str, Str]`.** spool's
+  `docs/needs.md` had fourteen entries, thirteen of them delivered by 1.7.1, and
+  entry 1 was the one still open: a package manager fetches by running `git
+  clone`, `git rev-list` and `git checkout`, and no builtin started a program,
+  so `src/vendor.tw` called a `run` that did not exist and every git source died
+  with `undefined variable "run"`. The signature is the one that entry asked
+  for, `Res` included.
+
+  `Ok` carries stdout, and only on an exit status of 0. Everything else is
+  `Err`: a program that could not start, a signal, a non-zero exit. stderr is
+  the `Err` message and is never merged into `Ok`, because a caller parsing
+  `git rev-list` output must not find a warning line spliced into it. `dir`
+  resolves the way every other path in the runtime resolves, and `""` means
+  beside the running program.
+
+  **There is no shell on this path and adding one later would be a regression.**
+  The program and its arguments stay separate values all the way to `execve`, so
+  an argument reaches the program as text -- which is what a package manager
+  needs, since its arguments are tags and URLs out of a manifest a stranger
+  wrote. `TestRunNeverInterpretsAnArgumentAsAShellCommand` runs `echo` with an
+  argument that would create a file if anything interpreted it, and fails if the
+  file appears.
+
+  The environment is inherited whole, deliberately: borrowing the user's
+  credentials, proxy and host keys is the reason to shell out to git rather than
+  speak the protocol, and an allowlist here would break authentication against a
+  private repository. spool's entry asked for that widening to be a considered
+  decision rather than a side effect, so it comes with an off switch:
+  `TWILL_NO_EXEC`, set to anything non-empty, makes every `run` answer `Err`
+  without starting anything -- an `Err` and not an abort, so a program degrades
+  to what it can still do.
+
+  Both checkers learned it together, so the bootstrap and the self-hosted
+  toolchain agree on its arity and its type.
+
 ## [1.7.1] - 2026-08-21
 
 A checker release. 1.7 gave the language its pattern language and its generics;

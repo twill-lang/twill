@@ -810,6 +810,9 @@ func systemsBuiltinResult(name string, args []Type) (Type, bool) {
 		return tEnum{name: "Res", args: []Type{tStr{}, tStr{}}}, true
 	case "bytes_new":
 		return tBytes{}, true
+	// run answers stdout on a clean exit, and the reason on anything else.
+	case "run":
+		return tEnum{name: "Res", args: []Type{tStr{}, tStr{}}}, true
 	case "read_file":
 		return tEnum{name: "Res", args: []Type{tStr{}, tStr{}}}, true
 	case "write_file":

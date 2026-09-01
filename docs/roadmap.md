@@ -54,7 +54,7 @@ in the sources" at the end.
 | 18 | A seeded generator that is a value rather than a global | 3 | twill, loom, warp |
 | 19 | Number parsing: `parse_i64`, `parse_f64` | 2 | twill, warp |
 | 20 | `chr(I64) -> Str` | 2 | twill, weft |
-| 21 | A process interface, or an HTTPS client | 2 | spool, warp |
+| 21 | A process interface **(delivered)**, or an HTTPS client | 2 | spool, warp |
 | 22 | `Bool` as a name that can be written in an annotation | 2 | twill, spool |
 | 23 | `Bytes` distinct from `Str` | 2 | twill, warp |
 | 24 | Iteration that does not materialise | 2 | twill, warp |
@@ -613,6 +613,15 @@ an escape sequence.
 assume it exists. It is not in the self-hosting builtin list.
 
 ### 21. A process interface, or an HTTPS client
+
+> **The process interface is delivered.** `run(program, argv, dir) -> Res[Str, Str]`
+> exists, with the signature spool entry 1 asked for. It takes an argument vector
+> and never a shell, it inherits the environment so that shelling out to git
+> keeps borrowing the user's credentials, and `TWILL_NO_EXEC` turns it off --
+> which is this entry's last paragraph answered rather than deferred. An HTTPS
+> client is still not built, so warp's half of this entry stands: the choice
+> between the two was settled in favour of the smaller surface, not deleted.
+> Everything below is what the entry said while it was open.
 
 **Two callers.** spool entry 1 (`src/vendor.tw`). warp entries 9 and 10
 (`src/datasets.tw`).

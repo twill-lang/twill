@@ -840,6 +840,9 @@ func (ip *Interp) installBuiltins() {
 	})
 	// The rest of the filesystem, and the path operations, live in fs.go.
 	ip.registerFS(def, asStr)
+	// Starting a program lives in proc.go, with the argument for why it takes an
+	// argument vector and never a shell.
+	ip.registerProc(def, asStr)
 
 	// resolve_path makes a path absolute. With two arguments it resolves the
 	// second relative to the first's directory. With one it resolves against the

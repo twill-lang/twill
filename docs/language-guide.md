@@ -1378,6 +1378,25 @@ other's argument, because the recursive one is the dangerous one and a caller
 should have to name it; `remove_all` is that name, and it succeeds on a path
 that was already gone.
 
+Programs: `run(program, argv, dir) -> Res[Str, Str]` starts a program, waits
+for it, and answers with what it wrote to stdout -- `Ok` only when it exited 0,
+and `Err` otherwise, carrying the program's name, how it ended, and its stderr.
+`dir` follows the same rule as every other path here, and `""` means beside the
+running program.
+
+**There is no shell, and there will not be one.** The program and its arguments
+stay separate values all the way to the operating system: nothing is parsed,
+split on whitespace, or glob-expanded, so an argument containing `;` is one
+argument. That is the property a package manager needs, because its arguments
+are tags and URLs out of a manifest a stranger wrote, and it is the reason no
+single-string convenience form exists.
+
+The environment is inherited whole -- which is the point, since the reason to
+shell out to `git` at all is to borrow the credentials, proxy and host keys the
+user already has. Because that is a real widening of what running a `.tw` file
+can do, setting `TWILL_NO_EXEC` to anything non-empty makes every `run` answer
+`Err` without starting anything, so a caller degrades rather than dies.
+
 `path_join`, `path_base`, `path_dir`, `path_ext`, `path_stem`,
 `path_normalize` and `path_is_abs` are string handling and touch nothing. They
 emit a forward slash on every platform -- a program's paths are written in its
