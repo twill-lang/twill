@@ -327,7 +327,11 @@ the model with the single binary for inference. Functions and closures do not
 serialise and `save` rejects them.
 
 Randomness is deterministic by default and seeded, so a program reproduces
-exactly. `seed(n)` picks the starting point.
+exactly. `seed(n)` picks the starting point. That is a claim about one machine:
+Go's `math.Exp` differs by one ULP between arm64 and amd64, so a program that
+calls `exp` can differ in the last bit across architectures, and an iterative
+method can turn that into a visible difference. `docs/CORRECTNESS.md` section 4
+has the measurement.
 
 ## What twill is built out for
 

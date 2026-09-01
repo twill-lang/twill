@@ -328,6 +328,46 @@ ones, and it has been in the suite since before this document.
 | `grad` is a shape barrier (a known open gap) | `TestGradIsAShapeBarrier` | direct case caught, grad case not |
 | Examples check clean and run | `TestExamplesRunClean` | all |
 | Forward numerics match the self-hosted implementation | the differential harness, `tools/diff/` | 443 files on `check`, 89 on `fmt` |
+| Results are bit-identical across architectures | measured by hand, arm64 against amd64 | **no** — `math.Exp` differs by an ULP; see section 4 |
+
+## 4. What "reproduces exactly" does not cover: another architecture
+
+Measured on 2026-09-01, arm64 (Apple silicon) against linux/amd64 in a
+container, the same commit built by the same Go version:
+
+```
+f64_exp(0.37)   arm64  0x1.729ebc574421cp+00
+                amd64  0x1.729ebc574421dp+00
+```
+
+One ULP, and it is not twill's arithmetic. `math.Exp` in the Go standard library
+has an architecture-specific implementation, and the two do not agree in the
+last bit. Nothing in this repository can make them agree; twill's own operations
+would have to stop using the platform's `exp` to do it.
+
+**Two of the three differences that turned up in that comparison were twill's,
+and both are fixed.** A gradient accumulation written `g += d * cotangent`
+contracted into a fused multiply-add on arm64 and not on amd64, and
+`FormatNumber` decided whether a float was whole with a conversion that is
+undefined out of range. What remains, after those, is `exp` and the operations
+built on it.
+
+**Why one bit matters here and usually does not.** A single tensor operation is
+off by an ULP and nobody can tell. An iterative method that feeds its own output
+back in is a different case: `twill-lang/heddle`'s NUTS test samples a
+half-normal posterior with a fixed seed, 500 warmup and 4,000 draws, and asks
+that the mean come back within 0.03 of `sqrt(2/pi)`. It passes on amd64 at
+27/27 and fails on arm64 by 0.032 — one trajectory diverges early, the sampler
+takes a different path, and the answer moves by a thousand times the input
+difference. That is the algorithm behaving correctly. It is what a seeded
+sampler does with any perturbation.
+
+So the README's "a program reproduces exactly" is a claim about one machine.
+Across two machines of the same architecture it holds; across architectures it
+holds for everything that does not go through a libm function, and for anything
+that does, it holds to the precision the method itself preserves. A test that
+pins a number produced by an iterative float method is a test that pins the
+architecture it was written on, and should say so.
 
 ## The gate, and why it is the whole of CI
 

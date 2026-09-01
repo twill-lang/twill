@@ -1,5 +1,68 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **A process interface: `run(program, argv, dir) -> Res[Str, Str]`.** spool's
+  `docs/needs.md` had fourteen entries, thirteen of them delivered by 1.7.1, and
+  entry 1 was the one still open: a package manager fetches by running `git
+  clone`, `git rev-list` and `git checkout`, and no builtin started a program,
+  so `src/vendor.tw` called a `run` that did not exist and every git source died
+  with `undefined variable "run"`. The signature is the one that entry asked
+  for, `Res` included.
+
+  `Ok` carries stdout, and only on an exit status of 0. Everything else is
+  `Err`: a program that could not start, a signal, a non-zero exit. stderr is
+  the `Err` message and is never merged into `Ok`, because a caller parsing
+  `git rev-list` output must not find a warning line spliced into it. `dir`
+  resolves the way every other path in the runtime resolves, and `""` means
+  beside the running program.
+
+  **There is no shell on this path and adding one later would be a regression.**
+  The program and its arguments stay separate values all the way to `execve`, so
+  an argument reaches the program as text -- which is what a package manager
+  needs, since its arguments are tags and URLs out of a manifest a stranger
+  wrote. `TestRunNeverInterpretsAnArgumentAsAShellCommand` runs `echo` with an
+  argument that would create a file if anything interpreted it, and fails if the
+  file appears.
+
+  The environment is inherited whole, deliberately: borrowing the user's
+  credentials, proxy and host keys is the reason to shell out to git rather than
+  speak the protocol, and an allowlist here would break authentication against a
+  private repository. spool's entry asked for that widening to be a considered
+  decision rather than a side effect, so it comes with an off switch:
+  `TWILL_NO_EXEC`, set to anything non-empty, makes every `run` answer `Err`
+  without starting anything -- an `Err` and not an abort, so a program degrades
+  to what it can still do.
+
+  Both checkers learned it together, so the bootstrap and the self-hosted
+  toolchain agree on its arity and its type.
+
+### Fixed
+
+- **Two numbers that were wrong on Apple silicon and right on x86.** Both were
+  standing test failures on arm64 that CI, which runs amd64, could not see.
+
+  A gradient accumulation is written `g += d * cotangent` in every backward loop
+  in `internal/tensor`, and Go permits a compiler to contract `x*y + z` into a
+  fused multiply-add. arm64 takes that permission and amd64 does not, so the
+  product kept its extra bits on one machine and not the other, and the same
+  differentiated program answered two numbers one ULP apart. The compiler's
+  gradient transform builds the multiply and the reduction as separate IR nodes,
+  so its arithmetic could not fuse, and `TestGradTransformMatchesTensorBackward`
+  compares the two bit for bit -- the test was doing its job for a year on the
+  wrong architecture to notice. Each product now rounds where the language says
+  rounding happens, an explicit conversion, and the two agree everywhere.
+  Nothing moves on amd64.
+
+  `FormatNumber` asked `n == float64(int64(n))` to decide whether a float was a
+  whole number, and converting a float outside the int64 range is undefined in
+  Go. On arm64 it saturates, so `int64(9223372036854775808.0)` is `MaxInt64`,
+  whose `float64` is the number we started with -- the guard passed and
+  `print(f64(9223372036854775807))` answered **9223372036854775807**, a value no
+  program ever held. It goes through `IntOfNum`, which bounds the range first.
+
 ## [1.7.1] - 2026-08-21
 
 A checker release. 1.7 gave the language its pattern language and its generics;

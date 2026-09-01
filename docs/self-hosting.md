@@ -308,6 +308,15 @@ generously and expect the checker work to dominate.
 environment beyond `env(name) -> Opt[Str]`. A compiler reads files, writes
 files, and reports.
 
+> **This section's "nothing else" no longer holds, and the heading was right
+> before the text was.** `run(program, argv, dir) -> Res[Str, Str]` landed after
+> spool `docs/needs.md` entry 1 spent every other entry on that list getting
+> delivered while this one stayed open: a package manager fetches by running
+> `git`, and neither route out of here was open to it. It is a process
+> interface and not a network one -- there are still no sockets -- and it takes
+> an argument vector rather than a command line, so there is no shell on the
+> path. The toolchain wants it anyway to drive a linker.
+
 *Cost to the numeric language.* This is the only item that widens the security
 surface of running a `.tw` file, and it should be said out loud: today a twill
 program can read a CSV and write a model. After this it can read and write

@@ -83,3 +83,32 @@ func TestFormatNarrowTensor(t *testing.T) {
 		t.Errorf("narrow scalar = %q", got)
 	}
 }
+
+// A float too large for an int64 must print as itself.
+//
+// FormatNumber used to ask `n == float64(int64(n))`, and converting an
+// out-of-range float to an integer is undefined in Go: arm64 saturates to
+// MaxInt64, whose float64 is the number we started with, so the guard passed
+// and 2^63 printed as 9223372036854775807 -- a value no program ever held, and
+// off by one from the one it did. amd64 yields MinInt64 there, the guard
+// failed, and the same program printed correctly. The bug was one architecture
+// only, and the test that caught it was reading as a rounding curiosity.
+func TestFormatNumberDoesNotSaturateOutsideTheInt64Range(t *testing.T) {
+	cases := []struct {
+		n    float64
+		want string
+	}{
+		{9223372036854775808.0, "9223372036854775808"},   // 2^63, one past MaxInt64
+		{-9223372036854775808.0, "-9223372036854775808"}, // MinInt64 exactly, and in range
+		{18446744073709551616.0, "18446744073709551616"}, // 2^64
+		{-18446744073709551616.0, "-18446744073709551616"},
+		{9007199254740993.0, "9007199254740992"}, // still rounds where f64 must
+		{0, "0"},
+		{-1.5, "-1.5"},
+	}
+	for _, c := range cases {
+		if got := FormatNumber(c.n); got != c.want {
+			t.Errorf("FormatNumber(%v) = %q, want %q", c.n, got, c.want)
+		}
+	}
+}

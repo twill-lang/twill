@@ -513,9 +513,19 @@ func formatNestedWith(v any, render func(float64) string) string {
 }
 
 // FormatNumber prints integers without a decimal point and trims noise.
+//
+// The whole-number test goes through IntOfNum rather than through `int64(n)`,
+// because converting a float outside the int64 range is undefined in Go and
+// each architecture answers differently. On arm64 it saturates, so
+// `int64(9223372036854775808.0)` is MaxInt64 and `float64` of that is the
+// number we started with -- the guard passed and print answered
+// 9223372036854775807, a value the program never held. On amd64 the same
+// conversion yields MinInt64, the guard failed, and the number printed
+// correctly. IntOfNum bounds the range first, so both machines print the same
+// thing.
 func FormatNumber(n float64) string {
-	if n == float64(int64(n)) {
-		return strconv.FormatInt(int64(n), 10)
+	if i, ok := IntOfNum(n); ok {
+		return strconv.FormatInt(i, 10)
 	}
 	s := strconv.FormatFloat(n, 'f', 6, 64)
 	s = strings.TrimRight(s, "0")

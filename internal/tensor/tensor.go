@@ -440,7 +440,7 @@ func broadcastBinary(a, b *Tensor, f func(x, y float64) float64,
 				ga := a.ensureGrad()
 				parallelFor(n, func(lo, hi int) {
 					for i := lo; i < hi; i++ {
-						ga[i] += da(ad[i], bd[i], out[i]) * g[i]
+						ga[i] += noFMA(da(ad[i], bd[i], out[i]), g[i])
 					}
 				})
 			}
@@ -448,7 +448,7 @@ func broadcastBinary(a, b *Tensor, f func(x, y float64) float64,
 				gb := b.ensureGrad()
 				parallelFor(n, func(lo, hi int) {
 					for i := lo; i < hi; i++ {
-						gb[i] += db(ad[i], bd[i], out[i]) * g[i]
+						gb[i] += noFMA(db(ad[i], bd[i], out[i]), g[i])
 					}
 				})
 			}
@@ -473,13 +473,13 @@ func broadcastBinary(a, b *Tensor, f func(x, y float64) float64,
 			if a.RequiresGrad {
 				ga := a.ensureGrad()
 				for i := 0; i < n; i++ {
-					ga[i] += da(ad[i], bs, out[i]) * g[i]
+					ga[i] += noFMA(da(ad[i], bs, out[i]), g[i])
 				}
 			}
 			if b.RequiresGrad {
 				gb := b.ensureGrad()
 				for i := 0; i < n; i++ {
-					gb[0] += db(ad[i], bs, out[i]) * g[i]
+					gb[0] += noFMA(db(ad[i], bs, out[i]), g[i])
 				}
 			}
 		}), nil
@@ -503,13 +503,13 @@ func broadcastBinary(a, b *Tensor, f func(x, y float64) float64,
 			if a.RequiresGrad {
 				ga := a.ensureGrad()
 				for i := 0; i < n; i++ {
-					ga[0] += da(as, bd[i], out[i]) * g[i]
+					ga[0] += noFMA(da(as, bd[i], out[i]), g[i])
 				}
 			}
 			if b.RequiresGrad {
 				gb := b.ensureGrad()
 				for i := 0; i < n; i++ {
-					gb[i] += db(as, bd[i], out[i]) * g[i]
+					gb[i] += noFMA(db(as, bd[i], out[i]), g[i])
 				}
 			}
 		}), nil
@@ -744,6 +744,26 @@ func reduceAll(a *Tensor, mean bool) *Tensor {
 		})
 	})
 }
+
+// noFMA multiplies two floats and rounds the product before the caller adds it
+// to anything.
+//
+// Go permits a compiler to contract `x*y + z` into a fused multiply-add, and
+// arm64 takes it while amd64 does not. Every gradient accumulation in this file
+// is written `g += d * cotangent`, which is exactly that shape, so on Apple
+// silicon the product kept its extra bits and on x86 it did not -- and the same
+// program answered two different numbers, one ULP apart.
+//
+// It surfaced through internal/ir: the compiler's gradient transform builds a
+// multiply and a sum_to as separate nodes, so its arithmetic could not fuse,
+// and TestGradTransformMatchesTensorBackward compares the two bit for bit. It
+// passed on amd64 and failed on arm64, which is the test doing its job.
+//
+// The explicit conversion is the language's own way to say "round here": the
+// spec allows the extra precision only where an explicit conversion does not
+// intervene. Rounding is what f64 arithmetic is defined to do, so this is the
+// answer both machines should have been giving.
+func noFMA(x, y float64) float64 { return float64(x * y) }
 
 func Sum(a *Tensor) *Tensor  { return reduceAll(a, false) }
 func Mean(a *Tensor) *Tensor { return reduceAll(a, true) }

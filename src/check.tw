@@ -1895,7 +1895,7 @@ fn systems_builtin_result(name: Str, args: Arr[Type]) -> Opt[Type] {
   if in_set(name, "mkdir_all remove_file remove_dir remove_all rename") {
     return Some(res_of(TUnit, TStr))
   }
-  if in_set(name, "temp_dir cwd read_file_at") { return Some(res_of(TStr, TStr)) }
+  if in_set(name, "temp_dir cwd read_file_at run") { return Some(res_of(TStr, TStr)) }
   if bytes.equal(name, "bytes_new") { return Some(TBytes) }
   if bytes.equal(name, "read_file") { return Some(res_of(TStr, TStr)) }
   if bytes.equal(name, "write_file") { return Some(res_of(TUnit, TStr)) }
@@ -3897,7 +3897,7 @@ fn builtin_fixed_arity(name: Str) -> I64 {
   if in_set(name, "matmul dot conv2d maximum minimum greater less greater_equal less_equal equal and or band bor xor shl shr append arr_push buf_get8 bytes_push concat dict_del dict_get dict_has dict_must f64_from_halves f64_mod f64_pow field gather is_same linear map map_leaves maxpool2d pow push save save_value write_file write_frame zip_leaves") {
     return 2
   }
-  if in_set(name, "arange buf_set8 clip dict_or dict_set fold linspace slice where with_field") {
+  if in_set(name, "arange buf_set8 clip dict_or dict_set fold linspace run slice where with_field") {
     return 3
   }
   -1

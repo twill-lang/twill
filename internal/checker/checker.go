@@ -3555,6 +3555,8 @@ var builtinNames = map[string]bool{
 	// Systems I/O and string parsing.
 	"write_out": true, "write_err": true, "read_file": true, "write_file": true,
 	"list_dir": true, "resolve_path": true, "str_quote": true, "i64_of_str": true,
+	// Starting a program. spool docs/needs.md entry 1.
+	"run": true,
 	// Diagnostics, seeded rng, identity, argv and value persistence.
 	"emit_line": true, "rng_seed": true, "rng_uniform": true, "rng_normal": true,
 	"rng_perm": true, "is_same": true, "args": true, "save_value": true, "load_value": true,
@@ -3615,5 +3617,5 @@ var builtinArity = map[string]int{
 	"save_value": 2, "write_file": 2, "write_frame": 2, "zip_leaves": 2,
 	// ternary
 	"arange": 3, "buf_set8": 3, "read_file_at": 3, "clip": 3, "dict_or": 3, "dict_set": 3, "fold": 3,
-	"linspace": 3, "slice": 3, "where": 3, "with_field": 3,
+	"linspace": 3, "run": 3, "slice": 3, "where": 3, "with_field": 3,
 }
