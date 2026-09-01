@@ -64,3 +64,51 @@ func TestSumIsIdenticalAtEveryCoreCount(t *testing.T) {
 		}
 	}
 }
+
+// The same claim, one machine at a time: a gradient accumulation must not keep
+// the extra bits of a fused multiply-add.
+//
+// Go lets a compiler contract `x*y + z` into one fused operation, and arm64
+// takes it where amd64 does not, so `g += d * cotangent` -- the shape every
+// backward loop in this package is written in -- answered differently on Apple
+// silicon than on x86. Nothing here varies the architecture; what it pins is
+// that the accumulation agrees with the same arithmetic done in two rounded
+// steps, which is what a machine without FMA does and what internal/ir's
+// gradient transform builds out of separate nodes.
+func TestGradientAccumulationRoundsEveryProduct(t *testing.T) {
+	const n = 1024
+	s0 := Leaf([]float64{1.7320508075688772}, nil) // a scalar broadcast over the vector
+	xs := make([]float64, n)
+	ws := make([]float64, n)
+	for i := range xs {
+		// Magnitudes chosen so an unrounded product survives into the sum, and a
+		// cotangent that is not 1: multiplying by one rounds the same either way
+		// and would make this test unable to fail.
+		xs[i] = math.Sin(float64(i)*0.31+0.2) * (1 + float64(i%7)/3)
+		ws[i] = math.Cos(float64(i)*0.17+0.9) * (1 + float64(i%5)/7)
+	}
+	x := New(append([]float64(nil), xs...), []int{n})
+	w := New(append([]float64(nil), ws...), []int{n})
+
+	prod, err := Mul(s0, x)
+	if err != nil {
+		t.Fatal(err)
+	}
+	weighted, err := Mul(prod, w)
+	if err != nil {
+		t.Fatal(err)
+	}
+	Sum(weighted).Backward()
+
+	// What the loop should have computed: d/ds0 is the sum of x_i * w_i, each
+	// product rounded to f64 before it is added, exactly as `float64(a*b)`
+	// spells it. Summed here in the same order the accumulator walks.
+	var want float64
+	for i := range xs {
+		want += float64(xs[i] * ws[i])
+	}
+	if got := s0.Grad[0]; math.Float64bits(got) != math.Float64bits(want) {
+		t.Errorf("d/ds0 = %v, want %v (bits %#x vs %#x): a product reached the accumulator unrounded",
+			got, want, math.Float64bits(got), math.Float64bits(want))
+	}
+}

@@ -39,6 +39,30 @@
   Both checkers learned it together, so the bootstrap and the self-hosted
   toolchain agree on its arity and its type.
 
+### Fixed
+
+- **Two numbers that were wrong on Apple silicon and right on x86.** Both were
+  standing test failures on arm64 that CI, which runs amd64, could not see.
+
+  A gradient accumulation is written `g += d * cotangent` in every backward loop
+  in `internal/tensor`, and Go permits a compiler to contract `x*y + z` into a
+  fused multiply-add. arm64 takes that permission and amd64 does not, so the
+  product kept its extra bits on one machine and not the other, and the same
+  differentiated program answered two numbers one ULP apart. The compiler's
+  gradient transform builds the multiply and the reduction as separate IR nodes,
+  so its arithmetic could not fuse, and `TestGradTransformMatchesTensorBackward`
+  compares the two bit for bit -- the test was doing its job for a year on the
+  wrong architecture to notice. Each product now rounds where the language says
+  rounding happens, an explicit conversion, and the two agree everywhere.
+  Nothing moves on amd64.
+
+  `FormatNumber` asked `n == float64(int64(n))` to decide whether a float was a
+  whole number, and converting a float outside the int64 range is undefined in
+  Go. On arm64 it saturates, so `int64(9223372036854775808.0)` is `MaxInt64`,
+  whose `float64` is the number we started with -- the guard passed and
+  `print(f64(9223372036854775807))` answered **9223372036854775807**, a value no
+  program ever held. It goes through `IntOfNum`, which bounds the range first.
+
 ## [1.7.1] - 2026-08-21
 
 A checker release. 1.7 gave the language its pattern language and its generics;
