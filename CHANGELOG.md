@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-09-01
+
+The release the satellites were waiting for: `twill-lang/spool` cannot fetch a
+package without a process interface and `twill-lang/warp` cannot fetch a
+dataset, and both had branches ready against an unreleased compiler. Minor
+rather than patch because `run` is a new builtin; nothing in 1.7.1 changes
+meaning.
+
 ### Added
 
 - **A process interface: `run(program, argv, dir) -> Res[Str, Str]`.** spool's
