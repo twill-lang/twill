@@ -20,7 +20,7 @@ import (
 // take an HTTPS client instead; a process interface is the smaller surface and
 // the one a self-hosted toolchain needs anyway to drive a linker.
 //
-// WHY THERE IS NO SHELL HERE, EVER
+// # WHY THERE IS NO SHELL HERE, EVER
 //
 // The program and its arguments are separate values and stay separate all the
 // way to `execve`. Nothing here parses a command line, splits on whitespace,
@@ -32,7 +32,7 @@ import (
 // conservative. A convenience wrapper taking one string must not be added later
 // for the same reason -- see the test that pins this.
 //
-// WHAT IT REFUSES
+// # WHAT IT REFUSES
 //
 // Running a program is a bigger widening of what a `.tw` file can do than
 // anything else in the runtime, and spool's entry says so itself: it should be
@@ -49,7 +49,7 @@ import (
 // keys. An allowlist here would silently break authentication against a private
 // repository, which is the case the feature exists for.
 //
-// WHAT COUNTS AS A FAILURE
+// # WHAT COUNTS AS A FAILURE
 //
 // Ok carries stdout, and only when the program exited 0. Anything else is Err:
 // a program that could not start, one killed by a signal, one that exited
