@@ -373,10 +373,10 @@ asserting the surviving branch's gradient rather than only that it does not cras
 
 ---
 
-## Open
+## 11. A function defined twice was silently the second one
 
-**A function defined twice is silently the second one.** Neither checker says
-anything, and the program runs the later definition:
+**Symptom.** Neither checker said anything, and the program ran the later
+definition:
 
 ```rust
 mode systems
@@ -386,18 +386,48 @@ fn main() { print(f()) }
 main()                     // second
 ```
 
-This is recorded because it cost a real one. `twill-lang/spool` replaced two
-insertion sorts with calls to the new builtin and left the old bodies in the
-same files; both files then defined the function twice and both kept running
-the insertion sort. The tests passed, the source gate passed, CI passed, and the
-commit message said four sorts had been replaced when two had.
-`twill-lang/spool#4` is the correction.
+**What it cost.** `twill-lang/spool` replaced four insertion sorts with calls to
+the new `sort` builtin. Two of the four had their one-line replacements written
+*above* the bodies they were meant to replace, and those bodies stayed. Both
+files then defined the function twice, both kept running the insertion sort, and
+the commit said four sorts had been replaced when two had. The tests passed, the
+source gate passed and CI passed, because nothing in any of them looked at
+whether a name was defined twice. `twill-lang/spool#4` is the correction.
 
-A redefinition inside one file is almost always an edit that went wrong: the
-cases where somebody means it -- a conditional definition, a platform variant --
-do not exist in this language, because there is no conditional compilation. So
-the diagnosis is cheap and the false-positive rate should be zero. Refusing it
-in the checker is the obvious fix and is not written yet.
+**Root cause.** The prelude pass that registers every top-level function name
+before any body is checked did exactly that and no more: a second `FnDecl` of a
+name already in scope simply rebound it. The evaluator agreed, last one winning,
+so the two halves of the language were consistent with each other and wrong
+together.
+
+**Fix.** That same pass now keeps the line each name was first declared on and
+reports the second:
+
+```
+f is already defined on line 1; the later definition is the one that runs,
+so the earlier one is dead. Delete whichever is stale, or rename one.
+```
+
+It names the winner, because the whole failure is someone believing the other
+one won, and it points at the redefinition rather than the original, which is
+the line to go look at. Both checkers carry it and the two messages are
+byte-identical, which the differential harness requires.
+
+There is no conditional compilation in this language, so the readings under
+which somebody means a second declaration -- a platform variant, a debug
+build -- do not exist, and the false-positive rate should be zero. It measured
+zero: 458 `.tw` files across `src`, `std`, `testdata`, `examples` and the six
+satellites, no hits. Against `spool@HEAD~1:src/strutil.tw`, the real file before
+the fix, it reports line 340.
+
+**Regression test.** `internal/checker/redefine_test.go`: the message, its line
+number, its severity, one report per redefinition, and the two things that must
+not trip it -- a local shadowing a function name, and a function deliberately
+shadowing a builtin, which twill supports.
+
+---
+
+## Open
 
 **Three ways the self-hosted evaluator answers differently from the bootstrap.**
 Found on 2026-09-03 while making the two implementations of `sort` agree, and

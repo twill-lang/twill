@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **A function defined twice in one file is now refused.** Both checkers report
+  the second declaration, saying which one runs:
+
+  ```
+  f is already defined on line 1; the later definition is the one that runs,
+  so the earlier one is dead. Delete whichever is stale, or rename one.
+  ```
+
+  The evaluator took the last definition and said nothing, so a replacement
+  written above the body it was meant to replace left the old body running and
+  the file read as though it did not. spool shipped exactly that in two files
+  during the 1.9.0 sort adoption, through a passing test suite, a passing source
+  gate and passing CI. There is no conditional compilation in this language, so
+  a second declaration of one name in one file is an edit that went wrong; a
+  sweep of 458 `.tw` files across the ecosystem found no case that was not.
+  `docs/BUGS.md` entry 11.
+
 ## [1.9.0] - 2026-09-03
 
 The release the ecosystem's eleven hand-written sorts were waiting for. Minor
