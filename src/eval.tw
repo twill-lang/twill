@@ -2841,49 +2841,183 @@ fn bi_sorting(name: Str, args: Arr[Value], line: I64) -> Res[Value, RuntimeError
   lift_v(tensor.argsort_axis(t, axis, descending), line)
 }
 
-# The list branch of `sort`: a list of strings sorted bytewise, ascending or
-# descending. Mirrors sortStringList in the Go bootstrap. The input list is left
-# untouched; a fresh list is returned.
+# The list branch of `sort`. Mirrors sortList in the Go bootstrap, and has to:
+# two implementations of one builtin that disagree is a program that behaves
+# differently depending on which binary ran it.
+#
+# Three forms, decided by the second argument:
+#
+#   sort(xs)              ascending, by the elements' own order
+#   sort(xs, true)        descending
+#   sort(xs, fn(a, b))    by the caller's comparison
+#
+# Strings order bytewise (docs/language-guide.md, Strings -> Ordering) and
+# numbers order as numbers, I64 and F64 alike. Anything else needs the
+# comparison. Every form is stable, which skein's vocabulary depends on: token
+# ids are assigned from a sorted order, so an unstable sort would make them a
+# function of the sort rather than of the corpus.
+#
+# The input list is left untouched; a fresh list is returned.
 fn sort_string_list(name: Str, l: ListVal, args: Arr[Value], line: I64) -> Res[Value, RuntimeError] {
   if not bytes.equal(name, "sort") {
     return Err(runtime_error(line, bytes.concat(name, " is defined on tensors, not a list")))
   }
   if len(args) > 2 {
-    return Err(runtime_error(line, "sort on a list takes the list and an optional descending flag"))
+    return Err(runtime_error(line, "sort on a list takes the list and one of a descending flag or a comparison"))
   }
+
   let descending: Bool = false
+  let cmp: Opt[Value] = None
   if len(args) == 2 {
     match args[1] {
       VNum(x) => descending = x != 0.0,
+      VInt(i) => descending = i != 0,
       VBool(b) => descending = b,
-      _ => return Err(runtime_error(line, "sort: the second argument on a list is a descending flag (a bool)")),
+      VClosure(_) => cmp = Some(args[1]),
+      VBuiltin(_) => cmp = Some(args[1]),
+      _ => return Err(runtime_error(line, "sort: the second argument on a list is a descending flag (a bool) or a comparison (a function)")),
     }
   }
-  let strs: Arr[Str] = arr_new()
+
+  let items: Arr[Value] = arr_new()
   let i: I64 = 0
   while i < len(l.items) {
-    match l.items[i] {
-      VStr(s) => push(strs, s),
-      _ => return Err(runtime_error(line, "sort on a list expects every element to be a string")),
+    push(items, l.items[i])
+    i = i + 1
+  }
+
+  # `kind` is what the elements are: 0 a comparison decides, 1 strings, 2
+  # numbers. Read once here rather than per comparison, so a list that cannot be
+  # ordered says so before any work rather than part way through it.
+  let kind: I64 = 0
+  match cmp {
+    Some(_) => kind = 0,
+    None => kind = list_order_kind(items, line)?,
+  }
+
+  let sorted: Arr[Value] = merge_sort_values(items, kind, cmp, descending, line)?
+  Ok(VList(ListVal { items: sorted }))
+}
+
+# What order a list of one kind of element has, or the reason it has none.
+# Mirrors listOrder in the Go bootstrap, error text included.
+fn list_order_kind(items: Arr[Value], line: I64) -> Res[I64, RuntimeError] {
+  if len(items) == 0 { return Ok(1) }
+  let strs: I64 = 0
+  let nums: I64 = 0
+  let i: I64 = 0
+  while i < len(items) {
+    match items[i] {
+      VStr(_) => strs = strs + 1,
+      VNum(_) => nums = nums + 1,
+      VInt(_) => nums = nums + 1,
+      _ => unit,
     }
     i = i + 1
   }
-  let sorted: Arr[Str] = canon_sort(strs)
-  let out: Arr[Value] = arr_new()
-  if descending {
-    let k: I64 = len(sorted) - 1
-    while k >= 0 {
-      push(out, VStr(sorted[k]))
-      k = k - 1
-    }
-  } else {
-    let j: I64 = 0
-    while j < len(sorted) {
-      push(out, VStr(sorted[j]))
-      j = j + 1
-    }
+  if strs == len(items) { return Ok(1) }
+  if nums == len(items) { return Ok(2) }
+  if strs + nums == len(items) {
+    return Err(runtime_error(line, "sort on a list of mixed strings and numbers has no order; sort them apart, or pass a comparison"))
   }
-  Ok(VList(ListVal { items: out }))
+  Err(runtime_error(line, "sort on a list orders strings and numbers; for anything else pass a comparison, as sort(xs, fn(a, b) = ...)"))
+}
+
+# Does a come before b, under whichever order this sort is running.
+fn value_before(a: Value, b: Value, kind: I64, cmp: Opt[Value], line: I64) -> Res[Bool, RuntimeError] {
+  match cmp {
+    Some(f) => {
+      let two: Arr[Value] = arr_new()
+      push(two, a)
+      push(two, b)
+      return truthy(apply(f, two, line)?, line)
+    },
+    None => unit,
+  }
+  if kind == 1 {
+    let sa: Str = match a { VStr(x) => x, _ => "" }
+    let sb: Str = match b { VStr(x) => x, _ => "" }
+    return Ok(canon_str_less(sa, sb))
+  }
+  let na: F64 = match rank0_number(a) { Some(x) => x, None => 0.0 }
+  let nb: F64 = match rank0_number(b) { Some(x) => x, None => 0.0 }
+  Ok(na < nb)
+}
+
+# A bottom-up merge sort over values, stable, and the only sort in this file that
+# a comparison can drive.
+#
+# Merge rather than the insertion sort `canon_sort` uses, because this one runs
+# on whatever a program hands it: a vocabulary is tens of thousands of entries
+# and quadratic there is minutes. Stability is the property every caller of this
+# builtin was promised.
+fn merge_sort_values(items: Arr[Value], kind: I64, cmp: Opt[Value], descending: Bool, line: I64) -> Res[Arr[Value], RuntimeError] {
+  let n: I64 = len(items)
+  if n < 2 { return Ok(items) }
+
+  let buf: Arr[Value] = arr_new()
+  let z: I64 = 0
+  while z < n {
+    push(buf, items[0])
+    z = z + 1
+  }
+
+  let width: I64 = 1
+  while width < n {
+    let lo: I64 = 0
+    while lo < n {
+      let mid: I64 = lo + width
+      let hi: I64 = lo + width + width
+      if mid > n { mid = n }
+      if hi > n { hi = n }
+      let a: I64 = lo
+      let b: I64 = mid
+      let o: I64 = lo
+      while o < hi {
+        let take_left: Bool = false
+        if a < mid and b < hi {
+          # `before(right, left)` rather than `not before(left, right)`, so a
+          # tie takes the left element and the sort stays stable.
+          let right_first: Bool = value_before(items[b], items[a], kind, cmp, line)?
+          take_left = not right_first
+        } else {
+          take_left = a < mid
+        }
+        if take_left {
+          buf[o] = items[a]
+          a = a + 1
+        } else {
+          buf[o] = items[b]
+          b = b + 1
+        }
+        o = o + 1
+      }
+      lo = hi
+    }
+    let k: I64 = 0
+    while k < n {
+      items[k] = buf[k]
+      k = k + 1
+    }
+    width = width + width
+  }
+
+  if not descending { return Ok(items) }
+  # Reversing a stable ascending sort is not the same as sorting descending: it
+  # reverses ties too. The Go bootstrap sorts with the comparison flipped
+  # instead, which keeps ties in input order, so this does the same.
+  let out: Arr[Value] = arr_new()
+  let r: I64 = 0
+  while r < n {
+    push(out, items[0])
+    r = r + 1
+  }
+  let g: I64 = 0
+  while g < n {
+    out[g] = items[n - 1 - g]
+    g = g + 1
+  }
+  Ok(out)
 }
 
 # topk/argtopk need k, so they take (tensor, k[, axis[, smallest]]). The flag is

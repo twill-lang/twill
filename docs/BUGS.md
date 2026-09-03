@@ -375,6 +375,41 @@ asserting the surviving branch's gradient rather than only that it does not cras
 
 ## Open
 
+**Three ways the self-hosted evaluator answers differently from the bootstrap.**
+Found on 2026-09-03 while making the two implementations of `sort` agree, and
+none of them is caused by that change: the same three reproduce against `main`'s
+binary. They are recorded together because they have one cause between them,
+which is that nothing compares the two implementations at *runtime*. The
+differential harness in `tools/diff/` compares `check` and `fmt` over 443 files
+and says nothing about what a program prints.
+
+```rust
+mode systems
+fn main() {
+  let a: Arr[I64] = [3, 1, 2]
+  print(str(a))          // bootstrap: [3, 1, 2]   self-hosted: tensor([3, 1, 2], shape=[3])
+  let s: Str = "abc"
+  print(str(len(s)))     // bootstrap: 3           self-hosted: runtime error: len expects a tensor or list
+}
+main()                   // needed: `twill run` calls main, `src/cli` does not
+```
+
+1. **A numeric list literal under an `Arr[I64]` annotation becomes a tensor.**
+   The annotation is honoured by the bootstrap and ignored by `src/eval.tw`, so
+   every list operation on it takes the tensor path instead. `Arr[Str]` is
+   correct in both.
+2. **`len` refuses a `Str`.** The bootstrap answers its byte length, which is
+   what `docs/language-guide.md` documents and what `src/lex.tw` itself relies
+   on when the bootstrap runs it.
+3. **`twill run <file>` calls `main` and the self-hosted CLI does not.** A
+   systems-mode program run through `src/cli/main.tw` defines `main` and exits
+   without calling it, so it prints nothing and succeeds.
+
+The first two are wrong answers rather than refusals, which is the worse kind:
+a program that sorts a list of numbers under the self-hosted evaluator gets a
+tensor sort and no error. Fixing them is separate work from the sort, and the
+thing that would have caught all three is a differential harness over `run`.
+
 **`einsum` refuses a label repeated within one operand.** `einsum("ii->", A)`,
 the trace, returns "repeated label \"i\" within one operand is not supported".
 This is a refusal rather than a wrong answer, so it is a limitation and not a
