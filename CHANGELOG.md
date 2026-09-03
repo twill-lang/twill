@@ -2,6 +2,39 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`sort` orders more than strings, and takes a comparison.** `docs/roadmap.md`
+  ranks missing features by how many of six independently written codebases hit
+  each wall, and this one had written its own sort five times over: spool four
+  insertion sorts, bobbin two, weft one, loom one, and skein a bottom-up merge
+  sort over an index array. Only a list of strings could delegate to the builtin
+  -- `sort([3, 1, 2])` on an `Arr[I64]` failed with "sort on a list expects every
+  element to be a string" -- so none of them could.
+
+  ```rust
+  sort(xs)                          # ascending, by the elements' own order
+  sort(xs, true)                    # descending
+  sort(xs, fn(a, b) = a.n < b.n)    # by a comparison: does a come before b?
+  ```
+
+  Numbers order as numbers, `I64` and `F64` alike. A list of anything else needs
+  the comparison, and a list mixing strings with numbers says so rather than
+  picking an order nobody asked for.
+
+  **Every form is stable**, which is a correctness property here rather than a
+  nicety: skein assigns token ids from a sorted vocabulary, so an unstable sort
+  would make the ids a function of the sort's internals rather than of the
+  corpus. The test that pins it is deliberately twenty-four elements long, and
+  the first version of it was not -- three elements with one tie passed against
+  `sort.Slice`, because Go falls back to insertion sort under about a dozen
+  elements and insertion sort happens to be stable.
+
+  The comparison takes two elements rather than a key, because the case that
+  needs it most is skein's: sorting an index array by comparing through a second
+  array the closure captures. That was only expressible once function values
+  landed in 1.7.
+
 ## [1.8.0] - 2026-09-01
 
 The release the satellites were waiting for: `twill-lang/spool` cannot fetch a

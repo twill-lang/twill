@@ -468,7 +468,9 @@ function is a place to put that sentence.
 
 `sort` applies this order directly to a list of strings: `sort(["b", "a"])` is
 `["a", "b"]`, and a truthy second argument sorts descending. It returns a new
-list and leaves its argument untouched.
+list and leaves its argument untouched. It orders a list of numbers the same
+way, and anything else through a comparison the caller supplies -- see
+**Sorting a list** below.
 
 A comparison between a `Str` and a value of another type is still an error. The
 ordering is defined on bytes, and there is no byte order between a string and a
@@ -1362,6 +1364,39 @@ matters for model governance and audit.
 
 Lists / higher-order: `range(...)`, `list(...)`, `map(f, xs)`, `zip(...)`,
 `fold(f, init, xs)`, `append(xs, x)`, `enumerate(xs)`, `len(x)`.
+
+### Sorting a list
+
+```rust
+sort(xs)                     # ascending, by the elements' own order
+sort(xs, true)               # descending
+sort(xs, fn(a, b) = a.n < b.n)   # by a comparison: does a come before b?
+```
+
+Two kinds of element have an order of their own: strings, by the byte
+comparison above, and numbers, whether they arrived as `I64` or `F64`. Anything
+else -- records, lists, an index into a second array -- needs the caller to say
+what the order is, and a list that mixes strings with numbers says so rather
+than picking one.
+
+**Every form is stable.** Elements the comparison calls equal come back in the
+order they went in. That is not a nicety: `skein` assigns token ids from a
+sorted vocabulary, so an unstable sort would make the ids depend on the sort's
+internals rather than on the corpus, and building the same vocabulary twice
+would give two answers.
+
+The comparison takes the two elements rather than a key, because the case that
+needs it most is sorting one array by comparing through another:
+
+```rust
+let words: Arr[Str] = ["kilo", "a", "the", "be"]
+let idx: Arr[I64] = [0, 1, 2, 3]
+sort(idx, fn(x, y) = len(words[x]) < len(words[y]))   # [1, 3, 2, 0]
+```
+
+A comparison that is not a consistent order produces an order nobody wanted; it
+cannot corrupt the list or fail the sort. `sort` returns a new list either way
+and never reorders its argument.
 
 Trees (tensors nested in lists/records): `map_leaves(f, tree)` applies `f` to
 every tensor leaf; `zip_leaves(f, trees)` walks a list of same-shaped trees in

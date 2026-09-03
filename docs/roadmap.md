@@ -38,7 +38,7 @@ in the sources" at the end.
 | 2 | Function values with a declared type, as parameters and struct fields | 6 | twill, spool, loom, bobbin, weft, warp |
 | 3 | `enum` with payloads and exhaustive `match` | 5 | twill, spool, loom, bobbin, warp |
 | 4 | The bitwise operators, spelled, and `shr` on a negative `I64` defined | 5 | twill, spool, loom, weft, warp |
-| 5 | A sort, or a comparison-function parameter | 5 | twill, spool, loom, bobbin, weft |
+| 5 | A sort, or a comparison-function parameter **(delivered)** | 5 | twill, spool, loom, bobbin, weft |
 | 6 | Writing files, directories, and `stat` | 5 | twill, spool, bobbin, weft, warp |
 | 7 | A test runner | 5 | twill, loom, bobbin, weft, warp |
 | 8 | `F64` as a first-class systems-mode type | 4 | twill, loom, weft, warp |
@@ -216,6 +216,14 @@ Cheap to fix. Writing the answer down costs one paragraph in
 `docs/language-guide.md`. Deciding the answer is the work.
 
 ### 5. A sort, or a comparison-function parameter
+
+> **Delivered.** `sort` orders numbers as well as strings and takes a comparison
+> as its second argument: `sort(xs, fn(a, b) = a.n < b.n)`. Every form is stable.
+> The comparison takes two elements rather than a key, which is what skein's
+> index sort needs, and it only became expressible once function values landed
+> (item 2). Everything below is what this entry said while it was open, and the
+> eleven hand-written sorts it counts are still in those repositories until each
+> one adopts the builtin.
 
 **Five callers.** spool entry 12, loom entry 11, bobbin entry 9, weft entry 8,
 and twill, which does not file an entry and has three of them anyway.
