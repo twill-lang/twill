@@ -713,6 +713,16 @@ fn check(prog: ast.Program) -> Arr[Diagnostic] {
   #
   # The declaration is not typed here, only named: check_fn_def does the real
   # work when the walk reaches it, and this is about knowing the name exists.
+  #
+  # A name declared twice in one file is refused here. The evaluator takes the
+  # last definition, silently, which reads as the first one having been replaced
+  # when it has only been shadowed: twill-lang/spool#4 fixed two functions whose
+  # replacements were written above the bodies they were meant to replace, and
+  # which kept running the old ones through a passing test suite, a passing
+  # source gate and passing CI. There is no conditional compilation in this
+  # language, so a second declaration of one name in one file is an edit that
+  # went wrong every time.
+  let first_line: Dict[Str, I64] = dict_new()
   for s in prog.body {
     match s {
       # A declaration also wins over a builtin of the same name. Builtins were
@@ -723,14 +733,23 @@ fn check(prog: ast.Program) -> Arr[Diagnostic] {
       # file it was called from, and reported the builtin's arity against the
       # user's function.
       SFn(fd) => {
-        match env_get(env, fd.name) {
-          Some(t) => {
-            match t {
-              TBuiltin(_) => env_define(env, fd.name, TUnknown),
-              _ => unit,
+        match dict_get(first_line, fd.name) {
+          Some(at) => report(c, fd.line, bytes.concat(fd.name,
+            bytes.concat(" is already defined on line ",
+            bytes.concat(str(at),
+              "; the later definition is the one that runs, so the earlier one is dead. Delete whichever is stale, or rename one.")))),
+          None => {
+            dict_set(first_line, fd.name, fd.line)
+            match env_get(env, fd.name) {
+              Some(t) => {
+                match t {
+                  TBuiltin(_) => env_define(env, fd.name, TUnknown),
+                  _ => unit,
+                }
+              },
+              None => env_define(env, fd.name, TUnknown),
             }
           },
-          None => env_define(env, fd.name, TUnknown),
         }
       },
       _ => unit,

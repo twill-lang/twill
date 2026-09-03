@@ -143,8 +143,23 @@ func (c *checker) prelude(prog *ast.Program) *checkEnv {
 	// above the declaration, since reaching the declaration rebinds the name.
 	// That made a shadow legal or illegal depending on where in the file it was
 	// called from, and reported the builtin's arity against the user's function.
+	//
+	// A name declared twice in one file is refused here. The evaluator takes the
+	// last definition, silently, which reads as the first one having been
+	// replaced when it has only been shadowed: twill-lang/spool#4 fixed two
+	// functions that had their replacements written above the bodies they were
+	// meant to replace, and kept running the old ones through a passing test
+	// suite, a passing source gate and passing CI. There is no conditional
+	// compilation in this language, so a second declaration of one name in one
+	// file is an edit that went wrong every time.
+	firstLine := map[string]int{}
 	for _, s := range prog.Body {
 		if fn, ok := s.(*ast.FnDecl); ok {
+			if at, dup := firstLine[fn.Name]; dup {
+				c.report(fn.Line, "%s is already defined on line %d; the later definition is the one that runs, so the earlier one is dead. Delete whichever is stale, or rename one.", fn.Name, at)
+				continue
+			}
+			firstLine[fn.Name] = fn.Line
 			t, seen := env.get(fn.Name)
 			if _, isBuiltin := t.(tBuiltin); !seen || isBuiltin {
 				env.define(fn.Name, tUnknown{})
