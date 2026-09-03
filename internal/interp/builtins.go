@@ -1335,16 +1335,15 @@ func (ip *Interp) installBuiltins() {
 			if len(a) == 0 || len(a) > 3 {
 				return nil, fmt.Errorf("%s expects (tensor[, axis[, descending]])", name)
 			}
-			// A list of strings sorts by the bytewise-unsigned lexicographic
-			// order docs/language-guide.md pins (Go's own string comparison), so
-			// the ecosystem's hand-written string sorts can delegate here. A list
-			// has no axis, so the optional second argument is the descending flag
-			// directly. `argsort` on strings has no defined result and is refused.
+			// A list sorts by its elements' own order, or by a comparison the
+			// caller supplies. A list has no axis, so the optional second
+			// argument is the descending flag or the comparator directly.
+			// `argsort` on a list has no defined result and is refused.
 			if l, ok := a[0].(*value.List); ok {
 				if name != "sort" {
 					return nil, fmt.Errorf("%s is defined on tensors, not a list", name)
 				}
-				return sortStringList(l, a[1:])
+				return ip.sortList(l, a[1:])
 			}
 			t, err := asTensor(a[0], name)
 			if err != nil {
@@ -3211,43 +3210,112 @@ func asTensor(v value.Value, who string) (*tensor.Tensor, error) {
 	return nil, fmt.Errorf("%s expects a tensor/number", who)
 }
 
-// sortStringList sorts a list of strings by the bytewise-unsigned lexicographic
-// order (docs/language-guide.md, Strings -> Ordering), which is exactly Go's
-// string comparison, and returns a new list. `rest` is the trailing arguments
-// after the list; at most one, read as a descending flag. The input is left
-// untouched, the same as the tensor sort, so a caller's list is never reordered
-// under it.
-func sortStringList(l *value.List, rest []value.Value) (value.Value, error) {
+// sortList orders a list: by its elements' own order, or by a comparison the
+// caller supplies.
+//
+// `rest` is the trailing arguments after the list, at most one, and what it is
+// decides which sort this is:
+//
+//	sort(xs)              ascending, by the element type's order
+//	sort(xs, true)        descending
+//	sort(xs, fn(a, b))    by the caller's comparison, which answers whether a
+//	                      comes before b
+//
+// docs/roadmap.md ranked this by how many codebases wrote their own: bobbin has
+// two insertion sorts, weft one, spool four, loom one, and skein a merge sort
+// over an index array. Only strings could delegate here before, so none of them
+// could. `sort([3, 1, 2])` failed with "expects every element to be a string",
+// which is the error this replaces.
+//
+// STABLE, IN EVERY FORM. Equal elements keep the order they arrived in. That is
+// not a detail for skein: `vocab.sort_index` assigns token ids from the sorted
+// order, so an unstable sort would make the ids depend on the sort's internals
+// rather than on the data, and a vocabulary built twice from one corpus would
+// differ. Stability costs nothing here and buys that.
+//
+// The input is left untouched, the same as the tensor sort, so a caller's list
+// is never reordered under it.
+func (ip *Interp) sortList(l *value.List, rest []value.Value) (value.Value, error) {
+	items := make([]value.Value, len(l.Items))
+	copy(items, l.Items)
+
 	descending := false
+	var cmp value.Value
 	if len(rest) == 1 {
-		switch rest[0].(type) {
-		case value.Num, value.Bool:
+		switch v := rest[0].(type) {
+		case value.Num, value.Bool, value.Int:
 			descending = value.Truthy(rest[0])
+		case *value.Closure, *value.Builtin:
+			cmp = v
 		default:
-			return nil, fmt.Errorf("sort: the second argument on a list is a descending flag (a bool)")
+			return nil, fmt.Errorf("sort: the second argument on a list is a descending flag (a bool) or a comparison (a function)")
 		}
 	} else if len(rest) > 1 {
-		return nil, fmt.Errorf("sort on a list takes the list and an optional descending flag")
+		return nil, fmt.Errorf("sort on a list takes the list and one of a descending flag or a comparison")
 	}
-	out := make([]value.Value, len(l.Items))
-	strs := make([]string, len(l.Items))
-	for i, it := range l.Items {
-		s, ok := it.(value.Str)
-		if !ok {
-			return nil, fmt.Errorf("sort on a list expects every element to be a string")
+
+	if cmp != nil {
+		// A comparison that is wrong about its own order cannot corrupt anything
+		// here -- SliceStable asks and believes, and the worst a bad answer does
+		// is an order the caller did not want. So there is nothing to validate
+		// and nothing to refuse. A comparison that *fails* raises out of Apply
+		// the way any other call in the program does.
+		sort.SliceStable(items, func(i, j int) bool {
+			return value.Truthy(ip.Apply(cmp, []value.Value{items[i], items[j]}, 0))
+		})
+		return &value.List{Items: items}, nil
+	}
+
+	less, err := listOrder(items)
+	if err != nil {
+		return nil, err
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		if descending {
+			return less(j, i)
 		}
-		strs[i] = string(s)
+		return less(i, j)
+	})
+	return &value.List{Items: items}, nil
+}
+
+// listOrder is the order a list of one kind of element sorts in, or the reason
+// there is not one.
+//
+// Two kinds have an order: strings, by the bytewise-unsigned comparison
+// docs/language-guide.md pins (which is Go's own), and numbers, whether they
+// arrived as I64 or F64. A list that mixes them has no order this can guess at,
+// and a list of anything else -- records, lists, functions -- needs the caller
+// to say what the order is, which is what the comparison form is for. Both say
+// so rather than picking something.
+func listOrder(items []value.Value) (func(i, j int) bool, error) {
+	if len(items) == 0 {
+		return func(i, j int) bool { return false }, nil
 	}
-	sort.Strings(strs)
-	if descending {
-		for i, j := 0, len(strs)-1; i < j; i, j = i+1, j-1 {
-			strs[i], strs[j] = strs[j], strs[i]
+	strs := 0
+	nums := 0
+	for _, it := range items {
+		switch it.(type) {
+		case value.Str:
+			strs++
+		case value.Num, value.Int:
+			nums++
 		}
 	}
-	for i, s := range strs {
-		out[i] = value.Str(s)
+	switch {
+	case strs == len(items):
+		return func(i, j int) bool { return string(items[i].(value.Str)) < string(items[j].(value.Str)) }, nil
+	case nums == len(items):
+		return func(i, j int) bool {
+			a, _ := value.AsNumber(items[i])
+			b, _ := value.AsNumber(items[j])
+			return a < b
+		}, nil
+	case strs+nums == len(items):
+		return nil, fmt.Errorf("sort on a list of mixed strings and numbers has no order; sort them apart, or pass a comparison")
+	default:
+		return nil, fmt.Errorf("sort on a list orders strings and numbers; for anything else pass a comparison, as sort(xs, fn(a, b) = ...)")
 	}
-	return &value.List{Items: out}, nil
 }
 
 // scalarOf reads a single number. It reads a Num straight out rather than
