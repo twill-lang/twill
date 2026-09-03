@@ -375,6 +375,30 @@ asserting the surviving branch's gradient rather than only that it does not cras
 
 ## Open
 
+**A function defined twice is silently the second one.** Neither checker says
+anything, and the program runs the later definition:
+
+```rust
+mode systems
+fn f() -> Str = "first"
+fn f() -> Str = "second"
+fn main() { print(f()) }
+main()                     // second
+```
+
+This is recorded because it cost a real one. `twill-lang/spool` replaced two
+insertion sorts with calls to the new builtin and left the old bodies in the
+same files; both files then defined the function twice and both kept running
+the insertion sort. The tests passed, the source gate passed, CI passed, and the
+commit message said four sorts had been replaced when two had.
+`twill-lang/spool#4` is the correction.
+
+A redefinition inside one file is almost always an edit that went wrong: the
+cases where somebody means it -- a conditional definition, a platform variant --
+do not exist in this language, because there is no conditional compilation. So
+the diagnosis is cheap and the false-positive rate should be zero. Refusing it
+in the checker is the obvious fix and is not written yet.
+
 **Three ways the self-hosted evaluator answers differently from the bootstrap.**
 Found on 2026-09-03 while making the two implementations of `sort` agree, and
 none of them is caused by that change: the same three reproduce against `main`'s
