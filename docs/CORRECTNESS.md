@@ -327,8 +327,39 @@ ones, and it has been in the suite since before this document.
 | Checker catches decidable errors | `TestCheckerCatchesWhatItCanSee` | 2,646/2,646 |
 | `grad` is a shape barrier (a known open gap) | `TestGradIsAShapeBarrier` | direct case caught, grad case not |
 | Examples check clean and run | `TestExamplesRunClean` | all |
-| Forward numerics match the self-hosted implementation | the differential harness, `tools/diff/` | 443 files on `check`, 89 on `fmt` |
+| The self-hosted front end matches the bootstrap | both binaries over every `.tw` file, by hand, 2026-09-04 | `check` 386/386; `fmt` 386/386 modulo blank lines |
+| The self-hosted evaluator matches the bootstrap | the same run | **no**, 128 of 247 builtins unimplemented; see below |
 | Results are bit-identical across architectures | measured by hand, arm64 against amd64 | **no** — `math.Exp` differs by an ULP; see section 4 |
+
+### The self-hosted row, in full
+
+The row above used to read "Forward numerics match the self-hosted
+implementation | the differential harness, `tools/diff/` | 443 files on
+`check`, 89 on `fmt`". Three things were wrong with it. The evidence named,
+`tools/diff/`, takes `-old` and `-new` **Go** binaries and never looks at
+`src/`, so it cannot have produced that result. Nothing in the `Makefile` or
+`.github/workflows/ci.yml` runs it in any case. And the property claimed,
+forward numerics, was being supported by counts from `check` and `fmt`, which
+are front-end stages and say nothing about numerics.
+
+What is true, measured 2026-09-04 by running `./twill <cmd> f` against
+`./twill run src/main.tw <cmd> f` over all 386 `.tw` files in `testdata/cases`,
+`examples`, `std` and `src`:
+
+- `check` agrees on all 386, exit status for exit status.
+- `fmt` agrees on all 386 once blank lines are set aside: 327 byte-identical,
+  59 differing only in the by-design rule where the self-hosted printer keeps a
+  blank line above a comment block.
+- The evaluator does not agree. `src/eval.tw` implements 119 of the 247 names in
+  `src/builtins.tw`; the other 128 reach "named in the builtin table but has no
+  implementation". Twelve of the 26 programs in `examples/` are byte-identical
+  on both sides, nine do not finish self-hosted inside 25 seconds, four diverge.
+  One of the four, `examples/gbm.tw`, exits 0 on both sides with a test RMSE of
+  `0.660285` against `0.659657` -- a fourth-decimal disagreement, not the 1-ULP
+  kind section 4 is about.
+
+`docs/roadmap.md`, "What the second implementation agrees on, and what it does
+not", carries the detail and the reproductions.
 
 ## 4. What "reproduces exactly" does not cover: another architecture
 

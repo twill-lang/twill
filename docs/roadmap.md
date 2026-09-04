@@ -53,6 +53,136 @@ taken from the changelog and, where the changelog was silent, from the tag the
 defining commit first appears in. The five still open are 24, 28, 29, 30 and 32.
 The two half done are 17 and 31.
 
+"Delivered" throughout means delivered by the Go bootstrap, which is the binary
+users run. It does not mean delivered by both implementations: the section below
+measures where the two agree and where they do not, and the answer is that the
+front end agrees across the corpus and the evaluator does not.
+
+---
+
+## What the second implementation agrees on, and what it does not
+
+Measured 2026-09-04 at `97c4888`, by running both sides over every `.tw` file in
+this repository: 386 of them, being `testdata/cases` (327), `examples` (26),
+`std` (22) and `src` (11). "Bootstrap" below means `./twill <command> <file>`.
+"Self-hosted" means `./twill run src/main.tw <command> <file>`, which is the
+entry point `internal/interp/selfhost_test.go` uses and the one `src/main.tw`'s
+own header calls byte-locked to the Go binary.
+
+### The front end agrees
+
+| Stage | Files | Result |
+|---|---|---|
+| `check` | 386 | 386 agree on exit status, `src/eval.tw` included |
+| `fmt` | 386 | 327 byte-identical; 59 differ only in blank lines, none in a token |
+
+The formatter divergence is the known by-design one and nothing else. On
+`examples/hello.tw` the self-hosted printer keeps the blank line above a comment
+block and the Go printer drops it. Delete blank lines from both outputs and all
+386 files match exactly.
+
+### The evaluator does not
+
+`src/eval.tw` dispatches a builtin by name and ends its chain with
+`"builtin ... is named in the builtin table but has no implementation"`.
+Generating a call for every name in `src/builtins.tw`'s `NAMES` and running it
+self-hosted reaches that message for **128 of the 247** names. The count is 128
+either way the probe is written: numeric-mode calls through `src/cli/main.tw`,
+and systems-mode calls inside a `main()` through `src/main.tw`, agree on the
+same 128 names.
+
+The 119 that are implemented are the numeric-mode builtins. What is missing is
+very nearly the whole systems half, which is the dialect `src/` is itself
+written in: `arr_*`, `dict_*`, `bytes_*`, `buf_*`, every `f64_*`, every file and
+path builtin, `rng_*`, the whole `gpu_*` block, `quantize`, `abort`, `exit`,
+`env`, `args` and the `mem_*` counters.
+
+The smallest reproduction is `len` on a `Str`:
+
+```rust
+let s: Str = "abc"
+print(str(len(s)))
+```
+
+`twill run` prints `3`. `twill run src/main.tw run` fails with
+`runtime error: len expects a tensor or list`. The self-hosted `len` is the
+numeric-mode one and has no `Str` case.
+
+The shortest statement of the gap is that `src/` cannot run `src/`:
+
+```
+$ ./twill run src/main.tw run "$PWD/src/main.tw" run "$PWD/examples/hello.tw"
+/tmp/tw/src/main.tw:154: runtime error: builtin "dict_new" is named in the builtin table but has no implementation
+  154 |           },
+```
+
+(The inner paths are absolute because the self-hosted CLI resolves a relative
+one against its own directory rather than the caller's. That is the same bug
+`examples/frames.tw` hits, below.)
+
+The compiler is written in the half of the language the compiler cannot
+evaluate. That is the distance left to a Go-free binary, and no count of
+agreeing numeric-mode programs measures it.
+
+Over `examples/`, twelve of the twenty-six programs produce byte-identical
+output on both sides, four diverge, nine did not finish self-hosted inside a
+25-second cap and are therefore unmeasured rather than agreed, and one is a
+path-resolution artifact rather than a semantic difference. The four:
+
+- **`examples/gpt.tw` and `examples/llama.tw`** hit the `len(Str)` gap through
+  `std/text.tw`'s `char_len`, and run to completion on the bootstrap. The
+  self-hosted diagnostic also names the wrong file: it reports
+  `examples/gpt.tw:550`, and `examples/gpt.tw` is 121 lines long. Line 550 is
+  `while i < len(s)` in `std/text.tw`.
+- **`examples/save_load.tw`** reloads a model with `load` and the self-hosted
+  `gbm_predict` refuses it: `first argument must be a model from gbm_fit`.
+- **`examples/gbm.tw`** runs on both sides, exits 0 on both, and prints a
+  different number: test regression RMSE `0.660285` on the bootstrap against
+  `0.659657` self-hosted, reproducible across runs. That is a disagreement in
+  the fourth decimal, not the 1-ULP float noise the documentation had been
+  describing.
+
+(`examples/frames.tw` is the artifact: the self-hosted CLI resolves the
+program's relative data path against the CLI's own directory, so it looks for
+`src/prices.csv`. A path bug, not a semantic divergence, and not counted above.)
+
+`src/cli/main.tw`, the decorated CLI, has a defect of its own that
+`src/main.tw` does not: a systems-mode program's `main()` is never called.
+`mode systems / fn main() { print("from main") }` prints nothing and **exits
+zero** through `src/cli/main.tw`, and prints `from main` through `src/main.tw`.
+That is the exact program `internal/interp/selfhost_test.go`'s
+`TestSelfHostedRunsSystemsModeMain` asserts, and the test passes, because the
+test drives `src/main.tw`. `CONTRIBUTING.md` had been telling readers to use
+`src/cli/main.tw`.
+
+### Nothing runs the comparison at corpus scale
+
+`internal/interp/selfhost_test.go` holds 59 differential tests and CI does run
+them, under `go test ./...`. They are hand-written programs, and the systems-mode
+ones are small enough to stay inside the 119 implemented builtins, so none of
+the above is in their reach.
+
+`tools/diff/run` is the corpus-scale harness, and two things are true of it.
+It is referenced by neither the `Makefile` nor `.github/workflows/ci.yml`, so
+nothing ever runs it. And it compares two *Go* binaries (`-old` against `-new`,
+or `-bin` against recorded goldens), so even if it were wired up it would not
+look at `src/` at all. `docs/self-hosting.md` milestone 1 asks for a
+`tools/diff/` mode that runs both lexers over the corpus and requires identical
+token streams "as a required CI check", and its "Done means" line names
+`tools/diff/run --lexers --corpus testdata/`. There is no `--lexers` flag in
+`tools/diff/run`. That mode does not exist, and neither does any wider one over
+`run`.
+
+### How to read the cost lines in this document
+
+Where an entry prices a feature as work in two implementations, that price is
+honest for the lexer, the parser, the checker and the formatter, which do agree
+across the corpus. It is not honest for the evaluator. A systems-mode builtin
+added to the Go interpreter and to `src/builtins.tw`'s `NAMES` checks clean on
+both sides and runs on one, which is the failure mode `src/builtins.tw`'s own
+header comment says keeping a single list makes impossible. Keeping one list
+makes the two *tables* agree; it says nothing about the dispatch behind them.
+
 ---
 
 ## The ranking
@@ -81,7 +211,7 @@ The two half done are 17 and 31.
 | 20 | `chr(I64) -> Str` | 2 | twill, weft | 1.4.0 |
 | 21 | A process interface, or an HTTPS client | 2 | spool, warp | 1.8.0, process half only |
 | 22 | `Bool` as a name that can be written in an annotation | 2 | twill, spool | 1.6.0 |
-| 23 | `Bytes` distinct from `Str` | 2 | twill, warp | 1.4.0 |
+| 23 | `Bytes` distinct from `Str` | 2 | twill, warp | 1.4.0 the builtins, 1.6.0 the checked type |
 | 24 | Iteration that does not materialise | 2 | twill, warp | **open** |
 | 25 | A way to fail that cannot be ignored | 1 | twill | 1.4.0, `abort` |
 | 26 | Allocation and memory counters | 1 | bobbin | 1.6.0 |
@@ -818,11 +948,21 @@ it is the cheapest entry in this document.
 
 ### 23. `Bytes` distinct from `Str`
 
-> **Delivered, 1.4.0.** `Bytes` is its own checked type, not an alias for `Str`,
-> with `bytes_new`, `bytes_push` and `bytes_to_str`, and the fixed buffer
-> (`buf_new`, `buf_get8`, `buf_set8`, `buf_len`) beside it. The conversion is a
-> call, which is the point: the place where a file's contents are trusted as
-> UTF-8 is now written down in the program.
+> **Delivered in two halves: the builtins in 1.4.0, the checked type in 1.6.0.**
+> 1.4.0 gave `Bytes` a runtime identity of its own, `value.Bytes`, reached
+> through `bytes_new`, `bytes_push` and `bytes_to_str`, with the fixed buffer
+> (`buf_new`, `buf_get8`, `buf_set8`, `buf_len`) beside it. It did not give the
+> checker one: at `v1.4.0` and `v1.5.0` the string `"Bytes"` does not occur
+> anywhere under `internal/`, so an annotation could not name the type and no
+> mismatch against it could be reported. `Bytes` became a checked type in 1.6.0,
+> in `fe2966c` ("checker: give systems mode a real type system", first tagged
+> `v1.6.0`), which is the commit that adds `tBytes` to the lattice and the
+> `case "Bytes"` that reads it out of an annotation. This entry previously said
+> "Delivered, 1.4.0. `Bytes` is its own checked type", which credited 1.4.0 with
+> work 1.6.0 did.
+>
+> The conversion is a call, which is the point: the place where a file's
+> contents are trusted as UTF-8 is written down in the program.
 
 **Two callers.** twill NEEDS-7 (`src/bytes.tw`). warp entry 8
 (`src/datasets.tw` `read_idx` and `be32`, `src/stream.tw`).

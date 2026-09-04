@@ -433,9 +433,15 @@ shadowing a builtin, which twill supports.
 Found on 2026-09-03 while making the two implementations of `sort` agree, and
 none of them is caused by that change: the same three reproduce against `main`'s
 binary. They are recorded together because they have one cause between them,
-which is that nothing compares the two implementations at *runtime*. The
-differential harness in `tools/diff/` compares `check` and `fmt` over 443 files
-and says nothing about what a program prints.
+which is that nothing compares the two implementations at *runtime*.
+
+The sentence that used to stand here said the differential harness in
+`tools/diff/` compares `check` and `fmt` over 443 files and says nothing about
+what a program prints. The second half is right and the first half is not:
+`tools/diff/run` takes `-old` and `-new` **Go** binaries, so it never runs
+`src/` at all, and it is referenced by neither the `Makefile` nor
+`.github/workflows/ci.yml`, so it never runs at all either. Nothing compares the
+two implementations at any stage at corpus scale.
 
 ```rust
 mode systems
@@ -463,6 +469,33 @@ The first two are wrong answers rather than refusals, which is the worse kind:
 a program that sorts a list of numbers under the self-hosted evaluator gets a
 tensor sort and no error. Fixing them is separate work from the sort, and the
 thing that would have caught all three is a differential harness over `run`.
+
+**How large the third gap is, measured 2026-09-04.** All three above are
+instances of one thing: `src/eval.tw` implements the numeric-mode builtins and
+almost none of the systems-mode ones. Generating a call for every name in
+`src/builtins.tw`'s `NAMES` and running it self-hosted reaches
+`"builtin ... is named in the builtin table but has no implementation"` for
+**128 of the 247** names -- `arr_*`, `dict_*`, `bytes_*`, `buf_*`, every
+`f64_*`, every file and path builtin, `rng_*`, `gpu_*`, `abort`, `exit`, `env`,
+`args`, `quantize` and the `mem_*` counters. `src/` consequently cannot run
+`src/`: running `src/main.tw` under itself stops at `src/main.tw:154` on
+`dict_new`.
+
+Three further runtime divergences found in the same pass, over `examples/`:
+
+- `examples/gbm.tw` exits 0 on both sides and prints a different number, test
+  regression RMSE `0.660285` on the bootstrap against `0.659657` self-hosted,
+  reproducible across runs.
+- `examples/save_load.tw`: the self-hosted `gbm_predict` refuses a model `load`
+  has just returned, `first argument must be a model from gbm_fit`.
+- `examples/gpt.tw` and `examples/llama.tw` hit the `len(Str)` gap through
+  `std/text.tw`'s `char_len`, and the self-hosted diagnostic names the wrong
+  file: it reports `examples/gpt.tw:550`, and `examples/gpt.tw` is 121 lines
+  long. Line 550 is `while i < len(s)` in `std/text.tw`.
+
+`docs/roadmap.md`, "What the second implementation agrees on, and what it does
+not", has the front-end half of the same measurement: `check` and `fmt` agree
+across all 386 `.tw` files in the tree.
 
 **The `einsum` gradient panics for a bare summed axis.** Reproduced 2026-09-04
 against `main`. The backward pass of an einsum whose output subscript drops a

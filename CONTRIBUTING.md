@@ -38,14 +38,41 @@ go vet ./...                    # static checks
 gofmt -l .                      # should print nothing
 ```
 
-Or use the Makefile: `make build`, `make test`, `make check`, `make bench`,
-`make examples`. CI additionally runs staticcheck, a dead-code check, the race
-detector over `internal/tensor` and `internal/interp`, and every example as a
-smoke test.
+**The gate is `make check`**, not the four commands above: it is
+`build vet test race` plus `gofmt -l`, and the race pass is the part the four
+leave out. The Makefile says why -- 1.6.5 shipped with a CI failure because the
+local gate was `vet test` and gofmt while CI was that plus a race pass. Run
+`make check` before you claim a change is green. `make ci` adds the two linters
+CI runs, which need the network. `make bench` and `make examples` are the other
+targets.
 
-`src/` runs on the bootstrap. `./twill run src/cli/main.tw run file.tw` runs a
-program through the self-hosted toolchain, and `check` and `fmt` work the same
-way, so a change there can be executed rather than only read.
+`src/` runs on the bootstrap. `./twill run src/main.tw run "$PWD/file.tw"` runs
+a program through the self-hosted toolchain, and `check` and `fmt` work the same
+way, so a change there can be executed rather than only read. Give the inner
+path in full: the self-hosted CLI resolves a relative one against its own
+directory rather than yours, so `run examples/hello.tw` answers
+`twill: cannot read file "examples/hello.tw"`. The same bug makes
+`examples/frames.tw` look for its CSV under `src/`.
+
+Use `src/main.tw`, not `src/cli/main.tw`. `src/main.tw` is the plain CLI, the
+one `internal/interp/selfhost_test.go` drives and the one its own header calls
+byte-locked to the Go binary. `src/cli/main.tw` is the decorated front end and
+it has a defect `src/main.tw` does not: it never calls a systems-mode program's
+`main()`, so `mode systems / fn main() { print("from main") }` prints nothing
+through it and exits zero.
+
+**How far the two implementations actually agree.** The front end agrees and the
+evaluator does not, so what a self-hosted run tells you depends on which stage
+you exercised. Over all 386 `.tw` files in the tree, `check` agrees on every one
+and `fmt` agrees on every one apart from a by-design blank-line rule. The
+evaluator implements 119 of the 247 names in `src/builtins.tw`; the other 128 --
+essentially the whole systems-mode half, arrays through `dict_*`, `bytes_*`,
+`f64_*`, the file and path builtins and `gpu_*` -- reach an explicit "named in
+the builtin table but has no implementation". `src/` therefore cannot run
+`src/`. Do not read a clean self-hosted `check` as evidence that a change is
+correct on both sides; the measurements and how to repeat them are in
+`docs/roadmap.md`, "What the second implementation agrees on, and what it does
+not".
 
 Three things check it, and they are not the same thing:
 
@@ -53,12 +80,31 @@ Three things check it, and they are not the same thing:
   compares the two implementations, `runBothWays` on printed output and
   `runSelfHostedCheck` on diagnostics. These are the bulk of `internal/interp`'s
   runtime and they are skipped under `-short`, which is why `make race` passes
-  `-short` and `make test` does not.
+  `-short` and `make test` does not. They are 59 hand-written programs, not a
+  corpus: the numeric-mode ones pass and the systems-mode ones are small enough
+  to stay inside the 119 implemented builtins, so none of the divergence above
+  is in their reach.
 - `./twill test std/tests` is the twill-level suite, 17 files, about a second.
 - `tools/diff/` compares two binaries over the fixture corpus in `testdata/`.
-  Nothing in CI or the Makefile runs it, and its checked-in goldens have drifted
-  behind the corpus, so `-verify` reports mismatches on a clean checkout. Read a
-  diff before re-recording: a real regression would appear in the same list.
+  Nothing in CI or the Makefile runs it -- `tools/diff` appears in neither the
+  `Makefile` nor `.github/workflows/ci.yml` -- and its checked-in goldens have
+  drifted behind the corpus, so `-verify` reports mismatches on a clean
+  checkout. Read a diff before re-recording: a real regression would appear in
+  the same list. Note also what it is not: it takes `-old` and `-new` Go
+  binaries, so it never looks at `src/`. The both-implementations corpus check
+  `docs/self-hosting.md` milestone 1 asks for does not exist.
+
+Nothing in CI compares the two implementations at corpus scale. If you change
+`src/`, run the comparison by hand.
+
+Two tests hold this section to the code rather than to memory.
+`internal/checker/builtintable_test.go` asserts that the Go checker's
+`builtinNames` and `src/builtins.tw`'s `NAMES` are the same set, and that every
+count written down in the documentation is that set's real size.
+`internal/interp/selfhost_gap_test.go` pins two of the divergences described
+above and fails when they stop being real, naming the files whose prose then
+needs updating. A failure there is good news about the evaluator and a chore for
+the docs, not a regression.
 
 ## Layout
 

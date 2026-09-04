@@ -375,23 +375,61 @@ fn predict(m: Model, x: [2]) -> [3] { m.w @ x + m.b }
 
 ## twill is being written in twill
 
-> **As of v1.4.0 this runs. The twill compiler written in twill executes on the
-> Go bootstrap and matches the reference across every stage.**
+> **The front end matches the reference across the corpus. The evaluator does
+> not.** Measured 2026-09-04 over all 386 `.tw` files in the tree:
+> `check` agrees on every one, `fmt` agrees on every one apart from blank
+> lines, and the self-hosted evaluator implements 119 of the 247 builtin names
+> the two share. `docs/roadmap.md`, "What the second implementation agrees on,
+> and what it does not", has the measurements and how to repeat them.
 
 The reference implementation is Go. The second one is twill: the lexer, parser,
 checker, evaluator, tensor kernels, formatter and CLI, written in the language
-itself under `src/`. As of v1.4.0 the whole `src/`+`std/` tree type-checks clean
-and runs on the Go bootstrap: `twill check` matched the Go command byte-for-byte
-on every corpus file and `twill fmt` on every one it formats, bar a by-design
-blank-line divergence. Those runs were counted at v1.4.0, at 443 and 89 files;
-the corpus has grown since and the counts are a snapshot, not a running total.
-`tools/diff` re-runs the comparison. The self-hosted evaluator runs the entire
-example corpus,
-autodiff, jacobians, hessians, neural-net training, CNNs, attention, gradient
-boosting and Monte Carlo pricing, with output identical to `twill run` save a
-couple of 1-ULP float-accumulation differences. It runs on the bootstrap rather
-than as its own Go-free binary; bootstrapping to a standalone twill-built
-compiler is the next step.
+itself under `src/`. The whole `src/`+`std/` tree type-checks clean and runs on
+the Go bootstrap.
+
+What is finished is the front end. Running both sides over the 386 `.tw` files
+in `testdata/cases`, `examples`, `std` and `src`, `twill check` agrees with the
+Go command on all 386, and `twill fmt` agrees on all 386 once blank lines are
+set aside: 327 byte-identical, and 59 differing only in a by-design blank-line
+rule. (An earlier version of this paragraph quoted 443 and 89 files from a
+v1.4.0 run; those counts were a snapshot of a corpus that has since changed
+shape, and the numbers here are freshly measured.)
+
+The evaluator is not finished, and it is the half the word "self-hosted" is
+usually taken to promise. `src/eval.tw` dispatches 119 of the 247 names in
+`src/builtins.tw`; the other 128 reach an explicit "named in the builtin table
+but has no implementation" and stop. The missing set is almost exactly the
+systems-mode half of the language, which is the dialect `src/` is written in:
+the arrays, dictionaries, byte buffers, `f64_*` maths, file and path builtins,
+seeded generators and GPU calls. `let s: Str = "abc"` then `print(str(len(s)))`
+prints `3` under `twill run` and fails under `twill run src/main.tw run`,
+because the self-hosted `len` has no `Str` case.
+
+Numeric-mode programs mostly do agree. Twelve of the twenty-six programs in
+`examples/` produce byte-identical output on both sides; nine are too slow to
+finish self-hosted inside a 25-second cap and are unmeasured; four diverge,
+including `examples/gbm.tw`, which exits 0 on both sides and prints a test RMSE
+of `0.660285` against `0.659657`. That is a fourth-decimal disagreement, not the
+1-ULP float noise this section used to claim.
+
+Nothing in CI or the Makefile compares the two at corpus scale. The
+differential harness under `tools/diff/` is referenced by neither, and it
+compares two Go binaries rather than the two implementations.
+
+`src/` runs on the bootstrap rather than as its own Go-free binary;
+bootstrapping to a standalone twill-built compiler is the next step, and closing
+the evaluator gap is a prerequisite for it. The shortest statement of that gap
+is that `src/` cannot run `src/`:
+
+```
+$ ./twill run src/main.tw run "$PWD/src/main.tw" run "$PWD/examples/hello.tw"
+/tmp/tw/src/main.tw:154: runtime error: builtin "dict_new" is named in the builtin table but has no implementation
+  154 |           },
+```
+
+(The inner paths are absolute because the self-hosted CLI resolves a relative
+one against its own directory rather than the caller's, which is the same bug
+`examples/frames.tw` hits.)
 
 Designing the subset a compiler needs was the point of doing it. A `.tw` file
 declares its mode on the first line, and `mode systems` turns that subset on: a

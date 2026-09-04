@@ -338,9 +338,16 @@ by reading.
 ## What has landed
 
 The numerics are complete and byte-identical across both implementations. Both
-the self-hosted evaluator (`src/tensor.tw`) and the Go bootstrap (`internal/
-tensor`) now agree, element for element, on every forward op that touches a
-dtype:
+the self-hosted tensor library (`src/tensor.tw`) and the Go bootstrap
+(`internal/tensor`) now agree, element for element, on every forward op that
+touches a dtype:
+
+(`src/tensor.tw` is the tensor library written in twill, not the self-hosted
+evaluator, and this comparison runs it on the Go bootstrap. The self-hosted
+evaluator, `src/eval.tw`, cannot run `src/tensor.tw` at all: the buffer builtins
+it is written on are among the 128 of 247 names it does not implement. See
+`docs/roadmap.md`, "What the second implementation agrees on, and what it does
+not".)
 
 - **construction and the cast** — `zeros(shape, bf16)`, `.to(dt)`, and the
   dtype-suffixed makers (NEEDS-110, landed).

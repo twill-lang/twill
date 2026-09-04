@@ -111,6 +111,14 @@ parameters and the new pattern forms both survive formatting.
 
 ## Parity
 
+> **Note added 2026-09-04.** Read this heading as scoped to the two features
+> 1.7.0 shipped, which is what the three bullets below actually claim, and not
+> as a statement about the two implementations in general. Measured since:
+> the front end agrees across all 386 `.tw` files in the tree, and the
+> self-hosted evaluator implements 119 of the 247 builtin names, so it cannot
+> run the systems-mode half of the language at all. `docs/roadmap.md`, "What
+> the second implementation agrees on, and what it does not", has the numbers.
+
 Both features landed on the Go bootstrap and in `src/` together. That is the
 check this project exists to be able to make, and neither half can make it
 alone:
