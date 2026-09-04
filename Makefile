@@ -1,7 +1,7 @@
 BINARY := twill
 PKG := ./cmd/twill
 
-.PHONY: build test vet fmt race lint check ci bench examples install clean
+.PHONY: build test vet fmt race lint check ci bench examples install clean conformance conformance-check diff
 
 build:
 	go build -o $(BINARY) $(PKG)
@@ -38,8 +38,46 @@ lint:
 check: build vet test race
 	gofmt -l . | tee /dev/stderr | (! read)
 
-# Everything, including the linters. What the release gate should be.
-ci: check lint
+# --- conformance ------------------------------------------------------------
+#
+# Twill has two implementations and the README says they agree. That is true of
+# the lexer, the parser, the checker and the formatter, and it is not true of
+# the evaluator: 128 of the 247 names in the shared builtin table have no
+# implementation under src/eval.tw. Nothing in the build said so, because
+# nothing compared them, so these three targets are the comparison.
+#
+# They are not in `check` because the self-hosted side runs the Go interpreter
+# interpreting src/*.tw, which is the slowest thing in the repository. They are
+# in `ci`, and they have their own CI job, so a new divergence fails the build
+# on the pull request that introduced it.
+
+# Regenerate docs/conformance.md. Run this after adding a builtin to either
+# implementation, and commit the result.
+conformance: build
+	go run ./tools/conformance builtins -bin ./$(BINARY)
+
+# The gate. Three separate claims:
+#   1. docs/conformance.md matches what the two implementations actually do.
+#   2. Every std/tests suite produces the same bytes under both, except the ones
+#      on testdata/conformance/suite-allow.txt.
+#   3. The fixture corpus still matches its recorded goldens, except the ones on
+#      testdata/conformance/golden-allow.txt.
+# Both allow-lists may only shrink. A new disagreement is a failure.
+conformance-check: build
+	go run ./tools/conformance builtins -bin ./$(BINARY) -check
+	go run ./tools/conformance suites -bin ./$(BINARY)
+
+# tools/diff/run against the checked-in goldens. This target is the reason the
+# harness exists: it was written, committed, and then referenced by neither the
+# Makefile nor the CI workflow, so it had never been run and had been failing
+# for months. The allow-list holds the 33 findings that were already there.
+diff: build
+	go run ./tools/diff/run -corpus testdata -bin ./$(BINARY) -verify \
+		-allow testdata/conformance/golden-allow.txt
+
+# Everything, including the linters and the conformance gate. What the release
+# gate should be.
+ci: check lint conformance-check diff
 
 bench:
 	go test -run=XXX -bench=. ./internal/tensor/

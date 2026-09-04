@@ -1,0 +1,61 @@
+# Standard-library suites that do not yet produce the same bytes under both
+# implementations of twill.
+#
+# `make conformance-check` runs every std/tests/*_test.tw twice, once on the Go
+# bootstrap and once on src/main.tw, and compares the exit code, stdout and
+# stderr exactly. A suite that disagrees and is not named here fails the build.
+# So does a name here that agrees, and a name here that is not a suite.
+#
+# The list may only shrink. Adding a line is not a way to get a build green: it
+# is a claim that a divergence has been looked at and understood, and it belongs
+# in a pull request that says what it found.
+#
+# Measured on this branch: 17 suites, 5 agree, 12 do not.
+
+# --- The evaluator has no implementation for the builtin ---------------------
+# Five systems-mode suites die on the first line of their harness, because
+# std/tests/systems_harness.tw calls arr_new. 128 of the 247 names in the
+# shared builtin table are in this state; docs/conformance.md lists them.
+#   io_test.tw:50      builtin "arr_new" ... has no implementation
+#   json_test.tw:256   builtin "arr_new" ... has no implementation
+#   linalg_test.tw:50  builtin "arr_new" ... has no implementation
+#   random_test.tw:50  builtin "arr_new" ... has no implementation
+#   stats_test.tw:50   builtin "arr_new" ... has no implementation
+#   text_test.tw:50    builtin "arr_new" ... has no implementation
+#   sample_test.tw:85  builtin "rng_open" ... has no implementation
+io_test.tw
+json_test.tw
+linalg_test.tw
+random_test.tw
+sample_test.tw
+stats_test.tw
+text_test.tw
+
+# --- The evaluator dispatches the builtin and then falls over ----------------
+# `clip` is dispatched by src/eval.tw and hands a bare tensor to `lift`, which
+# expects a Res, so the match has no arm for it:
+#   runtime error: no match arm for {shape: [], data: ..., dtype: 6}
+# The message names main.tw and the line is eval.tw's, which is a second bug in
+# the same report: the self-hosted runtime attributes a module's line to the
+# entry file.
+nn_test.tw
+optim_test.tw
+
+# --- The evaluator returns a different number --------------------------------
+# The most serious kind, because nothing errors. gradcheck_test.tw passes 19 of
+# 19 on the bootstrap and 17 of 19 self-hosted:
+#   numeric_grad(fn(v) = sum(v * v), [1.0, -3.0, 0.5], 1e-5)
+#     bootstrap:   worst element off by 3.9e-11
+#     self-hosted: worst element off by 5.1e-8
+# Both print as the same six significant figures, so only an exact comparison
+# finds it. That is why this gate has no tolerance.
+gradcheck_test.tw
+
+# --- The evaluator does not finish -------------------------------------------
+# Both of these complete on the bootstrap in under half a second and do not
+# finish self-hosted inside the five-minute budget, so they are recorded as
+# divergences rather than as slow passes. llama_test.tw is over a thousand
+# times slower. They also print a prefix of the right output before the budget
+# runs out, so what is known is that they are too slow, not that they are wrong.
+llama_test.tw
+transformer_test.tw
