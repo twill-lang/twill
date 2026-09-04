@@ -464,6 +464,30 @@ a program that sorts a list of numbers under the self-hosted evaluator gets a
 tensor sort and no error. Fixing them is separate work from the sort, and the
 thing that would have caught all three is a differential harness over `run`.
 
+**The `einsum` gradient panics for a bare summed axis.** Reproduced 2026-09-04
+against `main`. The backward pass of an einsum whose output subscript drops a
+label crashes rather than returning a gradient:
+
+```rust
+let A = tensor([[1.0, 2.0], [3.0, 4.0]])
+fn f(x) = sum(einsum("ij->i", x))
+print(grad(f)(A))            # panic: index out of range [0] with length 0
+```
+
+The gradient of an einsum is another einsum with the operand's subscript as the
+output, so differentiating `"ij->i"` asks for an output `ij` from an input whose
+only subscript is `i`. The label `j` appears in no input; it sizes to zero, the
+output buffer is empty, and `einsumRaw` indexes it. `Einsum`'s backward closure
+in `internal/tensor/einsum.go` has a `continue` for the case where sizing
+returns an *error*, which is a second defect on the same line and would have
+answered a silent zero, but it is not what runs today.
+
+This is on the ordinary path, since summing an axis away is what einsum is for.
+It is recorded here because `docs/roadmap.md` has carried it since the
+self-hosting exercise found it, described as a silent zero, and the symptom has
+changed. Not fixed: no test covers it yet, and the fix is a real decision about
+what the gradient of a dropped label should be rather than a guard.
+
 **`einsum` refuses a label repeated within one operand.** `einsum("ii->", A)`,
 the trace, returns "repeated label \"i\" within one operand is not supported".
 This is a refusal rather than a wrong answer, so it is a limitation and not a

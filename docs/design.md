@@ -129,9 +129,12 @@ wrong in whichever half did not get it. The related edge is that `shr` is
 `floor(a / 2^k)` while `/` truncates, so replacing a division by a power of two
 with a shift is valid only for a non-negative dividend.
 
-## Known limitations (v1.6)
+## Known limitations (v1.9)
 
-Deliberate, for a prototype:
+Deliberate, for a prototype. Two entries left this list in 1.7.0, which is worth
+naming because they were the two largest: user-defined generics (`struct Box[T]`,
+`enum Tree[T]`, `fn first[T](...)`) parse, check and run, and a match pattern is
+a tree, with nesting, literals and guards.
 
 - Interpreted by default. There is a tracing compiler under `internal/trace`
   and `internal/codegen` which emits C and is bit-exact against the interpreter,
@@ -150,10 +153,8 @@ Deliberate, for a prototype:
   still unknown at the end of inference is itself an error, is open as NEEDS-49.
 - Record fields aren't mutable in place; you rebuild the record. A `struct`, in
   systems mode, is the mutable one.
-- No user-defined generics: `Arr[T]`, `Dict[K, V]`, `Opt[T]` and `Res[T, E]`
-  are the generic types, and `struct Box[T]` does not parse (NEEDS-4).
-- Match patterns are a case name, one binding, or `_`. No literal patterns, no
-  nesting, no guards.
+- An enum variant carries at most one payload value. A variant that needs two
+  things carries a `struct`.
 - No named axes; broadcasting and reductions work on positional axes.
 - Every float is an `f64`. A narrow dtype is a tag and a rounding rule rather
   than a layout, so quantisation shrinks nothing in memory (NEEDS-111).
@@ -168,7 +169,10 @@ Roughly in order of value:
    native library. Keep the interpreter as the reference.
 3. More autodiff: higher-order derivatives, forward mode, batching.
 4. Named axes (einsum exists; a named-axis tensor type would go further).
-5. Record-aware optimizers in the standard library, and `grad(grad(f))`.
+5. `grad(grad(f))`, which is refused today rather than answered. The optimizers
+   this line used to ask for arrived: `std/optim` walks leaves with `map_leaves`
+   and `zip_leaves`, so `optim.adam` works on a record of named weights and on a
+   positional list alike.
 
 ## Non-goals for now
 

@@ -152,9 +152,9 @@ gradients back, and a model held in a record gets a record.
 before the program runs, not a stack trace forty minutes into training.
 
 The language is deliberately small, and the reference implementation is about
-25,000 lines of Go with no dependencies, of which the differentiable tensor
-engine is 4,700, the interpreter 6,900 and the static checker 4,700. Another
-14,000 lines are tests. Large tensor operations run across CPU cores,
+27,000 lines of Go with no dependencies, of which the differentiable tensor
+engine is 4,700, the interpreter 7,100 and the static checker 4,700. Another
+14,800 lines are tests. Large tensor operations run across CPU cores,
 deterministically: parallelism never changes a result.
 
 ## Install
@@ -297,6 +297,9 @@ cover:
 Tensors and lists also support differentiable first-axis slicing (`v[1:3]`,
 `m[:2]`). The [language guide](docs/language-guide.md) has the full list.
 
+On a list, `sort` also takes a comparison, so a list of anything can be ordered:
+`sort(items, fn(a, b) = a.n < b.n)`. Every form is stable.
+
 ## The standard library
 
 The `std/` libraries are written in twill itself and compiled into the binary, so
@@ -310,6 +313,12 @@ The `std/` libraries are written in twill itself and compiled into the binary, s
 | `std/data` | standardizing, train/test splitting, minibatching |
 | `std/backtest` | returns, moving averages, equity curves, drawdown, Sharpe, Sortino, CAGR |
 | `std/num`, `std/shapes` | numerics and rearrangements the builtins leave out |
+| `std/text`, `std/float` | string handling for `mode systems`, and exact float formatting and parsing |
+| `std/term` | the terminal layer: capability detection, colour, boxes, frames, display width |
+| `std/io`, `std/json`, `std/hash` | text and line reading, a JSON reader and writer, SHA-256 |
+
+That table is a selection. `std/` also carries `batch`, `frame`, `linalg`,
+`llama`, `loss`, `metrics`, `random`, `sample`, `stats` and `gradcheck`.
 
 The optimizers walk a model's tensor leaves with `map_leaves` and `zip_leaves`,
 which is why the same `optim.adam` works on a list of matrices and on a record of
@@ -444,8 +453,12 @@ This is a prototype, and some of it is deliberately left for later.
   than silently answered with zero; use `hessian` for second derivatives.
 - The shape checker is best-effort, not a full type system. It catches
   mismatches when shapes are statically knowable and stays quiet otherwise.
-- Imports are files and `std/` modules. There is no package manager yet, and no
-  versioning of third-party libraries.
+- Imports are files and `std/` modules. Versioning and third-party libraries are
+  [spool](https://github.com/twill-lang/spool)'s job rather than the compiler's:
+  a `spool.toml` names a dependency and spool fetches it, and this repository
+  carries one so that the language itself resolves to a real package. Nothing in
+  the compiler knows about spool, so a vendored dependency is reached by the
+  ordinary file import rule and not by a package path.
 - The self-hosted compiler runs on the Go bootstrap, not yet as its own Go-free
   binary. Bootstrapping to a standalone twill-built compiler is the next step.
 

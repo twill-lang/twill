@@ -21,6 +21,23 @@
   sweep of 458 `.tw` files across the ecosystem found no case that was not.
   `docs/BUGS.md` entry 11.
 
+- **The documentation says what the code does.** No code changed. `docs/roadmap.md`
+  ranked thirty-two missing features and then went stale without saying so:
+  twenty-five of them had been delivered and two marked. Every row now carries
+  the release that delivered it, checked by running the current binary rather
+  than by reading this file, and the ranking argument is untouched, because the
+  ranking is what the document is for. Five entries are open (24, 28, 29, 30,
+  32) and two are half done (17, 31).
+
+  Three things that were plainly wrong are fixed with it. The roadmap's list of
+  bugs in the bootstrap said none of the three was fixed and that no further Go
+  changes would be made: two are fixed, the ruling did not hold, and the third
+  now panics rather than answering a silent zero (`docs/BUGS.md`, Open).
+  `CONTRIBUTING.md` said there was no way to run `src/`, which
+  `internal/interp/selfhost_test.go` and `twill run src/cli/main.tw` have made
+  untrue. `docs/language-guide.md`'s own `ushr` idiom did not run: it called
+  `not` where the builtin is `bnot`, and named a file that does not exist.
+
 ## [1.9.0] - 2026-09-03
 
 The release the ecosystem's eleven hand-written sorts were waiting for. Minor
@@ -422,7 +439,12 @@ The self-hosted `grads` is wrong when the same tensor is passed as two
 arguments: the whole gradient lands on the second parameter. Distinct arguments
 agree, and the bootstrap is correct.
 
-## [Unreleased]
+## Recorded as unreleased, shipped in 1.6.4
+
+> Left under an "Unreleased" heading when 1.6.4 was cut, and it stayed there.
+> Everything below shipped: it is the `jvp`/`vjp`/`hvp` entry above, at greater
+> length. Kept in place rather than merged upward, so the record of when each
+> change was written is not rewritten.
 
 ### Added
 
@@ -1029,7 +1051,13 @@ for most of them for months.
   headline feature, and it was firing on the compiler's own source.
 
 
-## [Unreleased]
+## Recorded as unreleased, shipped in 1.5.0
+
+> Left under an "Unreleased" heading when 1.5.0 was cut, and it stayed there.
+> Everything below shipped: `twill test` (`cmd/twill/test.go` first appears at
+> `v1.5.0`), `linspace`, `arange` and the `std/num` additions. Kept in place
+> rather than merged upward, so the record of when each change was written is
+> not rewritten.
 
 ### Added
 
@@ -1612,7 +1640,14 @@ unchanged and fully backward compatible.
   matters more than it looks: an unstable one returns the same values in a
   different arrangement, and the gradient follows the arrangement.
 
-## [Unreleased]
+## Recorded as unreleased, shipped in 1.5.0
+
+> Left under an "Unreleased" heading when 1.5.0 was cut, and it stayed there.
+> Everything below shipped: function types in annotations, and `arr_push`
+> (first in `internal/interp/builtins.go` at `v1.5.0`). This block also sits in
+> the wrong place, between 1.2.0 and 1.1.0, while its entries are dated
+> 2026-08-11. Kept in place rather than moved, so the record of when each change
+> was written is not rewritten.
 
 ### Added
 

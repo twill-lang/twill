@@ -30,46 +30,77 @@ in the sources" at the end.
 
 ---
 
+## Status, as of 1.9.0 (checked 2026-09-04)
+
+This document was written when none of it was built, and it went stale without
+saying so: entries kept being delivered and only three of them (5, 7 and 21)
+were ever marked. Twenty-five of the thirty-two are now delivered, two are half
+delivered, and five are untouched.
+
+The ranking is left exactly as it was. It is an argument about evidence, not a
+queue of open work, and rewriting the order now that the work is done would
+destroy the only thing the document is for. What has changed is that every row
+carries the release that delivered it, and every entry that is delivered says so
+in its own first line. The workaround each entry describes is written in the
+present tense throughout; read those as the state at the time of filing, because
+a workaround stays in a satellite repository until that repository adopts the
+builtin, which is a separate piece of work from shipping it.
+
+Delivery was verified by running the current binary, not by reading the
+changelog, which is how the two half-done entries and the still-open `record()`
+were caught. The release named in each row is where the feature first shipped,
+taken from the changelog and, where the changelog was silent, from the tag the
+defining commit first appears in. The five still open are 24, 28, 29, 30 and 32.
+The two half done are 17 and 31.
+
+---
+
 ## The ranking
 
-| # | Feature | Callers | Repos |
-|---|---|---|---|
-| 1 | `Res[T, E]`, `Opt[T]`, or any way to return two values | 6 | twill, spool, loom, bobbin, weft, warp |
-| 2 | Function values with a declared type, as parameters and struct fields | 6 | twill, spool, loom, bobbin, weft, warp |
-| 3 | `enum` with payloads and exhaustive `match` | 5 | twill, spool, loom, bobbin, warp |
-| 4 | The bitwise operators, spelled, and `shr` on a negative `I64` defined | 5 | twill, spool, loom, weft, warp |
-| 5 | A sort, or a comparison-function parameter **(delivered)** | 5 | twill, spool, loom, bobbin, weft |
-| 6 | Writing files, directories, and `stat` | 5 | twill, spool, bobbin, weft, warp |
-| 7 | A test runner | 5 | twill, loom, bobbin, weft, warp |
-| 8 | `F64` as a first-class systems-mode type | 4 | twill, loom, weft, warp |
-| 9 | Nested and generic containers | 4 | twill, spool, loom, warp |
-| 10 | `continue` and `break` | 4 | twill, spool, loom, bobbin |
-| 11 | A monotonic clock | 4 | twill, loom, bobbin, weft |
-| 12 | Reference semantics for `struct` and `Arr` parameters, stated | 3 | twill, spool, loom |
-| 13 | `Str` concatenation, and a way to build one that is not quadratic | 3 | twill, spool, weft |
-| 14 | `src/term/` reachable from an installed package | 3 | loom, bobbin, weft |
-| 15 | The float math builtins in systems mode | 3 | twill, weft, warp |
-| 16 | Number formatting: `str(I64)`, padding, fixed-point | 3 | twill, loom, bobbin |
-| 17 | A tensor that crosses the systems and numeric seam | 3 | twill, loom, warp |
-| 18 | A seeded generator that is a value rather than a global | 3 | twill, loom, warp |
-| 19 | Number parsing: `parse_i64`, `parse_f64` | 2 | twill, warp |
-| 20 | `chr(I64) -> Str` | 2 | twill, weft |
-| 21 | A process interface **(delivered)**, or an HTTPS client | 2 | spool, warp |
-| 22 | `Bool` as a name that can be written in an annotation | 2 | twill, spool |
-| 23 | `Bytes` distinct from `Str` | 2 | twill, warp |
-| 24 | Iteration that does not materialise | 2 | twill, warp |
-| 25 | A way to fail that cannot be ignored | 1 | twill |
-| 26 | Allocation and memory counters | 1 | bobbin |
-| 27 | Ranged reads | 1 | warp |
-| 28 | Immutable top-level bindings | 1 | weft |
-| 29 | Optional and named arguments, or record update | 1 | weft |
-| 30 | A compiler barrier | 1 | bobbin |
-| 31 | `Dict` keyed by something other than `Str` | 1 | twill |
-| 32 | An empty record, and removing a field | 1 | twill |
+| # | Feature | Callers | Repos | Delivered |
+|---|---|---|---|---|
+| 1 | `Res[T, E]`, `Opt[T]`, or any way to return two values | 6 | twill, spool, loom, bobbin, weft, warp | 1.3.0, checked in 1.6.0 |
+| 2 | Function values with a declared type, as parameters and struct fields | 6 | twill, spool, loom, bobbin, weft, warp | 1.5.0 spelled, 1.7.0 as values |
+| 3 | `enum` with payloads and exhaustive `match` | 5 | twill, spool, loom, bobbin, warp | 1.3.0, exhaustive 1.6.0, patterns 1.7.0 |
+| 4 | The bitwise operators, spelled, and `shr` on a negative `I64` defined | 5 | twill, spool, loom, weft, warp | 1.3.0, infix in 1.5.0 |
+| 5 | A sort, or a comparison-function parameter | 5 | twill, spool, loom, bobbin, weft | 1.9.0 |
+| 6 | Writing files, directories, and `stat` | 5 | twill, spool, bobbin, weft, warp | 1.5.0, completed in 1.6.0 |
+| 7 | A test runner | 5 | twill, loom, bobbin, weft, warp | 1.5.0 |
+| 8 | `F64` as a first-class systems-mode type | 4 | twill, loom, weft, warp | 1.6.0, both checkers by 1.6.7 |
+| 9 | Nested and generic containers | 4 | twill, spool, loom, warp | 1.3.0, user-defined generics 1.7.0 |
+| 10 | `continue` and `break` | 4 | twill, spool, loom, bobbin | 1.4.0 |
+| 11 | A monotonic clock | 4 | twill, loom, bobbin, weft | 1.6.0 |
+| 12 | Reference semantics for `struct` and `Arr` parameters, stated | 3 | twill, spool, loom | written down, `docs/language-guide.md` |
+| 13 | `Str` concatenation, and a way to build one that is not quadratic | 3 | twill, spool, weft | 1.4.0 |
+| 14 | `src/term/` reachable from an installed package | 3 | loom, bobbin, weft | 1.5.0, as `std/term` |
+| 15 | The float math builtins in systems mode | 3 | twill, weft, warp | 1.4.0 |
+| 16 | Number formatting: `str(I64)`, padding, fixed-point | 3 | twill, loom, bobbin | 1.6.0, padding in `std/text` |
+| 17 | A tensor that crosses the systems and numeric seam | 3 | twill, loom, warp | **half**: nameable, judges nothing |
+| 18 | A seeded generator that is a value rather than a global | 3 | twill, loom, warp | 1.5.1.1 |
+| 19 | Number parsing: `parse_i64`, `parse_f64` | 2 | twill, warp | 1.4.0, exact `i64_of_str` in 1.6.0 |
+| 20 | `chr(I64) -> Str` | 2 | twill, weft | 1.4.0 |
+| 21 | A process interface, or an HTTPS client | 2 | spool, warp | 1.8.0, process half only |
+| 22 | `Bool` as a name that can be written in an annotation | 2 | twill, spool | 1.6.0 |
+| 23 | `Bytes` distinct from `Str` | 2 | twill, warp | 1.4.0 |
+| 24 | Iteration that does not materialise | 2 | twill, warp | **open** |
+| 25 | A way to fail that cannot be ignored | 1 | twill | 1.4.0, `abort` |
+| 26 | Allocation and memory counters | 1 | bobbin | 1.6.0 |
+| 27 | Ranged reads | 1 | warp | 1.6.0 |
+| 28 | Immutable top-level bindings | 1 | weft | **open** |
+| 29 | Optional and named arguments, or record update | 1 | weft | **open** |
+| 30 | A compiler barrier | 1 | bobbin | **open** |
+| 31 | `Dict` keyed by something other than `Str` | 1 | twill | **half**: `I64` keys, not identity |
+| 32 | An empty record, and removing a field | 1 | twill | **open** |
 
 ---
 
 ### 1. `Res[T, E]`, `Opt[T]`, or any way to return two values
+
+> **Delivered, 1.3.0, and checked from 1.6.0.** `Opt[T]` and `Res[T, E]` are
+> built in, `?` propagates a failure, and `match` reads either. `?` outside a
+> function or in a function that does not return one of them is a checker error
+> rather than a runtime surprise. The three workarounds below are no longer
+> forced; each satellite carries its own until it adopts the replacement.
 
 **Six callers.** twill `docs/needs.md` NEEDS-10 (`src/lex.tw:294`, `tokenize`)
 and NEEDS-22 (every environment lookup in `src/check.tw`). spool entry 10
@@ -108,6 +139,11 @@ twice as long as its concept list.
 
 ### 2. Function values with a declared type, as parameters and struct fields
 
+> **Delivered.** The type is spellable from 1.5.0, as `fn(A, B) -> C` and
+> `Fn(A, B) -> C`, wherever an annotation may appear, including a struct field.
+> Function values themselves landed in 1.7.0, which is what made entry 5's
+> comparison expressible: `sort(items, fn(p, q) = p.n < q.n)` runs today.
+
 **Six callers.** loom entry 3 is the clearest statement: `src/trainer.tw` `fit`
 takes `step` and `eval_batch`, `predict` takes `forward`, `default_step` takes
 `loss_fn`. bobbin entry 5: `src/harness.tw` `run`, `batch` and `auto_inner` all
@@ -135,6 +171,11 @@ This entry is also the prerequisite for entry 5. Every hand-written sort in the
 ecosystem exists because a comparator cannot be passed.
 
 ### 3. `enum` with payloads and exhaustive `match`
+
+> **Delivered.** `enum` with a payload and `match` landed in 1.3.0,
+> exhaustiveness in 1.6.0, and 1.7.0 turned a pattern into a tree: nested
+> patterns, literal patterns and guards. A payload is one value per variant, so
+> a variant carrying two things carries a struct.
 
 **Five callers.** twill NEEDS-3 (`src/ast.tw` is forty variants; `src/lex.tw:29`
 spells token kinds as `I64` constants and the `kind_name` ladder below it is the
@@ -181,6 +222,13 @@ than merely ugly. See "Where the workaround is silently wrong".
 
 ### 4. The bitwise operators, spelled, and `shr` on a negative `I64` defined
 
+> **Delivered, and the sign question is answered.** The operators landed as
+> calls in 1.3.0 and infix in 1.5.0: `band`, `bor`, `xor`, `shl`, `shr`, `bnot`.
+> **`shr` is arithmetic**, so `shr(-16, 2)` is `-4`, and
+> `docs/language-guide.md` says so and gives the `ushr` idiom for the logical
+> one. That settles the contradiction recorded at the end of this document: loom
+> assumed logical and this repository assumed arithmetic, and arithmetic won.
+
 **Five callers.** twill NEEDS-2 (`src/lex.tw:131` and `src/lex.tw:498` mask
 lead bytes) and NEEDS-85 (`src/float.tw` `ushr`, `udiv10`, `unonzero`). spool
 entry 6 (`src/sha256.tw`, `src/strutil.tw`). loom entry 7 (`src/rng.tw` `mix`,
@@ -217,7 +265,7 @@ Cheap to fix. Writing the answer down costs one paragraph in
 
 ### 5. A sort, or a comparison-function parameter
 
-> **Delivered.** `sort` orders numbers as well as strings and takes a comparison
+> **Delivered, 1.9.0.** `sort` orders numbers as well as strings and takes a comparison
 > as its second argument: `sort(xs, fn(a, b) = a.n < b.n)`. Every form is stable.
 > The comparison takes two elements rather than a key, which is what skein's
 > index sort needs, and it only became expressible once function values landed
@@ -267,6 +315,13 @@ one `sort_by` deletes.
 
 ### 6. Writing files, directories, and `stat`
 
+> **Delivered, 1.5.0 and 1.6.0.** `write_file`, `write_text_or` and one path
+> resolution rule landed in 1.5.0; `path_exists`, `path_is_dir`, `mkdir_all`,
+> `list_dir`, `remove_file`, `remove_dir`, `remove_all`, `rename`, `mtime`,
+> `file_size`, `temp_dir` and `cwd` by 1.6.0. `list_dir` answers a `Res`, so a
+> directory that cannot be read is a value the caller has to read rather than an
+> empty list.
+
 **Five callers.** spool entries 2 and 3 (`src/commands.tw` writes the lockfile,
 the manifest and the vendor README; `src/vendor.tw` needs `list_dir`, `is_dir`,
 `path_exists`, `mkdir_all`, `remove_all`). bobbin entry 4 (`src/report.tw`
@@ -292,7 +347,7 @@ depending on which branch answers.
 
 ### 7. A test runner
 
-**Done in this repository (2026-08-11).** `twill test [path ...]` discovers every
+**Delivered, 1.5.0 (written 2026-08-11).** `twill test [path ...]` discovers every
 `*_test.tw` under the given paths, runs each, and reports pass/fail with a
 summary, exiting non-zero on any failure -- so a new suite is in the run the
 moment it exists, with no CI list to maintain (`cmd/twill/test.go`). The shared
@@ -324,6 +379,12 @@ means, which is exactly the divergence a shared runner prevents.
 
 ### 8. `F64` as a first-class systems-mode type
 
+> **Delivered, 1.6.0, on both checkers by 1.6.7.** `F64` is one of the checked
+> systems-mode types, with the four operations, comparison, `f64_mod`, and
+> `f64()` and `i64()` in both directions. On the performance half of loom entry
+> 9: 1.3.0 stopped a number that needs no gradient from being a heap-allocated
+> tensor, which is the allocation that question was about.
+
 **Four callers.** weft entry 1 (`src/scale.tw` is F64 arithmetic from top to
 bottom; every source file). warp entry 2 (`src/sample.tw`, `src/augment.tw`,
 `src/strutil.tw`). loom entry 9 (`src/metrics.tw` `update` and `count`,
@@ -352,6 +413,12 @@ finds out.
 
 ### 9. Nested and generic containers
 
+> **Delivered, 1.3.0 and 1.7.0.** Generic annotations parse and check from
+> 1.3.0, and 1.7.0 added user-declared generics: `struct Box[T]`, `enum Tree[T]`
+> and `fn first[T](xs: Arr[T]) -> Opt[T]`. `Arr[Arr[I64]]` nests and indexes.
+> There is no monomorphization and none is needed, since the runtime is the same
+> code whatever `T` is.
+
 **Four callers.** twill NEEDS-72 (`Arr[Arr[I64]]` in `Odometer.contrib` and
 `einsum_plan`, `Arr[Tensor]` in `concat`, `split` and `backward`, `Arr[Bool]` in
 `resolve_perm`) and NEEDS-90 (`std/json.tw`, where `Json` contains `Arr[Json]`).
@@ -376,6 +443,11 @@ index wrong in the code that computes gradients.
 
 ### 10. `continue` and `break`
 
+> **Delivered, 1.4.0.** Both work in `while` and `for`, and the checker enforces
+> the scoping rules rather than leaving a stray `break` to the interpreter. They
+> are systems-mode keywords, so a numeric-mode program that uses `break` as a
+> name is unaffected.
+
 **Four callers.** twill NEEDS-12 (`src/lex.tw:305` and the whole scanner loop).
 spool entry 8 (`src/toml.tw`, `src/manifest.tw`, `src/lockfile.tw`,
 `src/resolve.tw`, `src/commands.tw`). loom entry 14 (`src/callback.tw` `fire_*`,
@@ -394,6 +466,11 @@ Cheap. This is a parser and an interpreter change with no design question in it,
 and it is the highest-ranked entry that is purely mechanical.
 
 ### 11. A monotonic clock
+
+> **Delivered, 1.6.0.** `mono_ns()` returns nanoseconds as an `I64` from a clock
+> that only goes forward, which is the shape this entry argues for in its last
+> line: milliseconds are a divide away, and the reverse is not true.
+> `clock_now_ms` remains for the wall time a log line wants.
 
 **Four callers.** bobbin entry 1 (`mono_ns`, `src/clock.tw`, and therefore every
 timing in the repository). twill NEEDS-39 (`now_ms`, `src/term/frame.tw`,
@@ -426,6 +503,14 @@ nanoseconds; the reverse is not true.
 
 ### 12. Reference semantics for `struct` and `Arr` parameters, stated
 
+> **Delivered: the sentence exists.** `docs/language-guide.md`, under "`struct`,
+> and what a parameter is", states the rule the three codebases were guessing
+> at: a `struct` has reference semantics, passing one passes a handle, assigning
+> to a field of a parameter mutates the caller's struct, and the same holds for
+> `Arr`, `Dict` and `Bytes`. It also states the exception that makes the rule
+> safe: `Record` is a different type and is not unified with `struct`, because
+> `grad` walks a record's structure and depends on records not aliasing.
+
 **Three callers.** twill NEEDS-5, NEEDS-42, NEEDS-67, NEEDS-71 and NEEDS-82.
 spool entry 14. loom entry 10.
 
@@ -449,6 +534,13 @@ not writing it is that three codebases are built on an assumption and the
 assumption is only checked when the interpreter exists.
 
 ### 13. `Str` concatenation, and a way to build one that is not quadratic
+
+> **Delivered, 1.4.0.** `a + b` joins two strings, and the non-quadratic half is
+> there too: `bytes_new`, `bytes_push` and `bytes_to_str` build a string by
+> appending, and `buf_new`, `buf_get8`, `buf_set8` and `buf_len` are the fixed
+> buffer underneath. The smaller gap in this entry's last paragraph is closed as
+> well: `chr(I64) -> Str` turns a byte back into a one-byte string, so spool's
+> nibble table is no longer the only way.
 
 **Three callers.** twill NEEDS-35, NEEDS-7 and NEEDS-99. spool entry 5. weft
 entry 7. Every other repository uses `+` on strings without filing an entry,
@@ -478,6 +570,14 @@ wrong and produce a frame whose column names disagree with its contents.
 
 ### 14. `src/term/` reachable from an installed package
 
+> **Delivered, 1.5.0, and by the route this entry asks for.** The import rule
+> was not widened. `src/term/` was promoted into the standard library as
+> `std/term`, embedded in the binary alongside every other `std` module, so
+> `import "std/term/color"` works from any directory with nothing vendored:
+> `ansi`, `box`, `caps`, `color`, `frame`, `theme` and `width`. weft's
+> `../twill_modules/...` path and the two capability ladders are no longer
+> needed by anything.
+
 **Three callers.** loom entry 8 (`src/report.tw`), bobbin entry 7
 (`src/report.tw`), weft entry 11 (`src/canvas.tw`, `src/chart.tw`,
 `src/theme.tw`, `src/live.tw`, and every test).
@@ -500,6 +600,13 @@ bad answers. The fix is not to widen the import rule. It is to promote
 capability detection, the palette and the determinate bar into `std/term`.
 
 ### 15. The float math builtins in systems mode
+
+> **Delivered, 1.4.0.** `f64_sqrt`, `f64_exp`, `f64_log`, `f64_sin`, `f64_cos`,
+> `f64_tanh`, `f64_pow`, `f64_mod`, `f64_floor`, `f64_ceil`, `f64_round` and
+> `f64_trunc` are systems-mode builtins, and they are the one implementation
+> this entry insists on rather than a second copy. weft's infinity guess has a
+> real answer now: `f64_bits` and `all_finite` read the representation instead
+> of comparing against `1.0e308`.
 
 **Three callers.** twill NEEDS-68 (`f64_exp`, `f64_log`, `f64_sin`, `f64_cos`,
 `f64_sqrt`, `f64_tanh`, for `src/tensor.tw`) and NEEDS-40 (`cos` for
@@ -526,6 +633,14 @@ so detecting one should not rest on a magic constant.
 
 ### 16. Number formatting: `str(I64)`, padding, fixed-point
 
+> **Delivered, 1.6.0 for the primitive and `std` for the rest.** `I64` became a
+> real 64-bit integer in 1.6.0, so `str(42)` is `42` and not `42.0`, which is
+> what NEEDS-45 was about: no trailing `.0` in a line number. Padding and
+> fixed-point are library functions rather than builtins:
+> `std/text.pad_left`/`pad_right`, `std/term/width` for the display-width
+> version, and `std/float.f64_fixed(x, prec)`. `num_to_text` and `f64_to_str`
+> are the primitives underneath.
+
 **Three callers.** twill NEEDS-45 and NEEDS-20. bobbin entry 12
 (`src/report.tw` `pad_left` and `pad_right`, `src/clock.tw` `fixed` and
 `pad_zero`). loom `src/report.tw` `fixed`, which is bobbin's function copied.
@@ -541,6 +656,15 @@ printer and a trailing `.0` would land in every line number, every column count
 and every axis index in every diagnostic.
 
 ### 17. A tensor that crosses the systems and numeric seam
+
+> **Half delivered, and the missing half is the one that matters.** `Tensor` is
+> a name a systems-mode annotation may write, and the checker accepts it. It
+> resolves to unknown (`internal/checker/systems.go`, the `case "Tensor"` arm),
+> deliberately: the name says only that the value is a tensor, and the shape
+> checker's own annotations are where a shape is said. So a tensor crosses the
+> seam **untyped**, and warp's "the shape check comes free from the existing
+> checker" does not follow yet. The design question this entry calls the largest
+> on warp's list is still open.
 
 **Three callers.** warp entry 11 (`src/sample.tw`, the whole file). loom entry 2,
 which is the same question wearing a different hat: loom needs a name for "a
@@ -562,6 +686,15 @@ systems` was defined by what a compiler needs, and a data loader is the first
 program that wants both halves at once. loom is the second.
 
 ### 18. A seeded generator that is a value rather than a global
+
+> **Delivered, 1.5.1.1.** `rng_open(seed)` returns a generator that is a value,
+> read with `rng_u53`, `rng_f64`, `rng_norm` and `rng_perm` and released with
+> `rng_close`. The global `seed(n)` still exists for a program that wants one
+> stream. **The primitive is delivered and this repository has not adopted it**:
+> `std/batch.tw` still calls `seed(s)` and `seed(s + c)` in
+> `shuffled_indices` and `stratified_indices`, so the shared-stream cost this
+> entry prices is still being paid by the library that filed it. That is
+> adoption work, not language work.
 
 **Three callers.** loom entry 6 (`src/rng.tw`, and therefore `src/trainer.tw`
 and `src/checkpoint.tw`). twill NEEDS-55 and NEEDS-95 (`std/batch.tw`
@@ -587,6 +720,13 @@ nothing. That is a property maintained by inspection.
 
 ### 19. Number parsing: `parse_i64`, `parse_f64`
 
+> **Delivered, 1.4.0, exact in 1.6.0, under different names.** They are
+> `i64_of_str(s) -> Opt[I64]` and `str_to_f64(s) -> Opt[F64]`, so the failure is
+> in the return type rather than in a sentinel. `i64_of_str` returning an exact
+> integer rather than a float was part of 1.6.0's `I64` work. The names are the
+> reason this stayed unnoticed: a needs file looking for `parse_i64` finds
+> nothing.
+
 **Two callers.** warp entry 6 (`src/strutil.tw`, and through it every reader in
 the library). twill NEEDS-18, NEEDS-19 and NEEDS-60.
 
@@ -605,6 +745,10 @@ silent numbers and one that accepts a subset rejects files the bootstrap reads.
 
 ### 20. `chr(I64) -> Str`
 
+> **Delivered, 1.4.0.** `chr(65)` is `"A"`, a byte and not a codepoint, which is
+> what both callers asked for. `std/term/ansi` emits real escape sequences
+> through it.
+
 **Two callers.** twill NEEDS-34 (`src/term/ansi.tw` `esc` and `bel`,
 `src/cli/banner.tw` `braille`). weft entry 3 (`src/canvas.tw` `braille`).
 
@@ -622,7 +766,7 @@ assume it exists. It is not in the self-hosting builtin list.
 
 ### 21. A process interface, or an HTTPS client
 
-> **The process interface is delivered.** `run(program, argv, dir) -> Res[Str, Str]`
+> **The process interface is delivered, 1.8.0.** `run(program, argv, dir) -> Res[Str, Str]`
 > exists, with the signature spool entry 1 asked for. It takes an argument vector
 > and never a shell, it inherits the environment so that shelling out to git
 > keeps borrowing the user's credentials, and `TWILL_NO_EXEC` turns it off --
@@ -655,6 +799,11 @@ scheduled by that sentence.
 
 ### 22. `Bool` as a name that can be written in an annotation
 
+> **Delivered, 1.6.0.** `Bool` is one of the checked systems-mode type names, so
+> `let flag: Bool = true` and `trailing: Bool` are what they look like. 1.6.2
+> closed the numeric-mode half, where a type name written in an annotation was
+> being read as an undeclared unit.
+
 **Two callers.** twill NEEDS-14 (`src/lex.tw:61` annotates `trailing: Bool`).
 spool entry 7 (a dozen places).
 
@@ -669,6 +818,12 @@ it is the cheapest entry in this document.
 
 ### 23. `Bytes` distinct from `Str`
 
+> **Delivered, 1.4.0.** `Bytes` is its own checked type, not an alias for `Str`,
+> with `bytes_new`, `bytes_push` and `bytes_to_str`, and the fixed buffer
+> (`buf_new`, `buf_get8`, `buf_set8`, `buf_len`) beside it. The conversion is a
+> call, which is the point: the place where a file's contents are trusted as
+> UTF-8 is now written down in the program.
+
 **Two callers.** twill NEEDS-7 (`src/bytes.tw`). warp entry 8
 (`src/datasets.tw` `read_idx` and `be32`, `src/stream.tw`).
 
@@ -682,6 +837,12 @@ whole of `src/bytes.tw` exists so that the compiler never builds a string by
 repeated `+`.
 
 ### 24. Iteration that does not materialise
+
+> **Open.** There is no iterator protocol. `for x in ...` takes a list or a
+> 1-D tensor and is eager, and `std/batch.tw`'s `epoch_batches` still returns
+> the whole epoch. The prerequisite this entry names is now met, since `Opt`
+> arrived in 1.3.0, so the `next() -> Opt[T]` shape is buildable; what has not
+> happened is choosing the protocol. This is the largest of the open entries.
 
 **Two callers.** twill NEEDS-96 (`std/batch.tw` `epoch_batches`,
 `eval_batches`). warp entry 14 (`src/pipeline.tw` `Iter`, `src/stream.tw`
@@ -704,8 +865,19 @@ someone eventually forgets to break.
 Ranked below the rest by the organising principle, and not dismissed by it. Two
 of them are blocking for the caller that filed them.
 
-**25. A way to fail that cannot be ignored** (twill NEEDS-94, `std/nn.tw`
-`init`). There is no `error`, no `panic`, no `assert`, and no way to return a
+Four of these eight are delivered (25, 26, 27, and half of 31); four are the
+bulk of what remains open in this document (28, 29, 30, 32). Each entry below
+says which.
+
+**25. A way to fail that cannot be ignored**, **delivered, 1.4.0** (twill
+NEEDS-94, `std/nn.tw` `init`). `abort(message)` stops the program with the
+message, and `Res` from entry 1 covers the recoverable half, which is the
+outcome this entry's placement in stage 5 predicted. There is no `assert`
+builtin; `if cond { abort(...) }` is it. **`std/nn.tw` has not adopted it**:
+`init` still prints and returns NaNs for an unknown strategy, and its comment
+still says there is no way to raise an error, so the cost described below is
+still being paid by the module that filed the entry. What follows is what the
+entry said while it was open. There was no `error`, no `panic`, no `assert`, and no way to return a
 failure that cannot be ignored. `nn.init` takes the strategy by name so nobody
 gets Xavier when they meant He without being told, and an unrecognised name is
 answered by a `print` followed by a tensor of NaNs. The print lands in the middle
@@ -717,7 +889,9 @@ cannot say a probability was passed where a logit was wanted, which is the most
 common mistake the library invites. One caller by the count, four modules by the
 evidence.
 
-**26. Allocation and memory counters** (bobbin entry 2). Five calls:
+**26. Allocation and memory counters**, **delivered, 1.6.0** (bobbin entry 2).
+All five exist, `mem_counters_available` included, so the "cannot measure" case
+answers honestly rather than printing a zero. Five calls:
 `mem_counters_available`, `mem_allocs`, `mem_bytes`, `mem_live_bytes`,
 `mem_tensors`. A language that cannot report its own allocation count cannot be
 profiled from inside. `mem_allocs` catches a regression that moves where code
@@ -729,12 +903,17 @@ they exist every reporter omits the memory columns. The `available` flag is not
 optional: printing a zero for "cannot measure" is the most misleading thing a
 profiler can do.
 
-**27. Ranged reads** (warp entry 5, `src/stream.tw` `fill`). One function,
-`read_file_at(path, offset, length)`. It is the entire content of "streaming"
+**27. Ranged reads**, **delivered, 1.6.0** (warp entry 5, `src/stream.tw`
+`fill`). One function,
+`read_file_at(path, offset, count)`, answering a `Res`. It is the entire content of "streaming"
 and every other part of `stream.tw` is written against it. The smallest possible
 addition that makes out-of-core data possible: no file handles, no seeking API.
 
-**28. Immutable top-level bindings** (weft entry 9). `src/canvas.tw`
+**28. Immutable top-level bindings**, **open** (weft entry 9). There is no
+`const` keyword in either lexer. The entry's own last sentence is the reason to
+decide before building: `let` binds a handle and `Arr` has reference semantics,
+so a binding-level `const` stops a reassignment and not a mutation through the
+handle, which is not what weft asked for. `src/canvas.tw`
 `QUADRANTS`, `src/theme.tw` `DENSITY`, `src/sparkline.tw` `LEVELS`,
 `src/svg.tw` `HEX` are lookup tables that any importer can reassign, because
 `Arr` has reference semantics and `let` binds a handle. A library whose palette
@@ -743,26 +922,48 @@ makes about which colour means what. This is the mirror of twill NEEDS-86, which
 asks whether a file-level `let` initialised by a call runs once, from the same
 uncertainty about what a file-level binding is.
 
-**29. Optional and named arguments, or record update** (weft entry 10). A chart
+**29. Optional and named arguments, or record update**, **open** (weft entry
+10). Neither form exists: a call site takes positional arguments only, and there
+is no update expression over a record. The two halves are not the same size, and
+the entry's "or" is doing real work: record update is one new expression form,
+while named arguments reach every arity check in both implementations and every
+builtin, whose arities are declared as word lists with no parameter names in
+them at all. A chart
 has a dozen settings and almost every caller changes two. The constructor takes
 the three that are always given and the rest are mutated on afterwards, so every
 optional setting is a statement rather than an argument and no configuration can
 be built by a pure expression. `fix_y` exists purely to give two of those
 mutations a name.
 
-**30. A compiler barrier** (bobbin entry 3). Not blocking today, because twill
+**30. A compiler barrier**, **open, and correctly so** (bobbin entry 3). No
+such builtin exists in either table. This is the one entry where doing nothing
+is still the right answer, on the entry's own argument, provided the pointer to
+`bobbin/src/harness.tw`'s `keep` survives. Not blocking today, because twill
 is interpreted and removes nothing. It becomes blocking the day it is not.
 `bench.keep` is a named identity function so there is one place to fix. Filed
 early on purpose: after the fact it is a retraction.
 
-**31. `Dict` keyed by something other than `Str`** (twill NEEDS-79 and
-NEEDS-81). The formatter renders a line number with `str()` at every set and
+**31. `Dict` keyed by something other than `Str`**, **half delivered** (twill
+NEEDS-79 and NEEDS-81). `Dict[I64, V]` works: `dict_set(d, 7, "seven")` and
+`dict_must(d, 7)` do what they look like, so NEEDS-79's `str()` at every set and
+get is gone from the source. It is not gone from the machine: a dict key is a
+string internally and an integer key maps to its decimal string
+(`internal/interp/builtins.go`, `dictKey`), so the conversion moved rather than
+disappeared. NEEDS-81's half does not follow at all, because that key is by
+value: keying by identity, which is what the tape's scan wants, is a different
+request wearing the same words.
+
+What follows is what the entry said while it was open. The formatter renders a
+line number with `str()` at every set and
 every get, which is a decimal conversion per statement printed. The tape's
 `tape_node_of_tensor` is worse: a backwards linear scan calling `is_same`, so a
 forward pass over a tape of n entries costs O(n^2) identity comparisons. Both
 want the same relaxation of the key type.
 
-**32. An empty record, and removing a field** (twill NEEDS-98). `{}` is a block
+**32. An empty record, and removing a field**, **open** (twill NEEDS-98).
+`record()` is still an unknown name and `{}` is still a block. `dict_del`
+arrived in 1.4.0 and removes a *dict* key, which is not this: a record's fields
+are not a dict. `{}` is a block
 and evaluates to unit, so there is no empty record, and nothing removes a field.
 `with_field` builds a record with a name known at run time and is unusable
 because there is nothing to start from. The consequence is that `std/frame.tw`
@@ -773,6 +974,13 @@ basic operation a table has. Two primitives close it and either alone would do.
 ---
 
 ## Stages
+
+> **Stages 0 to 4 are done, and stage 5 is what is left.** This section is kept
+> as it was written, because the constraints it argues are the reason the work
+> landed in the order it did, and because a plan is worth more as a record than
+> as a rewrite. Read the tense as the plan's, not as today's. Of stage 5's six
+> entries, 25 is delivered, 17 and 31 are half delivered, and 24, 28 and 29
+> remain, joined by 30 and 32 from the stages above them.
 
 Ranking by caller count says what to build. It does not say what to build first,
 because the entries are not independent. This section is the ordering, and the
@@ -908,6 +1116,12 @@ out not to cover the abort case, this moves to stage 2.
 | 4 | the tooling surface | 6 of 6 |
 | 5 | the design questions | 6 of 6, better |
 
+Every feature stages 1 to 4 list is delivered, with the exceptions named in the
+ranking table above (30 from stage 4, 32 from stage 3). The right-hand column
+was never a measurement taken in this repository: it is what the plan predicted
+each stage would unlock in six repositories it cannot see, and it is left as the
+prediction it was rather than restated as a result.
+
 ---
 
 ## Where the workaround is silently wrong
@@ -919,6 +1133,14 @@ correct. Those cost time and readability and nothing else.
 The ones below are different. Each produces a plausible wrong answer with no
 symptom at the point of the mistake. They are a different kind of debt and they
 should be paid first within their stage.
+
+> **Status.** The language now provides the answer to every one of these except
+> 6, whose second half needs entry 31's identity keying and is still open, and 7,
+> which is a decision rather than a debt. 2 is settled in favour of arithmetic;
+> `f64_signbit` in 8 is a builtin; `all_finite` and `f64_bits` answer 9. Each
+> item still describes a repository's source, though, and a workaround does not
+> disappear when its replacement ships. These are the ten places to look first
+> in an adoption pass.
 
 **1. Enum discriminants as `I64` constants with if-chains.** Six of them, listed
 under entry 3. Adding a variant compiles and silently does nothing. bobbin's
@@ -1005,12 +1227,19 @@ infinitely fast operation.
 
 ## Bugs this exercise found in the Go bootstrap
 
-Three. None is fixed, because the owner has ruled no further Go changes. They
-are recorded here with what each one costs a user, since the cost is what
-decides whether the ruling should hold.
+Three. **Two are fixed and one is still live, in a worse form than described
+here.** The ruling that no further Go changes would be made did not hold, and
+the record of that is the changelog: 1.6 through 1.9 are Go releases. Each entry
+below now opens with its status; the cost paragraphs are left as written,
+because the cost is what decided the ruling.
 
 **1. The lexer panics on a file ending in an unterminated string whose last byte
-is a backslash.** `internal/lexer/lexer.go`, recorded as NEEDS-33. Source ending
+is a backslash.** **Fixed in 1.6.0.** The escape branch checks for input before
+advancing and reports "unterminated string" at the opening quote, which is the
+diagnosis `src/lex.tw` gave and the reason this was found at all;
+`TestUnterminatedStringEndingInABackslash` holds it. `docs/BUGS.md` entry 2 is
+the full write-up. What follows is the state at the time of filing.
+`internal/lexer/lexer.go`, recorded as NEEDS-33. Source ending
 in `x = "ab\` makes the lexer index past the end of its rune slice. The string
 branch consumes the backslash and calls `advance()` for the escaped character
 without checking that one exists.
@@ -1023,8 +1252,31 @@ no way to know the fix is to add a quote. `src/lex.tw:405` checks, and reports
 file's problem is the missing close quote, not the backslash. So the self-hosted
 lexer is already correct here and the bootstrap is not.
 
-**2. The einsum gradient silently returns zeros for a bare summed axis.**
-`internal/tensor/einsum.go`, in `Einsum`'s backward closure. Confirmed by
+**2. The einsum gradient is wrong for a bare summed axis.** **Still open, and
+the symptom has changed: it now panics rather than answering zeros.** Checked on
+2026-09-04 against the current binary. This program
+
+```rust
+let A = tensor([[1.0, 2.0], [3.0, 4.0]])
+fn f(x) = sum(einsum("ij->i", x))
+print(grad(f)(A))
+```
+
+dies with `panic: runtime error: index out of range [0] with length 0` inside
+`einsumRaw`, reached from `Einsum`'s backward closure. The `continue` quoted
+below is still in the source and is still wrong, but it is no longer what
+happens: the label the backward einsum cannot size now sizes to zero instead of
+returning an error, so the loop that discards the error is never reached and the
+contraction indexes an empty output buffer.
+
+A crash is a better failure than a silent zero, so the *cost* paragraph below
+overstates today's damage while the *defect* is unchanged. It is still the
+serious one, because it is on the ordinary path: summing an axis away is what
+einsum is for. It is not in `docs/BUGS.md`'s numbered list, which is a gap in
+that document rather than in this one.
+
+What follows is the mechanism as filed. `internal/tensor/einsum.go`, in
+`Einsum`'s backward closure. Confirmed by
 reading the code rather than inferred.
 
 The gradient of an einsum is another einsum with the operand's subscript as the
@@ -1055,6 +1307,12 @@ right. Every einsum that sums an axis away without a matching output label hits
 this, and summing an axis away is the ordinary case.
 
 **3. The checker's builtin table is missing `argsort`, `argtopk` and `split`.**
+**Fixed.** `argsort` went into `internal/checker`'s table in 1.4.0 and all three
+are there now. The two tables were extracted and compared on 2026-09-04:
+`internal/checker/checker.go`'s `builtinNames` and `src/builtins.tw`'s `NAMES`
+hold **exactly the same 247 names**, with nothing on either side the other
+lacks, which is the "fix both tables together" this entry ends by asking for.
+What follows is the state at the time of filing.
 `internal/checker`, mirrored in `src/check.tw` `builtin_names`, recorded as
 NEEDS-66. All three are defined in `internal/interp/builtins.go` and work when
 run.
@@ -1101,15 +1359,22 @@ different files, `src/check.tw:254` and `src/fmt.tw:149`. Each undercount is
 correct from where it was written, which is the point: no single agent could see
 the real number, and that is the argument for consolidating.
 
-**loom and this repository assume opposite `shr` semantics.** loom entry 7
-assumes logical and states that splitmix64 is wrong with arithmetic. twill
-NEEDS-85 assumes arithmetic, because that is Go's answer, and builds three
-helpers on it. Covered above as the most valuable finding; recorded here as a
-contradiction because it is one.
+**loom and this repository assume opposite `shr` semantics.** **Settled:
+arithmetic.** loom entry 7 assumed logical and stated that splitmix64 is wrong
+with arithmetic. twill NEEDS-85 assumed arithmetic, because that is Go's answer,
+and built three helpers on it. Arithmetic is what shipped and
+`docs/language-guide.md` says so in terms, with `shr(-8, 1) == -4` and the
+`ushr` idiom written out for the logical one, so a program that needs the
+logical shift has a supported way to get it. This was the most valuable finding
+in the exercise and it is the one that most needed an answer rather than a
+ranking.
 
-**Three spellings of the bitwise operators.** spool entry 6 assumes infix with a
-prefix `not`. loom entry 7 writes builtin calls, `xor(a, b)`. weft entry 6 asks
-for either and says it does not mind which. Nobody is wrong and nobody agrees.
+**Three spellings of the bitwise operators.** **Settled: both, deliberately.**
+spool entry 6 assumed infix with a prefix `not`. loom entry 7 wrote builtin
+calls, `xor(a, b)`. weft entry 6 asked for either and said it did not mind
+which. `band`, `bor`, `xor`, `shl` and `shr` are infix operators and are also
+callable as builtins, and complement is `bnot`, so two of the three spellings
+are right and the third differs only in the name of the complement.
 
 **warp's baseline is not the others' baseline.** warp's needs file states its
 baseline as milestone 1 including `enum` with exhaustive `match`, `Opt` and
@@ -1154,9 +1419,11 @@ and an estimate with no attempt behind it is a number that later gets treated as
 a commitment. The stages carry the ordering, and within a stage the caller count
 carries the priority.
 
-Nothing here is a promise about a release either. It is a queue, ordered by
-evidence, and the evidence is that six programs were written and six programs do
-not run.
+Nothing here is a promise about a release either. It was a queue, ordered by
+evidence, and the evidence was that six programs were written and six programs
+did not run. That is no longer the state: 1.3 through 1.9 delivered all but
+seven of these entries, and the sentence is kept because it is the argument that
+got them delivered, not because it still describes the language.
 
 ---
 

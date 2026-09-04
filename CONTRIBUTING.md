@@ -43,9 +43,22 @@ Or use the Makefile: `make build`, `make test`, `make check`, `make bench`,
 detector over `internal/tensor` and `internal/interp`, and every example as a
 smoke test.
 
-There is no way to run `src/` yet. Changes there are reviewed by reading, and by
-the differential harness in `tools/diff/` where the corresponding Go component
-exists.
+`src/` runs on the bootstrap. `./twill run src/cli/main.tw run file.tw` runs a
+program through the self-hosted toolchain, and `check` and `fmt` work the same
+way, so a change there can be executed rather than only read.
+
+Three things check it, and they are not the same thing:
+
+- `internal/interp/selfhost_test.go` runs `src/` on the Go interpreter and
+  compares the two implementations, `runBothWays` on printed output and
+  `runSelfHostedCheck` on diagnostics. These are the bulk of `internal/interp`'s
+  runtime and they are skipped under `-short`, which is why `make race` passes
+  `-short` and `make test` does not.
+- `./twill test std/tests` is the twill-level suite, 17 files, about a second.
+- `tools/diff/` compares two binaries over the fixture corpus in `testdata/`.
+  Nothing in CI or the Makefile runs it, and its checked-in goldens have drifted
+  behind the corpus, so `-verify` reports mismatches on a clean checkout. Read a
+  diff before re-recording: a real regression would appear in the same list.
 
 ## Layout
 
