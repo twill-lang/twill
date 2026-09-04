@@ -52,6 +52,10 @@ func (t *Tracer) replay() {
 		return
 	}
 	t.stats.Replayed++
+	// Every node now open is about to be evaluated: the graph is finished with
+	// no outputs, and ir.Eval walks nodes rather than outputs, so there is no
+	// liveness to skip anything by.
+	t.stats.Computed += len(t.order)
 	g, err := t.finish(nil)
 	if err != nil {
 		t.fail(err)
@@ -109,6 +113,11 @@ func (t *Tracer) compileAndRun(live []*tensor.Tensor) bool {
 		ph.Data = outs[k].Data
 		ph.Shape = outs[k].Shape
 	}
+	// The program ran, and the program is the whole graph: ir.Fuse gives every
+	// unabsorbed node a region and codegen emits every region, so a node that no
+	// output reads is still computed once the graph is compiled at all. The
+	// deletion happened above, in the len(outRefs) == 0 return, or not at all.
+	t.stats.Computed += len(t.order)
 	t.stats.Compiled++
 	return true
 }
@@ -206,6 +215,7 @@ func (t *Tracer) CloseGrad(result *tensor.Tensor) (value float64, ok bool) {
 	// The result placeholder is still in the interpreter's hands.
 	result.Data = outs[0].Data
 	result.Shape = outs[0].Shape
+	t.stats.Computed += len(t.order)
 	t.stats.Compiled++
 	t.stats.GradFast++
 	return outs[0].Data[0], true
@@ -215,6 +225,7 @@ func (t *Tracer) CloseGrad(result *tensor.Tensor) (value float64, ok bool) {
 // have consumed the builder before deciding to fall back.
 func (t *Tracer) replayGraph(g *ir.Graph) {
 	t.stats.Replayed++
+	t.stats.Computed += len(t.order)
 	sub := make(map[int]*tensor.Tensor, len(t.order))
 	for i, ph := range t.order {
 		sub[int(t.phRef[i])] = ph
