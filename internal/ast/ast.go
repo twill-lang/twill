@@ -91,7 +91,12 @@ type Let struct {
 	// unambiguously as a type rather than a unit.
 	TypeName string
 	Value    Expr
-	Line     int
+	// Const marks a `const` binding rather than a `let`. It binds once: nothing
+	// may be assigned through the name afterwards, which is what a file-level
+	// lookup table needs, since a plain import makes that binding shared with
+	// every file that imports it. See docs/roadmap.md entry 28.
+	Const bool
+	Line  int
 }
 
 type FnDecl struct {

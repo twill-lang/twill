@@ -500,11 +500,15 @@ fn unit_from_anno(a: ast.UnitAnno) -> Dict[Str, I64] {
 
 struct CheckEnv {
   vars: Dict[Str, Type],
+  # The subset of vars bound by `const`, each mapped to the line it was bound
+  # on. Kept per scope rather than per name so that a `let` shadowing a `const`
+  # in an inner scope is an ordinary mutable binding.
+  consts: Dict[Str, I64],
   parent: Opt[CheckEnv],
 }
 
 fn new_env(parent: Opt[CheckEnv]) -> CheckEnv =
-  CheckEnv { vars: dict_new(), parent: parent }
+  CheckEnv { vars: dict_new(), consts: dict_new(), parent: parent }
 
 fn env_get(e: CheckEnv, name: Str) -> Opt[Type] {
   let cur: Opt[CheckEnv] = Some(e)
@@ -524,6 +528,24 @@ fn env_get(e: CheckEnv, name: Str) -> Opt[Type] {
 
 fn env_define(e: CheckEnv, name: Str, t: Type) {
   dict_set(e.vars, name, t)
+}
+
+# The line a name's `const` binding was made on, or None if the name resolves to
+# an ordinary binding or to nothing. It stops at the first scope that binds the
+# name, so a `let` of the same name in a nearer scope shadows the const and is
+# mutable.
+fn env_const_line(e: CheckEnv, name: Str) -> Opt[I64] {
+  let cur: Opt[CheckEnv] = Some(e)
+  while true {
+    match cur {
+      Some(env) => {
+        if dict_has(env.vars, name) { return dict_get(env.consts, name) }
+        cur = env.parent
+      },
+      None => return None,
+    }
+  }
+  None
 }
 
 # Assignment rebinds where the name was defined, walking outward, and defines
@@ -835,12 +857,21 @@ fn check(prog: ast.Program) -> Arr[Diagnostic] {
   # As with functions this only asserts the name exists; infer_stmt still types
   # the binding when the walk reaches it, and evaluation order is the evaluator's
   # concern, not the checker's.
+  #
+  # A top-level `const` is registered as one here rather than when the walk
+  # reaches it, because a function declared above the binding may assign to it,
+  # and that assignment is checked when its declaration is reached. warp's
+  # `examples/train.tw` has exactly that shape: `train_step` writes `STEPS`
+  # eight lines above the `let STEPS` it writes.
   for s in prog.body {
     match s {
       SLet(st) => {
         match env_get(env, st.name) {
           Some(_) => unit,
           None => env_define(env, st.name, TUnknown),
+        }
+        if st.is_const and not dict_has(env.consts, st.name) {
+          dict_set(env.consts, st.name, st.line)
         }
       },
       _ => unit,
@@ -1925,6 +1956,22 @@ fn systems_builtin_result(name: Str, args: Arr[Type]) -> Opt[Type] {
   None
 }
 
+# The name an assignment target ultimately reaches: `x` for `x`, for `x.f`, for
+# `x[i]` and for `a.d[i]`. An assignment through a call or any other expression
+# has no base name, and reports nothing.
+fn lvalue_base(target: ast.Expr) -> Opt[Str] {
+  let cur: ast.Expr = target
+  while true {
+    match cur {
+      EIdent(x) => return Some(x.name),
+      EField(x) => cur = x.target,
+      EIndex(x) => cur = x.target,
+      _ => return None,
+    }
+  }
+  None
+}
+
 # ---- statements ------------------------------------------------------------
 
 fn infer_stmt(c: Checker, s: ast.Stmt, env: CheckEnv) {
@@ -1971,6 +2018,15 @@ fn infer_stmt(c: Checker, s: ast.Stmt, env: CheckEnv) {
         None => env_define(env, st.name, rhs),
       }
       }
+      # `const` binds in this scope, whichever of the three branches above did
+      # the binding. A top-level one is already recorded by the prelude; this is
+      # what makes a `const` inside a function work, and what lets an inner `let`
+      # of the same name shadow an outer `const` and stay mutable.
+      if st.is_const {
+        dict_set(env.consts, st.name, st.line)
+      } else {
+        dict_del(env.consts, st.name)
+      }
     },
     SFn(st) => {
       env_define(env, st.name, TFn(FnType {
@@ -1984,6 +2040,25 @@ fn infer_stmt(c: Checker, s: ast.Stmt, env: CheckEnv) {
     },
     SAssign(st) => {
       let v: Type = infer_expr(c, st.value, env)
+      # A `const` is bound once, and the name is the whole of the guarantee:
+      # `HEX = other()` swaps the table, and `HEX[0] = "#000"` edits the one
+      # everybody is reading, so both are refused. What cannot be refused here is
+      # a mutation that does not go through the name, `push(HEX, x)` or a
+      # function handed the handle, because `Arr` has reference semantics and
+      # nothing tracks where a handle goes. docs/language-guide.md says so where
+      # `const` is introduced; docs/roadmap.md entry 28.
+      match lvalue_base(st.target) {
+        Some(base) => {
+          match env_const_line(env, base) {
+            Some(at) => report(c, st.line, bytes.concat(base,
+              bytes.concat(" is declared const on line ",
+              bytes.concat(str(at),
+                ", so nothing may be assigned through that name: not the binding, and not an element or field of it. Bind a new name for the changed value, or declare it with let if it is meant to change.")))),
+            None => unit,
+          }
+        },
+        None => unit,
+      }
       match st.target {
         # A bare name rebinds where it was defined, walking outward.
         EIdent(id) => env_assign(env, id.name, v),

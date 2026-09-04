@@ -2,6 +2,42 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`const`, a binding that cannot be assigned to.** It is written wherever a
+  `let` can be, and both checkers refuse every assignment through the name, the
+  binding itself and an element or field of it alike:
+
+  ```
+  HEX is declared const on line 2, so nothing may be assigned through that
+  name: not the binding, and not an element or field of it. Bind a new name
+  for the changed value, or declare it with let if it is meant to change.
+  ```
+
+  The reason it exists is the top level. A plain `import` drops a file's
+  top-level definitions into the importing scope and they stay the one binding,
+  so a lookup table declared with `let` is writable by anything that imports it,
+  and every other importer then reads the replacement. weft's `QUADRANTS`,
+  `DENSITY`, `LEVELS` and `HEX` are the reported case: a palette a caller can
+  replace is a theme file that cannot keep the promise it makes about which
+  colour means what. `docs/roadmap.md` entry 28.
+
+  `let` was **not** made read-only at the top level instead, which is the other
+  half of what weft asked for. A sweep of 643 `.tw` files across twill, `std`,
+  `testdata`, `examples` and the six satellites found module-level mutable state
+  in this repository's own `std/tests/harness.tw`, which counts passes and
+  failures in a top-level binding written from inside `check`, in warp's
+  `examples/train.tw`, and in fourteen numeric-mode examples whose training loop
+  is written at file level. Making `let` read-only would have refused all of
+  them, so the guarantee is asked for rather than imposed.
+
+  Two limits are deliberate and are written down in `docs/language-guide.md`
+  under **`const`**. It is not a deep freeze: `HEX[0] = ...` is refused but
+  `push(HEX, x)` is not, because `Arr` has reference semantics and nothing
+  tracks where a handle goes. And it does not reach across files: each file is
+  checked on its own, so an importer assigning the name is a hole the
+  single-file checker cannot see. Entry 28's aliasing half is still open.
+
 ### Changed
 
 - **A function defined twice in one file is now refused.** Both checkers report

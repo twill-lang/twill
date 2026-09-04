@@ -61,7 +61,7 @@ in the sources" at the end.
 | 25 | A way to fail that cannot be ignored | 1 | twill |
 | 26 | Allocation and memory counters | 1 | bobbin |
 | 27 | Ranged reads | 1 | warp |
-| 28 | Immutable top-level bindings | 1 | weft |
+| 28 | Immutable top-level bindings **(partly delivered: `const`)** | 1 | weft |
 | 29 | Optional and named arguments, or record update | 1 | weft |
 | 30 | A compiler barrier | 1 | bobbin |
 | 31 | `Dict` keyed by something other than `Str` | 1 | twill |
@@ -734,14 +734,45 @@ profiler can do.
 and every other part of `stream.tw` is written against it. The smallest possible
 addition that makes out-of-core data possible: no file handles, no seeking API.
 
-**28. Immutable top-level bindings** (weft entry 9). `src/canvas.tw`
-`QUADRANTS`, `src/theme.tw` `DENSITY`, `src/sparkline.tw` `LEVELS`,
-`src/svg.tw` `HEX` are lookup tables that any importer can reassign, because
-`Arr` has reference semantics and `let` binds a handle. A library whose palette
-can be reassigned by a caller has no way to keep the promise its theme file
-makes about which colour means what. This is the mirror of twill NEEDS-86, which
-asks whether a file-level `let` initialised by a call runs once, from the same
-uncertainty about what a file-level binding is.
+**28. Immutable top-level bindings** (weft entry 9). **Partly delivered:
+`const`.** `src/canvas.tw` `QUADRANTS`, `src/theme.tw` `DENSITY`,
+`src/sparkline.tw` `LEVELS`, `src/svg.tw` `HEX` are lookup tables that any
+importer can reassign, because `Arr` has reference semantics and `let` binds a
+handle. A library whose palette can be reassigned by a caller has no way to keep
+the promise its theme file makes about which colour means what. This is the
+mirror of twill NEEDS-86, which asks whether a file-level `let` initialised by a
+call runs once, from the same uncertainty about what a file-level binding is.
+
+weft asked for either a `const` or a read-only top-level `let`, and the choice
+between them was the design question this entry was parked on. It is answered by
+measurement rather than taste: a read-only `let` was implemented and swept over
+643 `.tw` files across twill, `std`, `testdata`, `examples` and the six
+satellites, and it refused module-level mutable state in this repository's own
+`std/tests/harness.tw` (the pass and fail counters, written from inside
+`check`), in warp's `examples/train.tw`, and in fourteen numeric-mode examples
+whose training loop is written at file level. Top-level mutation is an idiom
+here, not an accident, so the guarantee has to be asked for. `const` is that
+keyword: it binds wherever `let` does, and both checkers refuse every assignment
+through the name, the binding and an element or field of it alike.
+
+Two parts of this entry are still open, and both come from the aliasing half
+rather than the binding half.
+
+- **`const` is not a deep freeze.** It guards what is written through the name,
+  so `HEX[0] = ...` is refused, but `push(HEX, x)` is not, and neither is a
+  function handed the handle. Closing that needs a frozen aggregate, or an
+  effects rule about where a handle may go, and neither is a checker rule about
+  one binding.
+- **`const` does not reach across files.** The checker reads one file (see the
+  header of `internal/checker/imports.go`, and the enum exception that proves
+  the rule), so an importer assigning the name is a hole it cannot see. That is
+  weft's complaint stated exactly, and it is not closed. Closing it needs the
+  import walk to collect top-level binding names as well as enums, in both
+  checkers, and the self-hosted checker does not read imported files at all
+  today.
+
+So a library can now say what it means, and a caller that does the wrong thing
+in its own file is refused. A caller that does it from another file is not yet.
 
 **29. Optional and named arguments, or record update** (weft entry 10). A chart
 has a dozen settings and almost every caller changes two. The constructor takes
@@ -885,7 +916,8 @@ the best value in this stage.
 ### Stage 5: the design questions
 
 Entries 17, 24, 25, 28, 29, and 31. The tensor across the seam. Generators. A
-way to fail. `const`. Named arguments. `Dict` keyed by identity.
+way to fail. `const` (landed; entry 28's aliasing half is still a design
+question). Named arguments. `Dict` keyed by identity.
 
 These are last because each needs a decision rather than an implementation, and
 because none of them stops a codebase running. Entry 17 is the largest of them

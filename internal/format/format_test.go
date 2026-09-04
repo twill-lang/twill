@@ -178,3 +178,22 @@ func TestPatternsSurviveFormatting(t *testing.T) {
 		}
 	}
 }
+
+// `const` and `let` are one node with a flag, so the formatter is the place
+// where the distinction is easiest to lose. Printing a `const` as a `let` would
+// turn a refusal into silence, and `twill fmt --write` would do it in place.
+func TestConstSurvivesFormatting(t *testing.T) {
+	cases := map[string]string{
+		"const  K=1": "const K = 1\n",
+		"mode systems\nconst K: I64 = 1\nlet n: I64 = 0\n": "mode systems\n\nconst K: I64 = 1\nlet n: I64 = 0\n",
+	}
+	for in, want := range cases {
+		got, err := format.Source(in)
+		if err != nil {
+			t.Fatalf("%q: %v", in, err)
+		}
+		if got != want {
+			t.Errorf("format(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

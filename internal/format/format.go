@@ -129,7 +129,11 @@ func (p *printer) stmt(s ast.Stmt, indent int) {
 		} else if st.TypeName != "" {
 			name += ": " + st.TypeName
 		}
-		p.lineC(indent, "let "+name+" = "+p.expr(st.Value), st.Line)
+		kw := "let "
+		if st.Const {
+			kw = "const "
+		}
+		p.lineC(indent, kw+name+" = "+p.expr(st.Value), st.Line)
 	case *ast.Assign:
 		p.lineC(indent, p.expr(st.Target)+" = "+p.expr(st.Value), st.Line)
 	case *ast.FnDecl:

@@ -524,6 +524,52 @@ x = x + 1      # reassign an existing binding (error if not yet bound)
 `let` always introduces a new variable. Plain assignment updates the nearest
 existing binding, which is what makes training loops work.
 
+### `const`
+
+`const` binds the way `let` does and then refuses every assignment through the
+name:
+
+```rust
+const HEX = ["#000", "#fff"]
+HEX = other()      # refused
+HEX[0] = "#eee"    # refused
+```
+
+It is written wherever a `let` can be, and the reason it exists is the top
+level. A plain `import` drops a file's top-level definitions into the importing
+scope, and they stay **the one binding**, so a lookup table a library declares
+with `let` can be replaced by anything that imports it, and every other importer
+then reads the replacement. A theme file cannot promise which colour means what
+until the table is a `const`.
+
+Two things `const` deliberately does not do.
+
+It is not a deep freeze. It guards what is written through the name, so
+`HEX[0] = ...` is refused, but `push(HEX, x)` is not, and neither is a function
+handed the handle: `Arr`, `Dict`, `struct` and `Bytes` have reference semantics
+(see **`struct`, and what a parameter is**) and nothing tracks where a handle
+goes. `const` says this name will not be pointed somewhere else and will not be
+edited here.
+
+It does not reach across files. Each file is checked on its own, so a `const` in
+one file is a rule about that file. An importer assigning the name is a hole the
+single-file checker cannot see.
+
+A `let` in a nearer scope is a different binding, and it is mutable:
+
+```rust
+const K: I64 = 1
+fn f() -> I64 {
+  let K: I64 = 2   # a new binding, not the const
+  K = 3            # fine
+  K
+}
+```
+
+`let` was left mutable at the top level on purpose. Module-level counters are
+written that way across the ecosystem, including by this repository's own
+`std/tests/harness.tw`, so the guarantee is asked for rather than imposed.
+
 ## Functions
 
 ```rust

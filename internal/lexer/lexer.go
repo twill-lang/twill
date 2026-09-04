@@ -37,7 +37,7 @@ func (e *SyntaxError) Error() string {
 }
 
 var keywords = map[string]bool{
-	"let": true, "fn": true, "if": true, "else": true,
+	"let": true, "const": true, "fn": true, "if": true, "else": true,
 	"while": true, "for": true, "in": true, "return": true,
 	"import": true, "true": true, "false": true,
 	"and": true, "or": true, "not": true,

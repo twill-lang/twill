@@ -165,7 +165,7 @@ func (p *parser) parseStmt() (ast.Stmt, error) {
 	defer func() { p.stmtCol = outerCol }()
 	if t.Kind == lexer.KEYWORD {
 		switch t.Value {
-		case "let":
+		case "let", "const":
 			return p.parseLet()
 		case "fn":
 			if p.peek(1).Kind == lexer.IDENT {
@@ -225,8 +225,13 @@ func (p *parser) parseStmt() (ast.Stmt, error) {
 	return &ast.ExprStmt{X: x, Line: t.Line}, nil
 }
 
+// parseLet reads `let` and `const`, which differ only in whether the binding
+// may be assigned to afterwards. The two spell the same statement, so they
+// share a node and a parser and part company in the checker.
 func (p *parser) parseLet() (ast.Stmt, error) {
-	line := p.next().Line // 'let'
+	kw := p.next() // 'let' or 'const'
+	line := kw.Line
+	isConst := kw.Value == "const"
 	name, err := p.expectIdent()
 	if err != nil {
 		return nil, err
@@ -263,7 +268,7 @@ func (p *parser) parseLet() (ast.Stmt, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &ast.Let{Name: name, Unit: unit, TypeName: typeName, Value: v, Line: line}, nil
+	return &ast.Let{Name: name, Unit: unit, TypeName: typeName, Value: v, Const: isConst, Line: line}, nil
 }
 
 func (p *parser) parseFnDecl() (ast.Stmt, error) {

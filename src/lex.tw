@@ -153,6 +153,7 @@ fn index_of_byte(s: Str, c: I64) -> I64 {
 fn keyword_table() -> Dict[Str, Bool] {
   let d: Dict[Str, Bool] = dict_new()
   dict_set(d, "let", true)
+  dict_set(d, "const", true)
   dict_set(d, "fn", true)
   dict_set(d, "if", true)
   dict_set(d, "else", true)
