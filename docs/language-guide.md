@@ -1515,6 +1515,17 @@ arbitrary and whose differences are the only thing that means anything.
 not to measure a duration with, since it steps when the system's time is
 corrected.
 
+Measurement: `black_box(x)` returns `x` and is the one place a program can
+stand to say that a value was read. A benchmark throws its body's result away,
+and a thrown-away result is work a compiler may delete; wrapping it makes the
+value escape, so the work that produced it is done. It is the identity on every
+type, in both modes, and it preserves shape, dtype and gradients, so inserting
+one cannot change an answer -- only, at most, a timing. What it guarantees and
+what it does not is `docs/CODEGEN.md` section 12, and the short version is that
+it stops the elimination this implementation actually performs and is a promise
+about the ones it does not perform yet. It is not `stop_grad`: a gradient runs
+straight through a barrier.
+
 Gradient checking: `std/gradcheck` compares `grad(f)` against a difference
 quotient, for a tensor argument (`check_at`) or a whole parameter tree
 (`check_tree`). It is a development tool, costing two evaluations of `f` per

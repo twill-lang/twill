@@ -776,6 +776,18 @@ func systemsBuiltinResult(name string, args []Type) (Type, bool) {
 		return scalar(), true
 	case "chr", "str_quote", "f64_to_str", "bytes_to_str", "read_text_or", "resolve_path", "f64_hex", "num_to_text":
 		return tStr{}, true
+	case "black_box":
+		// The barrier hands back exactly what it was given, and the type says
+		// so. This is deliberately not the treatment `grad` gets: `grad` is a
+		// shape barrier (docs/CORRECTNESS.md, "grad is a shape barrier") and
+		// wrapping an expression in it loses the checking downstream of it. A
+		// barrier that also blinded the checker would be a poor trade for a
+		// benchmark, which is code nobody reads closely and every reason to
+		// check hard. Shape, dtype and unit ride straight through.
+		if t := arg(0); t != nil {
+			return t, true
+		}
+		return tUnknown{}, true
 	case "arr_push", "push":
 		if a, ok := arg(0).(tArr); ok {
 			return a, true

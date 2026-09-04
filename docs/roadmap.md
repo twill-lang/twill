@@ -63,7 +63,7 @@ in the sources" at the end.
 | 27 | Ranged reads | 1 | warp |
 | 28 | Immutable top-level bindings **(delivered: `const`; aliasing open)** | 1 | weft |
 | 29 | Optional and named arguments, or record update | 1 | weft |
-| 30 | A compiler barrier | 1 | bobbin |
+| 30 | A compiler barrier **(delivered)** | 1 | bobbin |
 | 31 | `Dict` keyed by something other than `Str` | 1 | twill |
 | 32 | An empty record, and removing a field | 1 | twill |
 
@@ -808,10 +808,30 @@ optional setting is a statement rather than an argument and no configuration can
 be built by a pure expression. `fix_y` exists purely to give two of those
 mutations a name.
 
-**30. A compiler barrier** (bobbin entry 3). Not blocking today, because twill
-is interpreted and removes nothing. It becomes blocking the day it is not.
-`bench.keep` is a named identity function so there is one place to fix. Filed
-early on purpose: after the fact it is a retraction.
+**30. A compiler barrier** (bobbin entry 3). **Delivered, and the entry's
+premise was wrong.** `black_box(x)` returns `x`, in both modes and on both
+implementations.
+
+The entry, and this paragraph before it was rewritten, said the barrier was not
+blocking "because twill is interpreted and removes nothing". twill removes
+something. `TWILL_TRACE=1` turns on the tracer described in `docs/CODEGEN.md`,
+and its liveness rule is dead code elimination: a scope that closes with no live
+tensor computes none of the operations it recorded. Under it, a benchmark body
+whose result is discarded is not slow, it does not run. bobbin's `bench.keep`
+does not stop that, because a call to a twill function is not a barrier and the
+tracer follows straight through it; measured, the two are indistinguishable, two
+operations traced and zero computed either way. The tracer is off by default and
+`docs/CODEGEN.md` section 11.2.4 says it goes on when the numbers say it should,
+so this was a wall that was going to be walked into with no warning and no
+error, only a number that had got faster.
+
+Filed early on purpose, and the early filing is what makes the fix a one-line
+change at `bobbin/src/harness.tw:178` rather than an audit, which was the whole
+argument for filing it. What was retracted is the "not blocking today", not the
+entry. What the barrier does and does not guarantee is `docs/CODEGEN.md` section
+12; the short version is that it stops the elimination this compiler performs,
+it is not a shape barrier and not a gradient barrier, and it says nothing about
+the machine underneath.
 
 **31. `Dict` keyed by something other than `Str`** (twill NEEDS-79 and
 NEEDS-81). The formatter renders a line number with `str()` at every set and

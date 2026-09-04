@@ -1047,6 +1047,40 @@ print(shape(stop_grad(zeros(2, 3))), dtype(stop_grad(zeros(2, 2, bf16))))
 	}
 }
 
+// black_box is the compiler barrier, docs/roadmap.md entry 30. What the two
+// implementations have to agree on is the value, because that is all a program
+// can see: the Go interpreter's barrier has a tracer to stop and the
+// self-hosted evaluator has none, so the mechanisms differ on purpose and the
+// output must not. It is checked here in the same place as stop_grad, its near
+// neighbour and its opposite: stop_grad looks like an identity and changes the
+// gradient, black_box is an identity and changes neither the value nor the
+// gradient.
+func TestSelfHostedBlackBox(t *testing.T) {
+	goOut, selfOut := runBothWaysAsCLI(t, `fn plain(x) = sum(x * x)
+fn boxed(x) = sum(black_box(x) * x)
+let x = [1.0, 2.0, 3.0]
+print(plain(x), boxed(x))
+print(grad(plain)(x))
+print(grad(boxed)(x))
+print(black_box(3.5), black_box("abc"))
+print(black_box([1.0, 2.0]))
+print(shape(black_box(zeros(2, 3))), dtype(black_box(zeros(2, 2, bf16))))
+`)
+	if goOut != selfOut {
+		t.Fatalf("go = %q, self = %q", goOut, selfOut)
+	}
+	for _, want := range []string{
+		"14 14",                        // the barrier does not move the value
+		"tensor([2, 4, 6], shape=[3])", // and it does not move the gradient either
+		"3.5 abc",
+		"[2, 3] bf16", // shape and dtype ride through
+	} {
+		if !strings.Contains(goOut, want) {
+			t.Errorf("output %q is missing %q", goOut, want)
+		}
+	}
+}
+
 // The same tensor passed as two arguments gets a gradient for each. A node is
 // found again by tensor identity, so two leaves holding the same object were
 // indistinguishable: every operand inside f resolved to whichever was
