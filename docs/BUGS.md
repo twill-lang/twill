@@ -510,9 +510,12 @@ and calls it; the decorated driver in `src/cli/main.tw` runs the top level and
 exits, so a systems-mode program run through it defines `main`, prints nothing
 and succeeds.
 
-**Four diagnostics where the self-hosted evaluator words a refusal
-differently.** All four are the same shape -- the port improved the message and
-the harness compares text -- and none is a wrong answer:
+**Diagnostics where the self-hosted evaluator words a refusal differently.**
+Each is the same shape: the port improved the message and the harness compares
+text. None of the four in the table is a wrong answer. Two further members of
+the last row's family were added by the strings, Arr and Dict port itself, and
+are listed under the table rather than folded into it, because a divergence a
+change creates should be readable as such:
 
 | program | bootstrap | `src/eval.tw` |
 | --- | --- | --- |
@@ -520,6 +523,28 @@ the harness compares text -- and none is a wrong answer:
 | `a[5]` on a 1-list | `list index 5 out of range` | `index 5 out of range for a list of length 1` |
 | `true[0]` | `value is not indexable` | `cannot index a bool` |
 | `for x in 1.0` | `can only iterate 1-D tensors` | `cannot iterate a number` |
+
+Added by this port, in the same family: `for k in <dict>` and `for x in <bytes>`
+answer `value is not iterable` on the bootstrap and `cannot iterate a dict` or
+`cannot iterate a bytes` self-hosted. Both are refusals on both sides.
+
+**Truthiness in a condition refuses self-hosted where the bootstrap runs.** This
+is a worse shape than the wording rows above, and it is recorded separately for
+that reason. `let d: Dict[Str, I64] = dict_new()  dict_set(d, "a", 1)  if d { }`
+runs on the bootstrap and dies self-hosted with `condition must be a bool or a
+scalar number, got a dict`. The behaviour is pre-existing for lists, records and
+strings, which main already refuses the same way. The dict and bytes instances
+are new here, because neither value existed self-hosted before this port. The
+right fix is to decide once what a non-boolean condition means in twill and make
+both evaluators agree; until then this is a refusal where the other side runs,
+which is exactly what the conformance allow-list is for.
+
+**Nested assignment through a tensor is silently dropped self-hosted.** Out of
+scope for this port and recorded so it is not lost: `let m: Tensor = [[1.0,
+2.0], [3.0, 4.0]]  m[0][1] = 9.0` mutates on the bootstrap and does nothing at
+all self-hosted, with no error. That is a wrong answer rather than a refusal,
+and it is the most serious item on this page. `src/eval.tw` has no port of the
+Go `assignNested` path.
 
 **`einsum` refuses a label repeated within one operand.** `einsum("ii->", A)`,
 the trace, returns "repeated label \"i\" within one operand is not supported".
