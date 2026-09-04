@@ -651,13 +651,6 @@ func (e *checkEnv) get(name string) (Type, bool) {
 
 func (e *checkEnv) define(name string, t Type) { e.vars[name] = t }
 
-// defineConst binds a name that may not be assigned to afterwards, recording
-// the line it was bound on for the diagnostic that refuses the assignment.
-func (e *checkEnv) defineConst(name string, t Type, line int) {
-	e.vars[name] = t
-	e.consts[name] = line
-}
-
 // constLine reports whether a name resolves to a `const` binding, and the line
 // it was bound on. It stops at the first scope that binds the name, so a `let`
 // of the same name in a nearer scope shadows the const and is mutable.
