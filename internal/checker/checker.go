@@ -3520,7 +3520,9 @@ var builtinNames = map[string]bool{
 	"cos": true, "tanh": true, "sigmoid": true, "sqrt": true, "sum": true, "prod": true, "median": true,
 	"mean": true, "abs": true, "pow": true, "matmul": true, "dot": true, "linear": true, "quantize": true, "nbytes": true, "dtype": true,
 	"grad": true, "grads": true, "stop_grad": true, "value_and_grad": true, "map": true, "zip": true,
-	"tensor": true, "scalar": true, "zeros": true, "ones": true, "fill": true,
+	// The barrier. docs/roadmap.md entry 30.
+	"black_box": true,
+	"tensor":    true, "scalar": true, "zeros": true, "ones": true, "fill": true,
 	"randn": true, "rand": true, "eye": true, "linspace": true, "arange": true, "transpose": true, "shape": true,
 	"len": true, "item": true, "range": true, "list": true, "str": true,
 	"square": true, "maximum": true, "minimum": true, "greater": true,
@@ -3616,6 +3618,7 @@ var builtinArity = map[string]int{
 	"rng_perm": 1, "rng_seed": 1, "rng_open": 1, "rng_close": 1, "rng_u53": 1, "rng_f64": 1, "rng_norm": 1, "scalar": 1, "seed": 1, "shape": 1, "str": 1,
 	"str_quote": 1, "str_to_f64": 1, "tensor": 1, "value_and_grad": 1,
 	"write_err": 1, "write_out": 1, "exit": 1, "arr_of_tensor": 1, "all_finite": 1, "file_size": 1, "numel": 1, "stop_grad": 1,
+	"black_box":   1,
 	"f64_bits_hi": 1, "f64_bits_lo": 1,
 	"path_exists": 1, "path_is_dir": 1, "mkdir_all": 1, "remove_file": 1, "remove_dir": 1,
 	"temp_dir": 1, "remove_all": 1, "mtime": 1, "path_base": 1, "path_dir": 1, "path_ext": 1, "path_stem": 1,

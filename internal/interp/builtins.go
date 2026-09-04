@@ -63,6 +63,25 @@ func (ip *Interp) installBuiltins() {
 		}
 		return tensor.Detach(t), nil
 	})
+	// black_box(x): the same value, and the one place a caller can stand to say
+	// "this was read". It is the identity function and it is not a no-op.
+	//
+	// The tracer forces the open trace before any builtin without an opcode
+	// runs -- Apply is the single funnel, see tracing.go -- so the work that
+	// produced x is computed here, rather than being dropped for having nothing
+	// downstream that reads it. That is a real deletion this interpreter
+	// already performs under TWILL_TRACE=1, not a hypothetical one: a scope
+	// that closes with no live tensor computes nothing at all
+	// (trace.compileAndRun). docs/roadmap.md entry 30, bobbin docs/needs.md
+	// entry 3.
+	//
+	// It must never be given an opcode, and it must never be constant-folded.
+	// A black_box the optimiser can see through is exactly the deletion it
+	// exists to prevent, and the barrier test in barrier_test.go fails if one
+	// is ever added.
+	def("black_box", 1, false, func(a []value.Value) (value.Value, error) {
+		return a[0], nil
+	})
 	def("abs", 1, false, func(a []value.Value) (value.Value, error) {
 		t, err := asTensor(a[0], "abs")
 		if err != nil {

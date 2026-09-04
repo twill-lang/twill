@@ -2,6 +2,37 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`black_box(x)`, a compiler barrier, and the correction that it was already
+  needed.** `docs/roadmap.md` entry 30 is bobbin's, and it was filed with the
+  status "not blocking today, because twill is interpreted and removes
+  nothing". twill removes something. `TWILL_TRACE=1` turns on the tracer in
+  `docs/CODEGEN.md`, and its liveness rule is dead code elimination: a scope
+  that closes with no live tensor computes none of the operations it recorded.
+  A benchmark's defining feature is that it throws its result away, so a
+  benchmark body under the tracer is not slow, it does not run.
+
+  ```rust
+  black_box(body(i))    # the work behind the value is done, and the value is x
+  ```
+
+  bobbin's mitigation was `bench.keep`, a twill function returning its argument.
+  It does not work and could not have: a call to a twill function is not a
+  barrier, the tracer follows through the body, and the values die at the same
+  scope boundary. Measured on the same program, `keep` and no protection at all
+  are indistinguishable, two operations traced and zero computed. `black_box`
+  has no opcode, so `Apply` forces the open trace before it runs and the work is
+  computed at the call.
+
+  It is the identity on every type, in both modes, on both implementations, and
+  it is transparent to shape, dtype and gradients, so inserting one can change a
+  timing and cannot change an answer. It is deliberately not a shape barrier the
+  way `grad` is (`docs/CORRECTNESS.md`): a benchmark is the worst place to blind
+  the checker. What it guarantees, and the four things it does not, is
+  `docs/CODEGEN.md` section 12. The one-line adoption is
+  `bobbin/src/harness.tw:178`, which is what filing the entry early bought.
+
 ### Changed
 
 - **A function defined twice in one file is now refused.** Both checkers report

@@ -1082,3 +1082,114 @@ when 11.2.3's fix lands and the numbers say it should.
 The kernels are fast and the path to them is slow, so a GPU backend would make a
 faster thing that is still reached too rarely to matter. An on-disk kernel cache
 and a look at why large programs replay are both worth more than CUDA right now.
+
+---
+
+## 12. The barrier
+
+`black_box(x)` returns `x`. This section is longer than the implementation
+because a barrier is worth exactly what its guarantee is worth, and a guarantee
+nobody wrote down is worth nothing.
+
+### 12.1 Why it exists, and why the premise it was filed under was wrong
+
+bobbin `docs/needs.md` entry 3 asked for "an operation the optimiser cannot see
+through", and filed it with the status "twill is interpreted and removes
+nothing, so this is not blocking today. It becomes blocking the day it is not."
+`docs/roadmap.md` entry 30 repeated that. The mitigation meanwhile was
+`bench.keep`, a twill function that returns its argument, named so that there
+would be one place to fix later.
+
+The premise was already false when it was written, and this document is the
+reason it is easy to be wrong about: everything above describes a compiler, in
+this repository, that deletes work. Section 4's liveness rule is the deletion.
+A statement's tensor operations are recorded rather than run, and when the scope
+closes, `trace.compileAndRun` asks which of the recorded values are still
+reachable from what the scope handed out. If none are, it computes none of them:
+
+```go
+outRefs, outPH := t.liveRefs(live)
+if len(outRefs) == 0 {
+    // Nothing escapes. There is nothing to compute and nothing to patch.
+    return true
+}
+```
+
+That is dead code elimination, and it is exactly the elimination a benchmark
+walks into, because a benchmark's defining feature is that it throws its result
+away. Measured on this tree with `TWILL_TRACE=1`:
+
+| program | nodes traced | nodes computed |
+|---|---|---|
+| `fn discard(x) { let y = sum(exp(x)) }` called as a statement | 2 | 0 |
+| the same, through `fn keep(v) = v` | 2 | 0 |
+| the same, through `black_box` | 2 | 2 |
+
+The second row is the one that matters. `bench.keep` was written to be the
+single place to fix, and it is; what it was not, and was never going to be, is
+protection. A call to a twill function is not a barrier, because the tracer does
+not stop at one: it follows through the body and keeps recording, and the values
+die at the same scope boundary they would have died at anyway.
+
+The elimination is also not all-or-nothing, which is worse than if it were. A
+loop of four iterations whose result is discarded computes three of them, not
+zero: each iteration's `ones` call is a builtin with no opcode, so it forces the
+previous iteration's trace on its way past, and only the last iteration's work
+has nothing behind it to force. A benchmark that survives today survives by the
+accident of where the forcing points happen to fall in its body, and that
+accident changes whenever the body changes.
+
+### 12.2 What black_box guarantees
+
+1. **The argument is computed before `black_box` returns.** The mechanism is
+   section 2's escape rule rather than anything special: `black_box` has no
+   opcode, and `Apply` forces the open trace before any builtin without one
+   runs. So the value is materialised, and the work behind it is done, at the
+   call.
+2. **The value comes back unchanged.** Not merely equal: the same value, with
+   its shape, its dtype and its place in the gradient graph. A gradient runs
+   straight through a barrier. This is what makes it safe to leave in code that
+   is also checked for correctness, and it is the difference between this and
+   `stop_grad`, the other builtin in this language that looks like an identity
+   and is not one.
+3. **It is not a shape barrier.** `grad` is one (`docs/CORRECTNESS.md`), and a
+   value wrapped in it loses the checking downstream. A benchmark is code nobody
+   reads twice, so blinding the checker there would be the worst possible place
+   to spend that trade. Shape errors are reported straight through a barrier.
+4. **No pass may see through it.** It is never given an opcode, never constant
+   folded, never hoisted, and never deleted for having no reader. That is a rule
+   about code not yet written, so it is pinned by a test rather than by this
+   paragraph: `internal/interp/barrier_test.go` fails if the barrier stops
+   forcing, and its companion test fails if the deletion it guards against stops
+   happening, which is the prompt to rewrite this section rather than to delete
+   the barrier.
+
+### 12.3 What it does not guarantee
+
+- **It is not a promise about the machine.** It constrains this compiler. It
+  does nothing about the CPU's caches, branch prediction or frequency scaling, a
+  GPU driver's queueing, or the operating system's scheduler. A benchmark that
+  measures a warm cache still measures a warm cache.
+- **It does not make a benchmark correct.** Hoisting a loop-invariant body out
+  of the loop is the author's mistake to avoid, by varying the input with the
+  iteration index, which is what bobbin's `body: fn(I64) -> F64` is for. The
+  barrier constrains the compiler, not the program.
+- **In systems mode it is a promise with no mechanism yet.** Nothing here can
+  delete an `I64` addition; the tracer records tensor operations. So a systems
+  mode `black_box` costs one builtin call and buys the guarantee for the day
+  something can, which is the day bobbin filed the entry against.
+- **It is not a memory fence or a synchronisation primitive.** twill has no
+  concurrency, and this name is borrowed from languages where it sometimes
+  implies one. It does not imply one here.
+- **The self-hosted evaluator enforces nothing**, because it has no tracer and
+  no optimiser: there, `black_box` is the identity and that is all it is. The
+  two implementations are required to agree on the value, not on the mechanism,
+  and `TestSelfHostedBlackBox` is where that is checked.
+
+### 12.4 For whoever writes the next pass
+
+If you are adding an optimisation to this compiler, the rule is one line:
+`black_box` is opaque. Its argument is used, its result is used, and neither
+fact is derivable from anything else in the graph. Every deletion, fold, hoist
+and rewrite has to stop at it. If a pass makes that inconvenient, the pass is
+what changes.
