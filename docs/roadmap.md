@@ -755,17 +755,19 @@ fourteen `testdata/cases` fixtures, and twelve numeric-mode programs under
 `examples/` whose training loop is written at file level: `attention.tw`,
 `classifier.tw`, `cnn.tw`, `gpt.tw`, `hessian.tw`, `linreg.tw`, `llama.tw`,
 `minibatch.tw`, `mlp.tw`, `nn_xor.tw`, `records.tw` and `signal_opt.tw`, with
-ten of the twelve mirrored again under `testdata/examples/`. (An earlier draft of
-this entry said "643 files" and "fourteen numeric-mode examples". The first was
-the wrong corpus and the second was wrong outright: 643 is twill plus **nine**
-sibling repositories, including heddle, selvedge, shuttle and skein, which this
-entry does not count; twill plus the five satellites named above is 563. And the
-numeric-mode `examples/` programs it refuses number twelve, not fourteen. The
-conclusion is unchanged and the two named cases hold.)
-Top-level mutation is an idiom here, not an accident, so the guarantee has to be
-asked for. `const` is that keyword: it binds wherever `let` does, and both
-checkers refuse every assignment through the name, the binding and an element or
-field of it alike.
+ten of the twelve mirrored again under `testdata/examples/`. Top-level mutation
+is an idiom here, not an accident, so the guarantee has to be asked for. `const`
+is that keyword: it binds wherever `let` does, and both checkers refuse every
+assignment through the name, the binding and an element or field of it alike.
+
+An earlier draft of this entry said "643 files" and "fourteen numeric-mode
+examples", and both were wrong. The first was the wrong corpus: 643 is twill
+plus **nine** sibling repositories, heddle, selvedge, shuttle and skein among
+them, which this entry does not count. Twill plus the five satellites named
+above is 563. The second was wrong outright: the numeric-mode `examples/`
+programs a read-only `let` refuses number twelve. The conclusion is unchanged
+and the two named cases hold. The numbers above are from a re-run of the same
+experiment.
 
 Two rules keep the guarantee from being revoked rather than broken.
 

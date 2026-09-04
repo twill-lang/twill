@@ -44,27 +44,38 @@
 
   **A `const` is the only binding of its name in the scope that declares it.** A
   second `let` of that name there is refused rather than quietly taking the
-  const's place. That case was a silent revocation and, worse, an order-dependent
-  one: top-level consts are registered before the walk starts, so a `let` above
-  the `const` was refused and a `let` below it was not.
+  const's place:
+
+  ```
+  HEX is declared const on line 1, so the name cannot be bound a second time
+  in the same scope: a second binding would take its place and everything
+  after it would be assignable again. Rename one of them, or declare line 1
+  with let if the name is meant to change.
+  ```
+
+  That case was a silent revocation and, worse, an order-dependent one:
+  top-level consts are registered before the walk starts, so a `let` above the
+  `const` was refused and a `let` below it was not. Two plain `let`s of one name
+  stay legal, and an inner scope is still a different scope.
 
   `let` was **not** made read-only at the top level instead, which is the other
   half of what weft asked for. A read-only `let` was implemented behind a flag
   and swept over the 563 `.tw` files in twill, `std`, `testdata`, `examples` and
   the five satellite repositories entry 28 counts: it refused 45 of them,
-  including this repository's own
-  `std/tests/harness.tw` and `src/eval.tw`, the test harness in every one of
-  spool, loom, bobbin, weft and warp, warp's `examples/train.tw`, and twelve
-  numeric-mode programs under `examples/` whose training loop is written at file
-  level. Making `let` read-only would have refused all of them, so the guarantee
-  is asked for rather than imposed.
+  including this repository's own `std/tests/harness.tw` and `src/eval.tw`, the
+  test harness in every one of spool, loom, bobbin, weft and warp, warp's
+  `examples/train.tw`, and twelve numeric-mode programs under `examples/` whose
+  training loop is written at file level. Making `let` read-only would have
+  refused all of them, so the guarantee is asked for rather than imposed.
 
-  One limit is deliberate and is written down in `docs/language-guide.md` under
-  **`const`**: it is not a deep freeze. `HEX[0] = ...` is refused but
+  Two limits are deliberate and are written down in `docs/language-guide.md`
+  under **`const`**. It is not a deep freeze: `HEX[0] = ...` is refused but
   `push(HEX, x)` is not, and neither is a function handed the handle, because
-  `Arr` has reference semantics and nothing tracks where a handle goes. Entry
-  28's aliasing half is still open; its binding half, which is what weft
-  reported, is closed.
+  `Arr` has reference semantics and nothing tracks where a handle goes. And it
+  does not reach through an alias of an alias: `mid.theme.HEX = ...` is not
+  refused, because that name is two aliases deep and the walk collects names
+  rather than modelling a namespace. Entry 28's aliasing half is still open; its
+  binding half, which is what weft reported, is closed.
 
 ### Changed
 

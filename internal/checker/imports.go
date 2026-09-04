@@ -45,8 +45,8 @@ import (
 // problems are reported when it is checked itself.
 
 // CheckFile analyses a program that came from a file, following its imports far
-// enough to know what enums they declare. `path` is the file's own path, which
-// is what a relative import resolves against.
+// enough to know what enums and top-level consts they declare. `path` is the
+// file's own path, which is what a relative import resolves against.
 func CheckFile(prog *ast.Program, path string) []Diagnostic {
 	c := newChecker(prog)
 	c.loadImports(prog, path, map[string]bool{})
@@ -57,7 +57,7 @@ func CheckFile(prog *ast.Program, path string) []Diagnostic {
 	return dedupe(c.diags)
 }
 
-// maxImportDepth bounds how far the enum walk follows a chain of imports. A
+// maxImportDepth bounds how far the walk follows a chain of imports. A
 // cycle is already stopped by the seen set; this stops a pathological depth
 // from turning a check into a directory traversal.
 const maxImportDepth = 8
