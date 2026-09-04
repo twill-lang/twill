@@ -61,7 +61,7 @@ in the sources" at the end.
 | 25 | A way to fail that cannot be ignored | 1 | twill |
 | 26 | Allocation and memory counters | 1 | bobbin |
 | 27 | Ranged reads | 1 | warp |
-| 28 | Immutable top-level bindings **(partly delivered: `const`)** | 1 | weft |
+| 28 | Immutable top-level bindings **(delivered: `const`; aliasing open)** | 1 | weft |
 | 29 | Optional and named arguments, or record update | 1 | weft |
 | 30 | A compiler barrier | 1 | bobbin |
 | 31 | `Dict` keyed by something other than `Str` | 1 | twill |
@@ -734,45 +734,70 @@ profiler can do.
 and every other part of `stream.tw` is written against it. The smallest possible
 addition that makes out-of-core data possible: no file handles, no seeking API.
 
-**28. Immutable top-level bindings** (weft entry 9). **Partly delivered:
-`const`.** `src/canvas.tw` `QUADRANTS`, `src/theme.tw` `DENSITY`,
-`src/sparkline.tw` `LEVELS`, `src/svg.tw` `HEX` are lookup tables that any
-importer can reassign, because `Arr` has reference semantics and `let` binds a
-handle. A library whose palette can be reassigned by a caller has no way to keep
-the promise its theme file makes about which colour means what. This is the
-mirror of twill NEEDS-86, which asks whether a file-level `let` initialised by a
-call runs once, from the same uncertainty about what a file-level binding is.
+**28. Immutable top-level bindings** (weft entry 9). **Delivered: `const`.**
+`src/canvas.tw` `QUADRANTS`, `src/theme.tw` `DENSITY`, `src/sparkline.tw`
+`LEVELS`, `src/svg.tw` `HEX` are lookup tables that any importer could reassign,
+because `Arr` has reference semantics and `let` binds a handle. A library whose
+palette can be reassigned by a caller has no way to keep the promise its theme
+file makes about which colour means what. This is the mirror of twill NEEDS-86,
+which asks whether a file-level `let` initialised by a call runs once, from the
+same uncertainty about what a file-level binding is.
 
 weft asked for either a `const` or a read-only top-level `let`, and the choice
 between them was the design question this entry was parked on. It is answered by
-measurement rather than taste: a read-only `let` was implemented and swept over
-643 `.tw` files across twill, `std`, `testdata`, `examples` and the six
-satellites, and it refused module-level mutable state in this repository's own
-`std/tests/harness.tw` (the pass and fail counters, written from inside
-`check`), in warp's `examples/train.tw`, and in fourteen numeric-mode examples
-whose training loop is written at file level. Top-level mutation is an idiom
-here, not an accident, so the guarantee has to be asked for. `const` is that
-keyword: it binds wherever `let` does, and both checkers refuse every assignment
-through the name, the binding and an element or field of it alike.
+measurement rather than taste: a read-only `let` was implemented behind a flag
+and swept over the 563 `.tw` files in twill, `std`, `testdata`, `examples` and
+the five satellites, and it refused 45 of them. Among the refusals are this
+repository's own `std/tests/harness.tw` (the pass and fail counters, written
+from inside `check`), the same harness in every one of spool, loom, bobbin, weft
+and warp, warp's `examples/train.tw`, this repository's own `src/eval.tw`,
+fourteen `testdata/cases` fixtures, and twelve numeric-mode programs under
+`examples/` whose training loop is written at file level: `attention.tw`,
+`classifier.tw`, `cnn.tw`, `gpt.tw`, `hessian.tw`, `linreg.tw`, `llama.tw`,
+`minibatch.tw`, `mlp.tw`, `nn_xor.tw`, `records.tw` and `signal_opt.tw`, with
+ten of the twelve mirrored again under `testdata/examples/`. (An earlier draft of
+this entry said "643 files" and "fourteen numeric-mode examples". The first was
+the wrong corpus and the second was wrong outright: 643 is twill plus **nine**
+sibling repositories, including heddle, selvedge, shuttle and skein, which this
+entry does not count; twill plus the five satellites named above is 563. And the
+numeric-mode `examples/` programs it refuses number twelve, not fourteen. The
+conclusion is unchanged and the two named cases hold.)
+Top-level mutation is an idiom here, not an accident, so the guarantee has to be
+asked for. `const` is that keyword: it binds wherever `let` does, and both
+checkers refuse every assignment through the name, the binding and an element or
+field of it alike.
 
-Two parts of this entry are still open, and both come from the aliasing half
-rather than the binding half.
+Two rules keep the guarantee from being revoked rather than broken.
+
+- A `const` is the only binding of its name in the scope that declares it, so a
+  second `let` of the name there is refused. Without that the guarantee turned
+  off silently, and whether it turned off depended on which side of the `const`
+  the `let` was written on.
+- A `const` in a file you import may not be reassigned, written through, or
+  rebound. This is weft's complaint as reported and it is the reason the entry
+  exists: the import walk that already followed imports for their enums now
+  collects their top-level `const` names too, and the self-hosted checker, which
+  read no imported files at all, gained the same walk for the same names.
+
+What is still open is the aliasing half, and it is a different problem from the
+binding half.
 
 - **`const` is not a deep freeze.** It guards what is written through the name,
   so `HEX[0] = ...` is refused, but `push(HEX, x)` is not, and neither is a
   function handed the handle. Closing that needs a frozen aggregate, or an
   effects rule about where a handle may go, and neither is a checker rule about
   one binding.
-- **`const` does not reach across files.** The checker reads one file (see the
-  header of `internal/checker/imports.go`, and the enum exception that proves
-  the rule), so an importer assigning the name is a hole it cannot see. That is
-  weft's complaint stated exactly, and it is not closed. Closing it needs the
-  import walk to collect top-level binding names as well as enums, in both
-  checkers, and the self-hosted checker does not read imported files at all
-  today.
+- **A name two aliases deep is not followed.** `theme.HEX = ...` is refused;
+  `mid.theme.HEX = ...`, where the declaring file was reached through a
+  namespaced import inside a namespaced import, is not. Following that needs the
+  walk to model a namespace rather than a set of names.
+- **The self-hosted checker still reads no imported enums.** Its new import walk
+  collects consts only, so a `match` on an enum declared in another module is
+  unjudged there while the Go checker judges it. That gap is older than this
+  entry and is not closed by it.
 
 So a library can now say what it means, and a caller that does the wrong thing
-in its own file is refused. A caller that does it from another file is not yet.
+is refused whether it does it in the library's file or its own.
 
 **29. Optional and named arguments, or record update** (weft entry 10). A chart
 has a dozen settings and almost every caller changes two. The constructor takes

@@ -551,9 +551,21 @@ handed the handle: `Arr`, `Dict`, `struct` and `Bytes` have reference semantics
 goes. `const` says this name will not be pointed somewhere else and will not be
 edited here.
 
-It does not reach across files. Each file is checked on its own, so a `const` in
-one file is a rule about that file. An importer assigning the name is a hole the
-single-file checker cannot see.
+It does not reach through an alias of an alias. A `const` in a file you import
+is refused whether the name arrives plainly (`HEX = ...`) or under a namespace
+(`theme.HEX = ...`), and the same holds through a chain of plain imports. What
+is not refused is `mid.theme.HEX = ...`, where the declaring file was reached
+through a namespaced import inside a namespaced import: that name is two aliases
+deep and the checker does not follow it.
+
+A `const` you import may not be rebound either, because a plain import brings
+the name into your scope and a second binding of it is what every other importer
+then reads:
+
+```rust
+import "theme.tw"
+let HEX = other()   # refused: theme.tw declared HEX const
+```
 
 A `let` in a nearer scope is a different binding, and it is mutable:
 
@@ -565,6 +577,19 @@ fn f() -> I64 {
   K
 }
 ```
+
+A `const` is the only binding of its name in the scope that declares it. A
+second `let` of the same name there is refused rather than silently taking the
+const's place:
+
+```rust
+const HEX = ["#000"]
+let HEX = other()   # refused
+```
+
+That is a rule about one scope, not about the name: `const` at the top level and
+`let HEX` inside a function are two bindings in two scopes, and the inner one is
+an ordinary mutable local.
 
 `let` was left mutable at the top level on purpose. Module-level counters are
 written that way across the ecosystem, including by this repository's own

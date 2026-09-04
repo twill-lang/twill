@@ -139,3 +139,97 @@ func TestConstWorksInNumericMode(t *testing.T) {
 	wantNone(t, "const LR = 0.01\nfn step(w) = w - LR\n")
 	wantOne(t, "const LR = 0.01\nfn step(w) {\n  LR = 0.02\n}\n", "declared const on line 1")
 }
+
+// Rebinding a const in the scope that declared it.
+//
+// The first cut of this rule tracked constness in a per-scope map that a later
+// `let` of the same name simply deleted. That made `const HEX` followed by `let
+// HEX` a silent revocation, and worse, it made the outcome depend on statement
+// order: the prelude registers top-level consts before the walk, so `let HEX`
+// above `const HEX` was refused and `let HEX` below it was not. A guarantee that
+// turns off when you move a line is not a guarantee.
+//
+// So a `const` is the only binding of its name in the scope that declares it,
+// and a second one is refused wherever it sits.
+
+func TestALetRebindingAConstInTheSameScopeIsRefused(t *testing.T) {
+	wantOne(t, "mode systems\nconst K: I64 = 1\nlet K: I64 = 2\n", "K is declared const on line 2")
+}
+
+// The same file with the two lines swapped. This is the order dependence
+// itself: before the fix the `let` below was accepted and the `let` above was
+// not, so both orders are pinned.
+func TestAConstRebindingALetInTheSameScopeIsRefusedToo(t *testing.T) {
+	wantOne(t, "mode systems\nlet K: I64 = 1\nconst K: I64 = 2\n", "K is declared const on line 3")
+}
+
+func TestALetRebindingAConstInsideAFunctionIsRefused(t *testing.T) {
+	wantOne(t, "mode systems\nfn f() {\n  const K: I64 = 1\n  let K: I64 = 2\n}\n", "K is declared const on line 3")
+}
+
+func TestALetRebindingAConstInsideABlockIsRefused(t *testing.T) {
+	wantOne(t, "mode systems\nfn f(n: I64) {\n  if n > 0 {\n    const K: I64 = 1\n    let K: I64 = 2\n  }\n}\n", "K is declared const on line 4")
+}
+
+// Two `const`s of one name in one scope is the same mistake with the same
+// consequence: which line the diagnostics quote depends on which one the walk
+// reached last.
+func TestAConstRebindingAConstIsRefused(t *testing.T) {
+	wantOne(t, "mode systems\nconst K: I64 = 1\nconst K: I64 = 2\n", "K is declared const on line 2")
+}
+
+// The message names the const's line and both ways out, and it points at the
+// rebinding rather than at the const, because the rebinding is the line to
+// delete.
+func TestTheRebindMessageSaysWhereAndWhatToDo(t *testing.T) {
+	diags := diagnostics(t, "mode systems\nconst K: I64 = 1\nlet K: I64 = 2\n")
+	if len(diags) == 0 {
+		t.Fatal("expected a diagnostic")
+	}
+	msg := diags[0].Msg
+	for _, want := range []string{
+		"K is declared const on line 2",
+		"cannot be bound a second time in the same scope",
+		"Rename one of them, or declare line 2 with let",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("message does not say %q:\n  %s", want, msg)
+		}
+	}
+	if diags[0].Line != 3 {
+		t.Errorf("reported line %d, want 3 (the rebinding)", diags[0].Line)
+	}
+}
+
+// The rebinding does not take the const's place. Refusing the `let` and then
+// letting every assignment after it through would report the smaller half of
+// the mistake and hide the one that matters.
+func TestARefusedRebindDoesNotRevokeConstness(t *testing.T) {
+	diags := diagnostics(t, "mode systems\nconst K: I64 = 1\nlet K: I64 = 2\nK = 3\n")
+	var sawAssign bool
+	for _, d := range diags {
+		if strings.Contains(d.Msg, "nothing may be assigned through that name") {
+			sawAssign = true
+		}
+	}
+	if !sawAssign {
+		t.Errorf("the assignment on line 4 was not refused; got %v", diags)
+	}
+}
+
+// What must still not be flagged: an inner scope is a different scope, and a
+// `let` there is a new binding rather than a rebinding.
+func TestALetShadowingAConstInAnInnerScopeIsStillFine(t *testing.T) {
+	wantNone(t, "mode systems\nconst K: I64 = 1\nfn f() {\n  let K: I64 = 2\n  K = 3\n}\n")
+}
+
+// Two `let`s of one name in one scope stay legal. The language allows it, the
+// ecosystem is written with it, and this rule is about `const` only.
+func TestTwoLetsOfOneNameAreStillFine(t *testing.T) {
+	wantNone(t, "mode systems\nlet n: I64 = 1\nlet n: I64 = 2\nprint(n)\n")
+}
+
+// Two consts of the same name in sibling scopes are two bindings, not one.
+func TestSiblingScopesMayEachDeclareTheName(t *testing.T) {
+	wantNone(t, "mode systems\nfn f() {\n  const K: I64 = 1\n  print(K)\n}\nfn g() {\n  const K: I64 = 2\n  print(K)\n}\n")
+}

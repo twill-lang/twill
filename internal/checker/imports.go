@@ -23,11 +23,20 @@ import (
 // place it was most wanted, and the failure mode was a run-time "no match arm"
 // months later.
 //
-// So an import is followed, for its enum declarations and nothing else. Nothing
-// here types a value, resolves a function, or reports a diagnostic about the
-// imported file: it collects `enum` declarations, which is the smallest thing
-// that makes a cross-module match checkable, and it is why this is fifty lines
-// rather than a module system.
+// So an import is followed, for its enum declarations and its top-level `const`
+// bindings, and nothing else. Nothing here types a value, resolves a function,
+// or reports a diagnostic about the imported file.
+//
+// `const` is the second exception and it is here for the same reason as the
+// first: the check was useless in the place it was asked for. weft's complaint
+// (docs/roadmap.md entry 28) is a theme file declaring a palette that an
+// importer replaces, and a rule that reads one file catches only the case where
+// a library breaks its own promise, which nobody was worried about. A plain
+// `import` copies the name into the importing scope and the handle is shared, so
+// an importer's `HEX = ...` and `HEX[0] = ...` are both read by every other
+// importer; that was measured, not assumed. Collecting the names is enough to
+// refuse it, and it costs one more type switch in the walk that was already
+// happening.
 //
 // Reading files is a capability the checker did not have, so it stays out of
 // Check: CheckFile is the entry point that has it, Check is unchanged and
@@ -40,7 +49,7 @@ import (
 // is what a relative import resolves against.
 func CheckFile(prog *ast.Program, path string) []Diagnostic {
 	c := newChecker(prog)
-	c.loadImportedEnums(prog, path, map[string]bool{})
+	c.loadImports(prog, path, map[string]bool{})
 	env := c.prelude(prog)
 	for _, s := range prog.Body {
 		c.inferStmt(s, env)
@@ -53,35 +62,106 @@ func CheckFile(prog *ast.Program, path string) []Diagnostic {
 // from turning a check into a directory traversal.
 const maxImportDepth = 8
 
-// loadImportedEnums registers every enum declared in the files this program
-// imports, and in the files those import, so that a match on any of them can be
-// checked for exhaustiveness.
-func (c *checker) loadImportedEnums(prog *ast.Program, path string, seen map[string]bool) {
-	if len(seen) > maxImportDepth {
-		return
-	}
+// importedConst is a `const` this file did not declare: the import path the
+// declaring file was named by, as written, and the line inside it. The path is
+// carried because a bare line number from another file is the least useful
+// thing a diagnostic can print.
+type importedConst struct {
+	path string
+	line int
+}
+
+// loadImports registers what the files this program imports declare that this
+// file can be judged against: every enum, so a match on one can be checked for
+// exhaustiveness, and every top-level `const`, so an assignment through one can
+// be refused.
+//
+// Enums are registered program-wide because that is how the evaluator registers
+// variant constructors. Consts are not: a plain import copies names into the
+// importing scope, so those go in one flat map, while a namespaced import puts
+// them behind the alias and they go in a map of their own. Which of the two a
+// name arrives through decides how it must be written to be assigned, so mixing
+// them would refuse `HEX = ...` in a file that can only say `theme.HEX`.
+func (c *checker) loadImports(prog *ast.Program, path string, seen map[string]bool) {
 	for _, st := range prog.Body {
 		imp, ok := st.(*ast.Import)
 		if !ok {
 			continue
 		}
-		src, key, found := readImport(imp.Path, path)
-		if !found || seen[key] {
+		into := c.importedConsts
+		if imp.Alias != "" {
+			// A namespaced module's record holds everything its own scope ended
+			// up with, which includes the names it imported plainly, so the
+			// alias's map is filled by the same walk.
+			under, already := c.aliasConsts[imp.Alias]
+			if !already {
+				under = map[string]importedConst{}
+				c.aliasConsts[imp.Alias] = under
+			}
+			into = under
+		}
+		// A cycle guard per top-level import rather than one for the whole
+		// walk. Sharing it made which map a const landed in depend on which
+		// import mentioned the file first, and a name's spelling in this file
+		// is not something a sibling import gets to decide. The depth cap
+		// bounds each branch on its own, so this costs a re-parse of a file two
+		// imports both reach and nothing else.
+		branch := map[string]bool{}
+		for k := range seen {
+			branch[k] = true
+		}
+		c.collectImport(imp.Path, path, into, branch)
+	}
+}
+
+// collectImport reads one imported file, registers its enums program-wide and
+// its top-level consts into `into`, and follows its own plain imports into the
+// same map. A namespaced import inside an imported file is not followed: its
+// names arrive under an alias that means nothing in this file.
+func (c *checker) collectImport(importPath, from string, into map[string]importedConst, seen map[string]bool) {
+	if len(seen) > maxImportDepth {
+		return
+	}
+	src, key, found := readImport(importPath, from)
+	if !found || seen[key] {
+		return
+	}
+	seen[key] = true
+	imported, err := parser.Parse(src)
+	if err != nil {
+		return // Its syntax errors are its own file's business.
+	}
+	for _, s := range imported.Body {
+		switch d := s.(type) {
+		case *ast.EnumDecl:
+			c.registerEnum(d)
+		case *ast.Let:
+			// First one wins, as everywhere else in this walk: a name two
+			// modules both declare is reported against the one that would be
+			// found first, and the ambiguity is not this rule's to resolve.
+			if d.Const {
+				if _, already := into[d.Name]; !already {
+					into[d.Name] = importedConst{path: importPath, line: d.Line}
+				}
+			}
+		}
+	}
+	for _, s := range imported.Body {
+		imp, ok := s.(*ast.Import)
+		if !ok {
 			continue
 		}
-		seen[key] = true
-		imported, err := parser.Parse(src)
-		if err != nil {
-			continue // Its syntax errors are its own file's business.
+		// Enums are registered program-wide however they were reached, because
+		// that is how the evaluator registers variant constructors, so an
+		// aliased import inside an imported file is still followed. Its consts
+		// are not this file's to name: they would be written `mid.theme.HEX`
+		// here, which no rule below reads, so they go into a map that is
+		// dropped.
+		next := into
+		if imp.Alias != "" {
+			next = map[string]importedConst{}
 		}
-		for _, s := range imported.Body {
-			ed, isEnum := s.(*ast.EnumDecl)
-			if !isEnum {
-				continue
-			}
-			c.registerEnum(ed)
-		}
-		c.loadImportedEnums(imported, key, seen)
+		c.collectImport(imp.Path, key, next, seen)
 	}
 }
 

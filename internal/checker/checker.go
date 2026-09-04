@@ -72,6 +72,8 @@ func newChecker(prog *ast.Program) *checker {
 	c.structDecls = map[string]*ast.StructDecl{}
 	c.typeParams = map[string][]string{}
 	c.activeParams = map[string]bool{}
+	c.importedConsts = map[string]importedConst{}
+	c.aliasConsts = map[string]map[string]importedConst{}
 	return c
 }
 
@@ -170,7 +172,7 @@ func (c *checker) prelude(prog *ast.Program) *checkEnv {
 	// must resolve wherever they are constructed, so they are defined before any
 	// body is checked. The type they belong to is left advisory.
 	// This file's own enums. An imported one may already be registered (see
-	// loadImportedEnums); a file's own declaration wins, so it is registered
+	// loadImports); a file's own declaration wins, so it is registered
 	// first and registerEnum leaves an existing entry alone.
 	for _, s := range prog.Body {
 		if ed, ok := s.(*ast.EnumDecl); ok {
@@ -233,6 +235,22 @@ func (c *checker) prelude(prog *ast.Program) *checkEnv {
 			}
 		}
 	}
+	// The file's top level is a scope like any other, so a second binding of a
+	// const name here is refused the same way one inside a block is.
+	c.reportConstRebinds(prog.Body)
+	// A plain import brings its names into this same scope, so a top-level
+	// binding of an imported const's name is that rule reaching across the file
+	// boundary. Measured rather than assumed: an importer's `let HEX` is what a
+	// second importer's function then reads.
+	for _, s := range prog.Body {
+		lt, ok := s.(*ast.Let)
+		if !ok {
+			continue
+		}
+		if ic, isConst := c.importedConsts[lt.Name]; isConst {
+			c.report(lt.Line, "%s is declared const in %q on line %d, so this file may not bind the name again: a plain import brings %s into this scope, and a second binding is what every other importer then reads. Rename this binding.", lt.Name, ic.path, ic.line, lt.Name)
+		}
+	}
 	return env
 }
 
@@ -280,6 +298,14 @@ type checker struct {
 	// checked for exhaustiveness against.
 	enums        map[string][]string
 	variantOwner map[string]string
+
+	// importedConsts is every top-level `const` reachable through a plain
+	// `import`, by the name it arrives under; aliasConsts is the same for a
+	// namespaced one, keyed by the alias and then the name. Both are empty
+	// unless the check was entered through CheckFile, which is the only entry
+	// point that may read files. See imports.go.
+	importedConsts map[string]importedConst
+	aliasConsts    map[string]map[string]importedConst
 
 	// typeParams is the `[T, U]` a struct or enum declares, by declaration
 	// name. activeParams is the set in scope right now -- while a declaration's
@@ -664,6 +690,19 @@ func (e *checkEnv) constLine(name string) (int, bool) {
 	return 0, false
 }
 
+// bindsAtRoot reports whether a name reaches the file's own top-level scope
+// rather than a nearer one. A name nothing binds counts as reaching it: that is
+// what an unaliased import's names look like to this checker, since it registers
+// the imported file's consts without defining them as values.
+func (e *checkEnv) bindsAtRoot(name string) bool {
+	for env := e; env != nil; env = env.parent {
+		if _, ok := env.vars[name]; ok {
+			return env.parent == nil
+		}
+	}
+	return true
+}
+
 func (e *checkEnv) assign(name string, t Type) {
 	for env := e; env != nil; env = env.parent {
 		if _, ok := env.vars[name]; ok {
@@ -709,10 +748,12 @@ func (c *checker) inferStmt(s ast.Stmt, env *checkEnv) {
 		// the binding. A top-level one is already recorded by the prelude; this
 		// is what makes a `const` inside a function work, and what lets an inner
 		// `let` of the same name shadow an outer `const` and stay mutable.
+		//
+		// Nothing here revokes constness. A second binding of the name in this
+		// same scope is refused outright by reportConstRebinds, which is what
+		// keeps the guarantee from depending on statement order.
 		if st.Const {
 			env.consts[st.Name] = st.Line
-		} else {
-			delete(env.consts, st.Name)
 		}
 	case *ast.FnDecl:
 		env.define(st.Name, tFn{node: st, params: st.Params, ret: st.Ret, retUnit: st.RetUnit, retType: st.RetType, body: st.Body, env: env})
@@ -729,9 +770,19 @@ func (c *checker) inferStmt(s ast.Stmt, env *checkEnv) {
 		// function handed the handle, because `Arr` has reference semantics and
 		// nothing tracks where a handle goes. docs/language-guide.md says so
 		// where `const` is introduced; docs/roadmap.md entry 28.
+		reported := false
 		if base, ok := lvalueBase(st.Target); ok {
 			if at, isConst := env.constLine(base.Name); isConst {
 				c.report(st.Line, "%s is declared const on line %d, so nothing may be assigned through that name: not the binding, and not an element or field of it. Bind a new name for the changed value, or declare it with let if it is meant to change.", base.Name, at)
+				reported = true
+			}
+		}
+		// The same rule for a const this file imported rather than declared.
+		// The advice differs because the two ways out differ: the reader of an
+		// imported table cannot decide that it is writable.
+		if !reported {
+			if name, ic, isConst := c.importedConstFor(st.Target, env); isConst {
+				c.report(st.Line, "%s is declared const in %q on line %d, so nothing may be assigned through that name: not the binding, and not an element or field of it. The handle is shared, so this write is what every other importer then reads. Bind a new name for the changed value; whether %s may change is that file's decision.", name, ic.path, ic.line, name)
 			}
 		}
 		if id, ok := st.Target.(*ast.Ident); ok {
@@ -793,6 +844,7 @@ func (c *checker) inferStmt(s ast.Stmt, env *checkEnv) {
 }
 
 func (c *checker) inferBlock(b *ast.Block, env *checkEnv) Type {
+	c.reportConstRebinds(b.Body)
 	var last Type = tUnit{}
 	for _, s := range b.Body {
 		if es, ok := s.(*ast.ExprStmt); ok {
@@ -805,22 +857,101 @@ func (c *checker) inferBlock(b *ast.Block, env *checkEnv) Type {
 	return last
 }
 
+// reportConstRebinds refuses a second binding of a name that a `const` binds in
+// the same statement list.
+//
+// The rule exists because the alternative is a silent revocation. Constness is
+// held in a per-scope map, and the first cut of it had a plain `let` of the same
+// name delete the entry, so `const HEX` followed by `let HEX` turned the
+// guarantee off with nothing said. It was order-dependent on top of that: the
+// prelude registers top-level consts before the walk starts, so a `let` above
+// the `const` was refused and a `let` below it was not. Moving a line changed
+// what the checker promised.
+//
+// Order is not consulted here at all: the whole list is scanned for the first
+// `const` binding of each name, and every other binding of those names is
+// reported, whichever side of it they sit on. Two plain `let`s of one name stay
+// legal, because that is an idiom this language allows and this rule is about
+// `const`. An inner scope is not this list, so shadowing is untouched.
+func (c *checker) reportConstRebinds(body []ast.Stmt) {
+	// Indices rather than lines: two statements can share a line, so a line
+	// number cannot tell the const's own binding apart from a second one.
+	first := map[string]int{}
+	for i, s := range body {
+		if lt, ok := s.(*ast.Let); ok && lt.Const {
+			if _, already := first[lt.Name]; !already {
+				first[lt.Name] = i
+			}
+		}
+	}
+	if len(first) == 0 {
+		return
+	}
+	for i, s := range body {
+		lt, ok := s.(*ast.Let)
+		if !ok {
+			continue
+		}
+		at, isConst := first[lt.Name]
+		if !isConst || at == i {
+			continue
+		}
+		decl := body[at].(*ast.Let)
+		c.report(lt.Line, "%s is declared const on line %d, so the name cannot be bound a second time in the same scope: a second binding would take its place and everything after it would be assignable again. Rename one of them, or declare line %d with let if the name is meant to change.", lt.Name, decl.Line, decl.Line)
+	}
+}
+
 // lvalueBase is the name an assignment target ultimately reaches: `x` for `x`,
 // for `x.f`, for `x[i]` and for `a.d[i]`. An assignment through a call or any
 // other expression has no base name, and reports nothing.
 func lvalueBase(target ast.Expr) (*ast.Ident, bool) {
+	base, _, ok := lvaluePath(target)
+	return base, ok
+}
+
+// lvaluePath is lvalueBase plus the field name nearest the base: `theme`, `HEX`
+// for `theme.HEX[0]`. That pair is what an assignment through a namespaced
+// import looks like, and the field is empty when the target reaches the base
+// without one.
+func lvaluePath(target ast.Expr) (base *ast.Ident, field string, ok bool) {
 	for {
 		switch t := target.(type) {
 		case *ast.Ident:
-			return t, true
+			return t, field, true
 		case *ast.Field:
+			field = t.Name
 			target = t.Target
 		case *ast.Index:
 			target = t.Target
 		default:
-			return nil, false
+			return nil, "", false
 		}
 	}
+}
+
+// importedConstFor reports the `const` an assignment target reaches in another
+// file, if it reaches one. Two shapes get there: a plain import puts the name in
+// this scope, so `HEX` and `HEX[0]` reach it directly, and a namespaced import
+// puts it behind the alias, so `theme.HEX` and `theme.HEX[0]` do.
+//
+// A nearer binding wins in both shapes. A parameter or a local `let` named after
+// an imported const is a different binding in a different scope, and writing to
+// it has nothing to do with the imported table.
+func (c *checker) importedConstFor(target ast.Expr, env *checkEnv) (string, importedConst, bool) {
+	base, field, ok := lvaluePath(target)
+	if !ok || !env.bindsAtRoot(base.Name) {
+		return "", importedConst{}, false
+	}
+	if field != "" {
+		if under, isAlias := c.aliasConsts[base.Name]; isAlias {
+			if ic, isConst := under[field]; isConst {
+				return field, ic, true
+			}
+			return "", importedConst{}, false
+		}
+	}
+	ic, isConst := c.importedConsts[base.Name]
+	return base.Name, ic, isConst
 }
 
 // elemType returns the element type produced by iterating a value.

@@ -1178,3 +1178,104 @@ func TestSelfHostedRunsAConstLikeTheBootstrap(t *testing.T) {
 		t.Fatalf("the const was not readable at run time: %q", goOut)
 	}
 }
+
+// The rebinding rule across the seam. `const HEX` followed by `let HEX` in the
+// same scope revoked constness with nothing said, and which way round the two
+// lines sat decided whether the checker noticed, so both checkers now refuse
+// the second binding. The expected text comes from checker.Check rather than a
+// literal for the same reason as the test above: the two must not drift.
+func TestSelfHostedRefusesRebindingAConst(t *testing.T) {
+	const src = `mode systems
+const HEX: I64 = 1
+let HEX: I64 = 2
+`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	diags := checker.Check(prog)
+	if len(diags) != 1 {
+		t.Fatalf("the Go checker reported %d diagnostics, want 1: %v", len(diags), diags)
+	}
+	if !strings.Contains(diags[0].Msg, "cannot be bound a second time") {
+		t.Fatalf("the Go checker reported something else: %s", diags[0].Msg)
+	}
+	code, out := runSelfHostedCheckOut(t, src)
+	if code != 1 {
+		t.Errorf("self-hosted check exited %d, want 1", code)
+	}
+	if !strings.Contains(out, diags[0].Msg) {
+		t.Errorf("the two checkers disagree.\n  go:   %s\n  self: %s", diags[0].Msg, out)
+	}
+}
+
+// `const` across a file boundary, on both checkers.
+//
+// This is weft entry 9 as it was reported: a theme file declaring the palette,
+// an app importing it and replacing it. The self-hosted checker read one file
+// and nothing else until this rule, so the two implementations had to gain the
+// import walk together or diverge on the case the feature exists for. The
+// expected text comes from checker.CheckFile rather than a literal, so a
+// reworded diagnostic on either side fails here.
+func TestSelfHostedRefusesAssigningAnImportedConst(t *testing.T) {
+	skipUnderShort(t)
+	dir := t.TempDir()
+	const theme = `mode systems
+const HEX: Arr[Str] = mk()
+fn mk() -> Arr[Str] {
+  let a: Arr[Str] = arr_new()
+  push(a, "#000")
+  a
+}
+`
+	const app = `mode systems
+import "theme.tw"
+HEX = arr_new()
+`
+	if err := os.WriteFile(filepath.Join(dir, "theme.tw"), []byte(theme), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	appPath := filepath.Join(dir, "app.tw")
+	if err := os.WriteFile(appPath, []byte(app), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	prog, err := parser.Parse(app)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	diags := checker.CheckFile(prog, appPath)
+	if len(diags) != 1 {
+		t.Fatalf("the Go checker reported %d diagnostics, want 1: %v", len(diags), diags)
+	}
+
+	saved := os.Stderr
+	r, w, pipeErr := os.Pipe()
+	if pipeErr != nil {
+		t.Fatal(pipeErr)
+	}
+	os.Stderr = w
+	done := make(chan string, 1)
+	go func() {
+		var b strings.Builder
+		io.Copy(&b, r)
+		done <- b.String()
+	}()
+	ip := interp.New(func(string) {})
+	result, ranMain, runErr := ip.RunFileMain(filepath.Join("..", "..", "src", "main.tw"),
+		[]string{"twill", "check", appPath})
+	w.Close()
+	os.Stderr = saved
+	out := <-done
+	if runErr != nil {
+		t.Fatalf("self-hosted CLI errored: %v", runErr)
+	}
+	if !ranMain {
+		t.Fatal("self-hosted main did not run")
+	}
+	if n, ok := value.AsNumber(result); !ok || int(n) != 1 {
+		t.Errorf("self-hosted check returned %v, want exit 1", result)
+	}
+	if !strings.Contains(out, diags[0].Msg) {
+		t.Errorf("the two checkers disagree.\n  go:   %s\n  self: %s", diags[0].Msg, out)
+	}
+}
