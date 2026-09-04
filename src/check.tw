@@ -1873,6 +1873,14 @@ fn systems_builtin_result(name: Str, args: Arr[Type]) -> Opt[Type] {
   if in_set(name, "chr str_quote f64_to_str bytes_to_str read_text_or resolve_path f64_hex num_to_text") {
     return Some(TStr)
   }
+  # The barrier hands back exactly what it was given, and the type says so.
+  # Deliberately not the treatment `grad` gets: `grad` is a shape barrier and
+  # loses the checking downstream of it, which would be a poor trade for a
+  # benchmark. Shape, dtype and unit ride straight through.
+  if bytes.equal(name, "black_box") {
+    if len(args) > 0 { return Some(args[0]) }
+    return None
+  }
   if in_set(name, "arr_push push") {
     if len(args) > 0 {
       match args[0] {
@@ -3910,7 +3918,7 @@ fn builtin_fixed_arity(name: Str) -> I64 {
   if in_set(name, "args arr_new bytes_new clock_now_ms dict_new gpu_available gpu_device_count is_tty_stdout rng_normal rng_uniform window_size") {
     return 0
   }
-  if in_set(name, "relu exp log sin cos tanh sigmoid sqrt square floor ceil round abort abs arr_clear bnot buf_len buf_new bytes_to_str chr columns dict_keys emit_line enumerate env eye arr_of_tensor f64_bits f64_bits_hi f64_bits_lo f64_from_bits f64_hex f64_of_i64 f64_signbit f64_to_str gbm_describe grad grads hessian hvp jvp vjp dtype i64_of_f64 i64_of_str int item jacobian len list_dir load load_value module_source nbytes num_to_text permutation pop read_csv read_file read_frame rng_perm rng_seed scalar seed shape str str_quote str_to_f64 tensor value_and_grad write_err write_out") {
+  if in_set(name, "relu exp log sin cos tanh sigmoid sqrt square floor ceil round abort abs arr_clear black_box bnot buf_len buf_new bytes_to_str chr columns dict_keys emit_line enumerate env eye arr_of_tensor f64_bits f64_bits_hi f64_bits_lo f64_from_bits f64_hex f64_of_i64 f64_signbit f64_to_str gbm_describe grad grads hessian hvp jvp vjp dtype i64_of_f64 i64_of_str int item jacobian len list_dir load load_value module_source nbytes num_to_text permutation pop read_csv read_file read_frame rng_perm rng_seed scalar seed shape str str_quote str_to_f64 tensor value_and_grad write_err write_out") {
     return 1
   }
   if in_set(name, "matmul dot conv2d maximum minimum greater less greater_equal less_equal equal and or band bor xor shl shr append arr_push buf_get8 bytes_push concat dict_del dict_get dict_has dict_must f64_from_halves f64_mod f64_pow field gather is_same linear map map_leaves maxpool2d pow push save save_value write_file write_frame zip_leaves") {
