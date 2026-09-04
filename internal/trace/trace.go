@@ -117,9 +117,35 @@ type Stats struct {
 	CacheHit  int
 	CacheMiss int
 	Nodes     int // total traced nodes
+	Computed  int // traced nodes whose arithmetic was actually performed
 	GradFast  int // grad scopes that ran the compiled forward+backward graph
 	GradSlow  int // grad scopes that fell back to tensor.Backward
 }
+
+// Computed is the counter to read when the question is how much work a program
+// did, and it is deliberately not Compiled or Replayed. Those two count events:
+// a scope that closed by running compiled code, and a force that fell back to
+// replay. One of either can stand for two thousand multiplications or for none.
+// Computed counts the same population Nodes does -- traced operations, one per
+// place() -- and rises only when those operations are handed to something that
+// evaluates them.
+//
+// It is exact rather than estimated, because a traced node reaches exactly one
+// of three fates and each is counted at the moment it happens:
+//
+//   - It is in the trace when a force runs it, in which case every node then
+//     open is computed. Both evaluators are all-or-nothing over the nodes they
+//     are given: ir.Eval walks every node in the graph it is handed, and the
+//     backend emits a region for every node in the plan (internal/ir/fuse.go
+//     gives every unabsorbed node a region, and internal/codegen/emit.go emits
+//     every region), so neither skips a node for being unread. That is what
+//     TestEveryNodeHandedToAnEvaluatorIsComputed pins.
+//   - It is live at a scope close, which is the case above.
+//   - It is dead at a scope close, in which case compileAndRun finds no outputs,
+//     returns before compiling anything, and the node is never computed.
+//
+// The trace is emptied at every force and at every reset, so no node is counted
+// twice and none is counted before its arithmetic ran.
 
 // Stats returns a copy of the counters.
 func (t *Tracer) Stats() Stats { return t.stats }

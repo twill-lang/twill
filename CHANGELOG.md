@@ -14,16 +14,19 @@
   benchmark body under the tracer is not slow, it does not run.
 
   ```rust
-  black_box(body(i))    # the work behind the value is done, and the value is x
+  for i in range(n) { black_box(body(i)) }
+  # every iteration is computed, and every value is body(i) unchanged
   ```
 
   bobbin's mitigation was `bench.keep`, a twill function returning its argument.
   It does not work and could not have: a call to a twill function is not a
   barrier, the tracer follows through the body, and the values die at the same
-  scope boundary. Measured on the same program, `keep` and no protection at all
-  are indistinguishable, two operations traced and zero computed. `black_box`
-  has no opcode, so `Apply` forces the open trace before it runs and the work is
-  computed at the call.
+  scope boundary. Measured on the harness's own shape, four discarded calls in a
+  loop, `keep` and no protection at all are indistinguishable: eight tensor
+  operations traced and none of them computed, both times. With `black_box` all
+  eight are computed, because it has no opcode and `Apply` forces the open trace
+  before any builtin without one runs. The nine measured rows, and what the
+  counter behind them counts, are `docs/CODEGEN.md` section 12.1.
 
   It is the identity on every type, in both modes, on both implementations, and
   it is transparent to shape, dtype and gradients, so inserting one can change a

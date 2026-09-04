@@ -16,20 +16,31 @@ import (
 // stops being true is the day every published number is wrong. The entry was
 // half out of date when it was written. This interpreter already removes work:
 // under TWILL_TRACE=1 a statement's tensor operations are recorded rather than
-// run, and when the scope closes with nothing live, trace.compileAndRun finds
-// no outputs and computes none of them. That is not a hypothetical optimiser
-// and it is not a corner: it is the path docs/CODEGEN.md says goes on by
-// default once section 11.2.3 lands.
+// run, and when the owning scope closes with nothing live, trace.compileAndRun
+// finds no outputs and computes none of them. That is not a hypothetical
+// optimiser and it is not a corner: it is the path docs/CODEGEN.md says goes on
+// by default once section 11.2.3 lands.
 //
-// So these tests come in two halves, and the first half is the one that gives
-// the second its meaning. TestDiscardedWorkIsDeletedWithoutTheBarrier shows the
-// deletion happening, including through the workaround bobbin is using today.
-// TestTheBarrierKeepsDiscardedWorkAlive shows black_box stopping it.
+// TestBarrierMeasurementTable is where that is measured. It is also the source
+// of the table in docs/CODEGEN.md section 12.1: the test prints the table it
+// asserts, so the published numbers cannot drift from the ones a run produces
+// without this test going red first.
 
-// tracedWork runs a program with the tracer on and reports how many operations
-// it recorded and how many of those were ever actually computed. Compiled and
-// Replayed are the only two ways a traced node turns into arithmetic; a node
-// that is in neither was written down and thrown away.
+// tracedWork runs a program with the tracer on and reports two counts of the
+// same population: tensor operations the tracer recorded, and how many of those
+// operations were computed.
+//
+// Both come from internal/trace's counters and both count nodes. Stats.Nodes
+// rises once per recorded operation, in Tracer.place. Stats.Computed rises by
+// the number of operations open in the trace at the moment something evaluates
+// them, and by nothing else.
+//
+// It is not Compiled+Replayed, which is what an earlier version of this helper
+// returned. Those two count events rather than work: internal/trace/trace.go
+// documents them as "scopes closed by running compiled code" and "forces that
+// fell back to replay", and one of either can stand for two thousand
+// multiplications or for none. A helper that returns them cannot answer "how
+// much work was performed", which is the only question this file is asking.
 func tracedWork(t *testing.T, src string) (nodes, computed int) {
 	t.Helper()
 	dir := t.TempDir()
@@ -43,57 +54,93 @@ func tracedWork(t *testing.T, src string) (nodes, computed int) {
 		t.Fatalf("run: %v\nsource:\n%s", err, src)
 	}
 	s := ip.TraceStats()
-	return s.Nodes, s.Compiled + s.Replayed
+	return s.Nodes, s.Computed
 }
 
-// A benchmark harness in miniature: a body whose result the harness has no use
-// for, called from a function that returns nothing. That is the shape, not a
-// contrivance to provoke the tracer. bobbin src/harness.tw calls `batch` as a
-// statement, `batch` returns unit, and every result the benchmark body produces
-// dies inside it.
-const benchShape = `%s
+// The three program shapes, and the reason there are three rather than one.
+//
+// The deletion this file is about happens at the close of the scope that *owns*
+// the trace, and internal/interp/tracing.go opens one per statement, so which
+// statement owns it decides whether anything is live when it closes. That makes
+// the shape of the benchmark, not the shape of its body, the thing that decides
+// whether work survives. A single shape would have published a rule that holds
+// in one of these three.
+const (
+	// stmtShape: a body whose result the caller has no use for, called as a
+	// statement. bobbin src/harness.tw is this shape: it calls `batch` as a
+	// statement, `batch` returns unit, and every result the benchmark body
+	// produces dies inside it. The owning scope is `discard(big)`, its value is
+	// unit, and nothing is live.
+	stmtShape = `%s
 fn discard(x) { let y = %s }
 let big = ones(64, 64)
 discard(big)
 `
+	// loopStmtShape: the same call, four times. This is the shape a benchmark
+	// harness actually runs, and it is the one whose numbers matter.
+	loopStmtShape = `%s
+fn body(x) { let y = %s }
+let big = ones(64, 64)
+for i in range(4) { body(big) }
+`
+	// loopLetShape: four iterations that bind the result to a `let` in the loop
+	// body. Here the `let` is the owning statement and its value is the body's
+	// result, so the result is live at the close and nothing is deleted. It is
+	// in this table because it is the shape where the barrier buys nothing, and
+	// a table that showed only the two shapes where it helps would be a
+	// advertisement rather than a measurement.
+	loopLetShape = `%s
+fn body(x) = %s
+let big = ones(64, 64)
+for i in range(4) { let y = body(big) }
+`
+)
 
-// The premise of entry 30, checked rather than assumed. If this test ever
-// fails, the tracer stopped deleting discarded work and the argument written in
-// docs/CODEGEN.md needs rewriting; it is not a reason to delete the barrier,
-// which is a promise about every future optimiser and not only this one.
-func TestDiscardedWorkIsDeletedWithoutTheBarrier(t *testing.T) {
-	for _, c := range []struct{ name, prelude, body string }{
-		{"nothing at all", "", "sum(exp(x))"},
+// TestBarrierMeasurementTable measures every combination of the three shapes
+// above with three protections, asserts all nine, and prints the result as the
+// table docs/CODEGEN.md section 12.1 publishes.
+//
+// It carries both halves of the argument. The rows with `computed` at 0 are the
+// premise of roadmap entry 30, checked rather than assumed: if one of them ever
+// fails, the tracer stopped deleting discarded work and section 12.1 needs
+// rewriting, which is not a reason to delete the barrier. The rows where
+// black_box raises `computed` to `traced` are the barrier working; giving
+// black_box an opcode, or teaching a later pass to fold it away, fails there.
+// The three loopLetShape rows assert that the barrier changes nothing, which is
+// the row that keeps the other six honest.
+func TestBarrierMeasurementTable(t *testing.T) {
+	protections := []struct{ name, prelude, body string }{
+		{"unprotected", "", "sum(exp(x))"},
 		// bobbin's `fn keep(x: F64) -> F64 = x`, which is what entry 30 was
 		// filed to replace. A call to a twill function is not a barrier: the
 		// tracer follows straight through it, so the work dies exactly as it
 		// does with no protection at all.
-		{"a named identity function", "fn keep(v) = v", "keep(sum(exp(x)))"},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			nodes, computed := tracedWork(t, fmt.Sprintf(benchShape, c.prelude, c.body))
-			if nodes == 0 {
-				t.Fatalf("nothing was traced, so this program no longer measures anything")
-			}
-			if computed != 0 {
-				t.Errorf("%d of %d traced operations were computed; this test's premise "+
-					"is that discarded work is deleted, and it no longer is", computed, nodes)
-			}
-		})
+		{"through a named identity function", "fn keep(v) = v", "keep(sum(exp(x)))"},
+		{"through black_box", "", "black_box(sum(exp(x)))"},
 	}
-}
+	shapes := []struct {
+		name, tmpl string
+		// want[i] is {traced, computed} for protections[i].
+		want [3][2]int
+	}{
+		{"one discarded call", stmtShape, [3][2]int{{2, 0}, {2, 0}, {2, 2}}},
+		{"four discarded calls in a loop", loopStmtShape, [3][2]int{{8, 0}, {8, 0}, {8, 8}}},
+		{"four calls bound by a let in a loop", loopLetShape, [3][2]int{{8, 8}, {8, 8}, {8, 8}}},
+	}
 
-// The barrier itself. black_box has no opcode, so Apply forces the open trace
-// before it runs, and the work that produced its argument is computed rather
-// than dropped. Giving black_box an opcode, or teaching a later pass to fold it
-// away, fails here.
-func TestTheBarrierKeepsDiscardedWorkAlive(t *testing.T) {
-	nodes, computed := tracedWork(t, fmt.Sprintf(benchShape, "", "black_box(sum(exp(x)))"))
-	if nodes == 0 {
-		t.Fatalf("nothing was traced, so this program no longer measures anything")
-	}
-	if computed == 0 {
-		t.Errorf("%d traced operations, none computed: black_box did not keep the value alive", nodes)
+	t.Log("| program | protection | operations traced | operations computed |")
+	t.Log("|---|---|---|---|")
+	for _, sh := range shapes {
+		for i, p := range protections {
+			traced, computed := tracedWork(t, fmt.Sprintf(sh.tmpl, p.prelude, p.body))
+			t.Logf("| %s | %s | %d | %d |", sh.name, p.name, traced, computed)
+			want := sh.want[i]
+			if traced != want[0] || computed != want[1] {
+				t.Errorf("%s, %s: traced %d and computed %d, want %d and %d; "+
+					"docs/CODEGEN.md section 12.1 publishes the wanted pair and is now wrong",
+					sh.name, p.name, traced, computed, want[0], want[1])
+			}
+		}
 	}
 }
 

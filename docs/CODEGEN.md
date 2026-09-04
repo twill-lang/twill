@@ -1104,8 +1104,9 @@ The premise was already false when it was written, and this document is the
 reason it is easy to be wrong about: everything above describes a compiler, in
 this repository, that deletes work. Section 4's liveness rule is the deletion.
 A statement's tensor operations are recorded rather than run, and when the scope
-closes, `trace.compileAndRun` asks which of the recorded values are still
-reachable from what the scope handed out. If none are, it computes none of them:
+that owns the trace closes, `trace.compileAndRun` asks which of the recorded
+values are still reachable from what that scope handed out. If none are, it
+computes none of them:
 
 ```go
 outRefs, outPH := t.liveRefs(live)
@@ -1117,27 +1118,130 @@ if len(outRefs) == 0 {
 
 That is dead code elimination, and it is exactly the elimination a benchmark
 walks into, because a benchmark's defining feature is that it throws its result
-away. Measured on this tree with `TWILL_TRACE=1`:
+away.
 
-| program | nodes traced | nodes computed |
-|---|---|---|
-| `fn discard(x) { let y = sum(exp(x)) }` called as a statement | 2 | 0 |
-| the same, through `fn keep(v) = v` | 2 | 0 |
-| the same, through `black_box` | 2 | 2 |
+#### What the instrument counts
 
-The second row is the one that matters. `bench.keep` was written to be the
-single place to fix, and it is; what it was not, and was never going to be, is
-protection. A call to a twill function is not a barrier, because the tracer does
-not stop at one: it follows through the body and keeps recording, and the values
-die at the same scope boundary they would have died at anyway.
+`internal/trace.Stats.Computed` counts tensor operations whose arithmetic was
+performed. It counts the same population as `Stats.Nodes`, which rises once per
+operation the tracer records, in `Tracer.place`. So the two columns below are
+two counts of one set of things, and their difference is work that was written
+down and thrown away.
 
-The elimination is also not all-or-nothing, which is worse than if it were. A
+It is deliberately not `Compiled + Replayed`. Those two count events rather than
+work -- `internal/trace/trace.go` defines them as scopes closed by running
+compiled code and forces that fell back to replay -- and one of either can stand
+for two thousand multiplications or for none. An earlier draft of this section
+published a table derived from `Compiled + Replayed` and called the result
+"nodes computed". It was not that, and its `black_box` row did not match what
+running the same helper on the same program produced. The instrument is named
+here so the next reader can check it rather than trust it.
+
+`Computed` is exact rather than sampled, because a recorded operation reaches
+one of two ends and both are counted where they happen:
+
+- It is still in the open trace when something forces it, in which case it is
+  computed, and so is every other operation then open. Both evaluators are
+  all-or-nothing over what they are handed: `ir.Eval` walks nodes rather than
+  outputs, and the backend gives every unabsorbed node its own region
+  (`internal/ir/fuse.go`) and emits every region (`internal/codegen/emit.go`),
+  so neither skips an operation for having no reader.
+- Or the owning scope closes with nothing live, and `compileAndRun` returns at
+  the fragment above, before either evaluator is reached. Nothing is computed.
+
+The trace is emptied at every force and at every reset, so nothing is counted
+twice and nothing is counted before its arithmetic ran. The claim about the two
+evaluators is a claim about code that could change, so it is pinned by tests
+rather than by this paragraph: `TestEvalComputesEveryNodeIncludingUnreadOnes`
+and `TestTheBackendPlansEveryNodeIncludingUnreadOnes` in `internal/codegen` both
+fail the day an evaluator starts skipping an unread node, which is the day this
+section needs remeasuring.
+
+#### The measurement
+
+Three programs, each in three versions. The body is `sum(exp(x))` on a 64x64
+tensor, which is two tensor operations, so a program that calls it four times
+records eight.
+
+```rust
+# A: one call whose result the caller has no use for.
+fn discard(x) { let y = sum(exp(x)) }
+discard(big)
+
+# B: the same call four times, which is the shape a harness runs.
+# bobbin src/harness.tw is this shape: it calls `batch` as a statement,
+# `batch` returns unit, and every result the body produces dies inside it.
+fn body(x) { let y = sum(exp(x)) }
+for i in range(4) { body(big) }
+
+# C: four calls whose results are bound in the loop body.
+fn body(x) = sum(exp(x))
+for i in range(4) { let y = body(big) }
+```
+
+| program | protection | operations traced | operations computed |
+|---|---|---|---|
+| A, one discarded call | none | 2 | 0 |
+| A | `fn keep(v) = v` | 2 | 0 |
+| A | `black_box` | 2 | 2 |
+| B, four discarded calls in a loop | none | 8 | 0 |
+| B | `fn keep(v) = v` | 8 | 0 |
+| B | `black_box` | 8 | 8 |
+| C, four calls bound by a `let` | none | 8 | 8 |
+| C | `fn keep(v) = v` | 8 | 8 |
+| C | `black_box` | 8 | 8 |
+
+Reproduce with `go test ./internal/interp -run TestBarrierMeasurementTable -v`.
+That test asserts all nine cells and prints the table above, so a number here
+that a run does not produce is a red test rather than a stale document.
+
+#### How to read it
+
+**The deletion is total, not partial.** In B every operation of all four
+iterations is deleted. There is no residue and no iteration that survives by
+accident, so a benchmark in that shape does not report a wrong duration for the
+work, it reports the duration of not doing it.
+
+**`bench.keep` is not protection, and could not have been.** Rows two and five
+are identical to rows one and four. A call to a twill function is not a barrier,
+because the tracer does not stop at one: it follows through the body and keeps
+recording, and the values die at the same scope boundary they would have died at
+anyway. `keep` was written to be the single place to fix, and it is exactly
+that and nothing more.
+
+**The shape of the harness decides this, not the shape of the body.** C traces
+the same eight operations as B and computes all eight of them without any
+barrier, because the owning statement there is the `let`, its value is the
+body's result, and a live value at a close is not deleted. So the barrier buys
+nothing in C. That is not the barrier failing; it is nothing having been
+deleted to begin with. It is in the table because a table showing only the
+shapes where the barrier helps would be an advertisement. What C establishes is
+that a benchmark cannot tell from its body whether it is safe, which is the
+argument for putting the barrier in unconditionally rather than where it looks
+needed.
+
+**A claim that was in this section and is not true:** an earlier draft said "a
 loop of four iterations whose result is discarded computes three of them, not
-zero: each iteration's `ones` call is a builtin with no opcode, so it forces the
-previous iteration's trace on its way past, and only the last iteration's work
-has nothing behind it to force. A benchmark that survives today survives by the
-accident of where the forcing points happen to fall in its body, and that
-accident changes whenever the body changes.
+zero", and attributed it to forcing points falling between iterations. No shape
+measured produces three. It came from reading a count of forces as a count of
+work, and it is recorded here rather than quietly removed because the point of
+this section is that a number has to survive being re-run.
+
+#### What was not measured
+
+Every row was produced on a machine where the compiled path is unreachable.
+`internal/codegen/load_other.go` supports dialling into emitted code on Windows
+only, so `Compiled` was 0 in all nine runs and every force in the table went
+through replay. `Computed` is written to give the same figure either way -- both
+paths compute every node in the trace they are given, and the branch that
+computes nothing is taken before either runs -- but that is the structural
+argument above and the tests that pin it, not a second measurement. Running this
+table on Windows with a C compiler present is what would measure it, and nobody
+has.
+
+The table also counts tensor operations only. Systems mode traces nothing, so
+there is no row in it for the case section 12.3 says the barrier is a promise
+with no mechanism.
 
 ### 12.2 What black_box guarantees
 
@@ -1159,10 +1263,11 @@ accident changes whenever the body changes.
 4. **No pass may see through it.** It is never given an opcode, never constant
    folded, never hoisted, and never deleted for having no reader. That is a rule
    about code not yet written, so it is pinned by a test rather than by this
-   paragraph: `internal/interp/barrier_test.go` fails if the barrier stops
-   forcing, and its companion test fails if the deletion it guards against stops
-   happening, which is the prompt to rewrite this section rather than to delete
-   the barrier.
+   paragraph. `TestBarrierMeasurementTable` in `internal/interp/barrier_test.go`
+   goes red in both directions: its `black_box` rows fail if the barrier stops
+   forcing, and its unprotected rows fail if the deletion the barrier guards
+   against stops happening, which is the prompt to rewrite section 12.1 rather
+   than to delete the barrier.
 
 ### 12.3 What it does not guarantee
 

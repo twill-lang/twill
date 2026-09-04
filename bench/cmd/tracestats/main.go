@@ -1,5 +1,11 @@
 // tracestats runs each .tw file given and reports what the tracer did with it,
 // so "how much of the language compiles" is a measurement rather than a guess.
+//
+// nodes and computed are the two columns that count the same thing: tensor
+// operations recorded, and tensor operations whose arithmetic was performed. The
+// rest count events. A program whose computed column is well under its nodes
+// column is one the liveness rule is deleting work from, which is what
+// docs/CODEGEN.md section 12.1 is about.
 package main
 
 import (
@@ -17,8 +23,8 @@ func main() {
 		os.Exit(2)
 	}
 
-	fmt.Printf("%-30s %8s %8s %8s %8s %8s %8s %7s\n",
-		"program", "nodes", "scopes", "traced", "compiled", "replayed", "escapes", "miss")
+	fmt.Printf("%-30s %8s %8s %8s %8s %8s %8s %8s %7s\n",
+		"program", "nodes", "computed", "scopes", "traced", "compiled", "replayed", "escapes", "miss")
 
 	var traced, total int
 	for _, f := range files {
@@ -33,9 +39,9 @@ func main() {
 		if s.Nodes > 0 {
 			traced++
 		}
-		fmt.Printf("%-30s %8d %8d %8d %8d %8d %8d %7d\n",
-			filepath.Base(f), s.Nodes, s.Scopes, s.Traced, s.Compiled, s.Replayed,
-			s.Escapes, s.CacheMiss)
+		fmt.Printf("%-30s %8d %8d %8d %8d %8d %8d %8d %7d\n",
+			filepath.Base(f), s.Nodes, s.Computed, s.Scopes, s.Traced, s.Compiled,
+			s.Replayed, s.Escapes, s.CacheMiss)
 	}
 	fmt.Printf("\n%d of %d programs produced traced nodes\n", traced, total)
 }
