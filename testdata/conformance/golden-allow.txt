@@ -1,0 +1,87 @@
+# Fixtures whose recorded golden output no longer matches this binary.
+#
+# tools/diff/run has been in the tree unreferenced by the Makefile and by
+# .github/workflows/ci.yml since it was written, so nothing ever ran it and
+# nothing ever noticed the corpus drifting away from the goldens. Wiring it up
+# meant starting from a run that already had 33 findings. Each one is listed
+# here so the harness can fail on the thirty-fourth.
+#
+# A line excuses every finding against that fixture. The list may only shrink:
+# the way to remove a line is to re-record that fixture's golden deliberately,
+# in a commit that says what changed and why the new output is right.
+#
+# Recording the goldens again wholesale was the alternative and is worse. The
+# stale output is evidence of what the language used to do, and four of the five
+# groups below are behaviour changes nobody wrote down. Overwriting them would
+# destroy the only record that they happened.
+#
+# Measured on this branch, with `make diff`:
+#   33 findings, 321 fixtures verified.
+# The same run at 209ed56 (the last commit that re-recorded any golden) gives
+# 21, so 12 of these were introduced after the last refreeze and 21 were already
+# stale when it happened.
+
+# --- 1. The standard library grew ------------------------------------------
+# These fixtures print a module record, so every function added to std/nn.tw,
+# std/num.tw or std/shapes.tw changes their output: rope, rms_norm, swiglu,
+# geglu, glu, attention_causal_rope, all, any, count_nonzero and the rest. Not
+# a behaviour change; the fixtures are just a census of the library.
+testdata/cases/checker_record_66eeab0c8344d05b.tw
+testdata/cases/interp_import_1022264b14f2a00f.tw
+testdata/cases/interp_import_37899042553abb30.tw
+testdata/cases/interp_import_4a58879b83eb92d6.tw
+testdata/cases/interp_import_4d2712abe7c4b462.tw
+testdata/cases/interp_import_7a6fc56871a75287.tw
+testdata/cases/interp_import_b841ee1f876aabe5.tw
+testdata/cases/interp_serialize_e30bc4f3260b7f3b.tw
+testdata/examples/classifier.tw
+testdata/examples/nn_xor.tw
+testdata/std/nn.tw
+testdata/std/num.tw
+testdata/std/shapes.tw
+
+# --- 2. The language was renamed -------------------------------------------
+# The golden still says `unknown name "martin"` where the binary now says
+# `unknown name "twill"`. Stale since 1c3b094, the Raster to Twill rename.
+testdata/cases/interp_bench_ed770eb055f5570a.tw
+testdata/cases/interp_cumulative_229df79f2eb3b279.tw
+testdata/cases/interp_cumulative_a85534954edf5f98.tw
+testdata/cases/interp_examples_3cc12389cbdde183.tw
+testdata/cases/interp_examples_6e2eb52ac486631f.tw
+testdata/cases/interp_format_run_69ac71c64b0eee40.tw
+
+# --- 3. Two errors moved from run time to check time ------------------------
+# The checker now catches what the interpreter used to, so the message changed
+# class as well as wording. Both are improvements and neither was recorded.
+#   axis 5 out of range for rank 2
+#     -> shape error: axis out of range for [1, 2]: it has 2 axes, numbered 0 to 1
+#   cannot compare these values with "<"
+#     -> shape error: cannot order a list with "<": ordering is numbers and strings
+testdata/cases/interp_cumulative_d2e59cce3c8e2e96.tw
+testdata/cases/interp_equality_bf072a1e7bc0c7c6.tw
+
+# --- 4. Floating point results moved ----------------------------------------
+# The canonical dump prints every float as a hex literal, so these are exact
+# last-bit changes in a forward value, not formatting. They reproduce on an
+# amd64 build of this same tree, so they are changes in twill and not in the
+# CPU. Nobody knows which commit moved them, because nothing was watching.
+#   examples/gbm.tw       test regression RMSE 0.65947 -> 0.660285
+#   examples/signal_opt.tw  step 200 Sharpe 4.655568 -> 4.655621
+testdata/cases/interp_finance_90d36d289f85c057.tw
+testdata/examples/attention.tw
+testdata/examples/backtest.tw
+testdata/examples/cnn.tw
+testdata/examples/gbm.tw
+testdata/examples/minibatch.tw
+testdata/examples/mlp.tw
+testdata/examples/montecarlo_option.tw
+testdata/examples/records.tw
+testdata/examples/signal_opt.tw
+
+# --- 5. Architecture-dependent floats ---------------------------------------
+# These two agree on an amd64 build of this tree and differ on arm64, so the
+# goldens were recorded on amd64 and these fixtures are not portable. They will
+# show up as "agrees here; delete its line" on an amd64 CI runner, which is why
+# a cleared allow-list entry is a note and not a failure.
+testdata/cases/interp_bench_bca6ee0bb6f0f500.tw
+testdata/examples/linreg.tw

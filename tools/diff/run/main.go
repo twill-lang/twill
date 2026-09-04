@@ -37,6 +37,7 @@ func main() {
 		seed    = flag.Int64("seed", 1, "fuzz seed; the same seed gives the same programs")
 		timeout = flag.Duration("timeout", 120*time.Second, "per-case time limit")
 		jobs    = flag.Int("jobs", runtime.NumCPU(), "cases to run at once")
+		allow   = flag.String("allow", "", "file of fixture paths whose findings are known and not fatal")
 	)
 	flag.Parse()
 
@@ -49,6 +50,13 @@ func main() {
 	}
 
 	rep := &report{}
+	if *allow != "" {
+		known, err := readAllow(*allow)
+		if err != nil {
+			fail(err)
+		}
+		rep.allowed = known
+	}
 	switch {
 	case *record:
 		if *bin == "" {
@@ -485,6 +493,13 @@ type report struct {
 	mu       sync.Mutex
 	counts   map[string]int
 	findings []finding
+	// allowed holds the fixtures whose findings are already understood. A
+	// finding against one of them is reported and does not fail the run; a
+	// finding against anything else does. The list is the whole point of
+	// running this in CI at all: without it the harness has been red since
+	// before anyone wired it up, and a permanently red check is a check nobody
+	// reads.
+	allowed map[string]bool
 }
 
 func (r *report) count(kind string) {
@@ -511,10 +526,34 @@ func (r *report) divergences() int {
 		switch f.kind {
 		case "nondeterministic", "skipped", "missing golden":
 		default:
+			if r.allowed[f.where] {
+				continue
+			}
 			n++
 		}
 	}
 	return n
+}
+
+// readAllow reads a list of fixture paths, one per line, `#` starting a
+// comment. A line excuses every finding against that fixture, because a stale
+// golden is stale for the whole file and listing the kind as well would only
+// invite the list to be edited rather than shortened.
+func readAllow(path string) (map[string]bool, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]bool{}
+	for _, line := range strings.Split(string(b), "\n") {
+		if i := strings.IndexByte(line, '#'); i >= 0 {
+			line = line[:i]
+		}
+		if name := strings.TrimSpace(line); name != "" {
+			out[filepath.FromSlash(name)] = true
+		}
+	}
+	return out, nil
 }
 
 func (r *report) print() {
@@ -527,8 +566,29 @@ func (r *report) print() {
 		fmt.Printf("%-24s %d\n", k, r.counts[k])
 	}
 	sort.Slice(r.findings, func(i, j int) bool { return r.findings[i].where < r.findings[j].where })
+	found := map[string]bool{}
 	for _, f := range r.findings {
-		fmt.Printf("\n=== %s: %s\n%s\n", f.kind, f.where, f.detail)
+		found[f.where] = true
+		label := f.kind
+		if r.allowed[f.where] {
+			label = "known " + f.kind
+		}
+		fmt.Printf("\n=== %s: %s\n%s\n", label, f.where, f.detail)
+	}
+	// An allow-listed fixture that agrees today is reported, not failed. Two of
+	// the entries differ only in the last bit of a float and come back clean on
+	// another architecture, so making a cleared entry fatal would turn the list
+	// into something that has to be edited per machine. Reporting it keeps the
+	// pressure on without pinning the build to one CPU.
+	var cleared []string
+	for where := range r.allowed {
+		if !found[where] {
+			cleared = append(cleared, where)
+		}
+	}
+	sort.Strings(cleared)
+	for _, where := range cleared {
+		fmt.Printf("\nnote: %s is on the allow-list and agrees here; delete its line\n", where)
 	}
 	fmt.Printf("\n%d divergence(s)\n", r.divergences())
 }
