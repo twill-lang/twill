@@ -751,20 +751,32 @@ lose a month.
 
 ## NEEDS-30: recursion depth, and a guard on it
 
-**Status:** not blocking; still an operational risk, and now a measured one
-(2026-08). A file whose single expression is 10,000 nested parentheses parses and
-runs, and a 20,000-deep recursive call in twill returns rather than crashing. So
-the exposure below has not bitten at the depths a hostile input would plausibly
-reach, and there is still no depth counter and no diagnostic: what happens past
-whatever the real limit is remains undefined rather than reported.
+**Status:** half closed (2026-09). The *call* half has a counter and a
+diagnostic in both evaluators; the *parse* half does not.
 
-The parser and the checker are recursive descent over user input and the
-bootstrap has the same exposure. The Go side survives on the goroutine stack;
-what the twill side does on a 10,000-deep nesting is undefined until the VM
-exists. Worth a depth counter with a diagnostic rather than whatever the VM
-does by default.
+Calls: `interp.DefaultMaxCallDepth` and `src/eval.tw`'s `MAX_CALL_DEPTH` are
+both 10,000, and a call nested deeper than that is an ordinary twill error
+naming the function, the depth and the call's line. It is checked on the way
+into the frame, because a Go stack overflow is a fatal error that no recover
+catches: past the limit there is nothing left to report with. The number was
+measured rather than guessed. The deepest legitimate recursion in this
+repository and the nine satellites is the self-hosted compiler checking
+`src/parse.tw` at 217 nested calls, everything else stays under 30, and the
+bootstrap's own stack gives out between 80,000 and 120,000.
 
-*Go bootstrap:* none. A deeply nested twill file crashes the Go parser today.
+Parsing and checking: still uncounted, and still the exposure this entry was
+opened for. The parser and the checker are recursive descent over user input,
+so their depth is the input's nesting rather than the program's call graph, and
+the call counter does not see them. Measured on the same machine as the numbers
+above: a single expression of 500,000 nested parentheses parses, checks and runs;
+1,000,000 crashes the Go parser with a stack overflow. That is far past what a
+written program reaches and well within what a hostile input can send, so it is
+an input-validation problem rather than a usability one, and it wants the same
+treatment -- a depth counter in the descent, with a diagnostic.
+
+*Go bootstrap:* `internal/interp.Interp.MaxCallDepth` for the call half. None
+for the parse half; a sufficiently nested twill file still crashes the Go
+parser.
 
 ## NEEDS-31: deliberate divergence: `t[]`
 

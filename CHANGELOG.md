@@ -2,7 +2,50 @@
 
 ## [Unreleased]
 
+### Added
+
+- **A recursion limit, so a missing base case is a twill error and not a Go
+  crash.** Both evaluators refuse a call nested more than 10,000 deep:
+
+  ```
+  bad.tw:2: runtime error: call depth limit reached: "fact" is 10000 calls
+  deep, which is as deep as twill goes. A recursion this deep is almost always
+  a missing base case; if it is not, rewrite it as a loop
+    2 |   n * fact(n - 1)
+  ```
+
+  What it replaced was 424 lines of Go runtime internals and no exit status. A
+  Go stack overflow is a *fatal* error: no recover catches it, so the only way
+  to get a diagnostic at all is to refuse before the stack runs out. `fn fact(n)
+  = n * fact(n - 1)` with the base case forgotten is the most likely first
+  mistake anyone makes in a new language, and it was the most likely first thing
+  they saw.
+
+  The number is measured. The deepest legitimate recursion anywhere in this
+  repository or the nine satellites is the self-hosted compiler checking
+  `src/parse.tw`, which nests 217 calls; everything in `examples/`,
+  `std/tests/`, `testdata/` and the satellites' own tests and examples stays
+  under 30. The bootstrap's stack gives out between 80,000 and 120,000 nested
+  calls. 10,000 is about 46x above the deepest real program and about 8x below
+  the crash.
+
 ### Changed
+
+- **A fault inside the interpreter is reported as a twill error, not a Go
+  traceback.** `argmax(zeros(0))` used to print a goroutine dump; it now prints
+  the line the program had reached and says whose bug it is:
+
+  ```
+  bad.tw:1: runtime error: internal error: index out of range [0] with length 0.
+  This is a bug in twill, not in the program that hit it: please report it, with
+  this file, at https://github.com/twill-lang/twill/issues
+    1 | print(argmax(zeros(0)))
+  ```
+
+  The person at the keyboard is running a twill program and cannot act on a Go
+  stack. This is the second half of the recursion limit and not a replacement
+  for it: the one fault most likely to be hit, a stack overflow, is the one
+  fault a recover cannot catch.
 
 - **A function defined twice in one file is now refused.** Both checkers report
   the second declaration, saying which one runs:

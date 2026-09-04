@@ -1,0 +1,277 @@
+package interp_test
+
+import (
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/twill-lang/twill/internal/interp"
+	"github.com/twill-lang/twill/internal/value"
+)
+
+// A runaway recursion is refused with an ordinary twill error rather than
+// taking the process down with a Go stack overflow. Before this, the first
+// program a newcomer wrote with a missing base case printed four hundred lines
+// of Go runtime internals and left no exit status behind, because a stack
+// overflow is a fatal error that no recover can catch. The depth counter is
+// what turns it into a diagnostic, and it has to be a refusal *before* the
+// stack runs out, not a rescue after.
+func TestRunawayRecursionIsRefused(t *testing.T) {
+	const src = `fn f(n) {
+  if n == 0 { return 0 }
+  f(n - 1) + 1
+}
+print(f(1000000))
+`
+	ip := interp.New(func(string) {})
+	_, err := ip.Run(src)
+	if err == nil {
+		t.Fatal("a recursion with no reachable base case was answered, not refused")
+	}
+	re, ok := err.(*interp.RuntimeError)
+	if !ok {
+		t.Fatalf("error is %T, not a *interp.RuntimeError: %v", err, err)
+	}
+	// The message names the function, says how deep it got, and the error
+	// carries the line of the call so the CLI can point at it.
+	for _, want := range []string{`"f"`, fmt.Sprint(interp.DefaultMaxCallDepth), "call depth limit"} {
+		if !strings.Contains(re.Msg, want) {
+			t.Errorf("message %q does not mention %q", re.Msg, want)
+		}
+	}
+	if re.Line != 3 {
+		t.Errorf("error is reported at line %d; the recursive call is on line 3", re.Line)
+	}
+}
+
+// The case just under the limit still runs. A limit that also refuses the
+// deepest legitimate program is not a diagnostic, it is a new bug.
+func TestRecursionJustUnderTheLimitStillRuns(t *testing.T) {
+	src := fmt.Sprintf(`fn depth(n) {
+  if n == 0 { return 0 }
+  depth(n - 1) + 1
+}
+print(depth(%d))
+`, interp.DefaultMaxCallDepth-1)
+	var out strings.Builder
+	ip := interp.New(func(s string) { out.WriteString(s) })
+	if _, err := ip.Run(src); err != nil {
+		t.Fatalf("a recursion one call short of the limit was refused: %v", err)
+	}
+	if got := strings.TrimSpace(out.String()); got != fmt.Sprint(interp.DefaultMaxCallDepth-1) {
+		t.Errorf("depth(%d) printed %q", interp.DefaultMaxCallDepth-1, got)
+	}
+}
+
+// An anonymous function has no name to print, so it is named by what it is.
+func TestRunawayRecursionInAnAnonymousFunction(t *testing.T) {
+	const src = `let go = fn(n) = 0
+go = fn(n) = go(n + 1)
+print(go(0))
+`
+	ip := interp.New(func(string) {})
+	_, err := ip.Run(src)
+	if err == nil {
+		t.Fatal("a runaway anonymous recursion was answered, not refused")
+	}
+	if !strings.Contains(err.Error(), "an anonymous function") {
+		t.Errorf("message %q does not name the anonymous function", err.Error())
+	}
+}
+
+// Mutual recursion is caught the same way; the counter is the interpreter's,
+// not any one function's.
+func TestMutualRecursionIsRefused(t *testing.T) {
+	const src = `fn ping(n) = pong(n + 1)
+fn pong(n) = ping(n + 1)
+print(ping(0))
+`
+	ip := interp.New(func(string) {})
+	_, err := ip.Run(src)
+	if err == nil {
+		t.Fatal("mutual recursion with no base case was answered, not refused")
+	}
+	if !strings.Contains(err.Error(), "call depth limit") {
+		t.Errorf("message %q is not the depth refusal", err.Error())
+	}
+}
+
+// The limit is a property of the interpreter instance, so an embedder that runs
+// an interpreter written in twill on top of this one can raise it. See the
+// field's documentation for why that is needed at all.
+func TestMaxCallDepthIsSettable(t *testing.T) {
+	const src = `fn f(n) {
+  if n == 0 { return 0 }
+  f(n - 1) + 1
+}
+print(f(50))
+`
+	ip := interp.New(func(string) {})
+	ip.MaxCallDepth = 10
+	_, err := ip.Run(src)
+	if err == nil {
+		t.Fatal("a 50-deep recursion was answered at a limit of 10")
+	}
+	if !strings.Contains(err.Error(), "is 10 calls deep") {
+		t.Errorf("message %q does not report the lowered limit", err.Error())
+	}
+}
+
+// Any panic that is not one of the interpreter's own signals comes back as a
+// twill error, not a Go trace. A builtin that faults is a bug in twill, and the
+// person who hits it is running a twill program: they should be told which line
+// of their program was executing and that it is not their fault, not handed a
+// goroutine dump. The stack overflow this file's other tests are about is the
+// one fault this cannot cover, which is why the depth limit exists as well.
+func TestInterpreterPanicBecomesATwillError(t *testing.T) {
+	ip := interp.New(func(string) {})
+	ip.Global.Define("boom", &value.Builtin{
+		Name:  "boom",
+		Arity: 0,
+		Fn: func([]value.Value) (value.Value, error) {
+			var empty []int
+			_ = empty[3] // a genuine Go runtime fault, the way a buggy builtin would fault
+			return value.TheUnit, nil
+		},
+	})
+	_, err := ip.Run("let x = 1\nlet y = boom()\n")
+	if err == nil {
+		t.Fatal("a faulting builtin returned without an error")
+	}
+	re, ok := err.(*interp.RuntimeError)
+	if !ok {
+		t.Fatalf("error is %T, not a *interp.RuntimeError: %v", err, err)
+	}
+	for _, want := range []string{"internal error", "index out of range", "bug in twill"} {
+		if !strings.Contains(re.Msg, want) {
+			t.Errorf("message %q does not mention %q", re.Msg, want)
+		}
+	}
+	if re.Line != 2 {
+		t.Errorf("the fault is reported at line %d; the call is on line 2", re.Line)
+	}
+}
+
+// The two engines refuse the same program with the same words. The message is
+// written twice -- once in Go, once in twill -- so this is what keeps the two
+// copies equal; a change to one that is not made to the other fails here.
+//
+// The self-hosted evaluator is reached at its own limit only by raising the
+// bootstrap's, because each twill frame in src/eval.tw costs about six frames
+// of the interpreter running it, so the default would refuse from the outer
+// engine first (naming a function inside src/eval.tw) long before the inner
+// counter got anywhere near 10,000. Raising it is exactly the case
+// Interp.MaxCallDepth documents.
+func TestSelfHostedRecursionLimitMessageMatches(t *testing.T) {
+	skipUnderShort(t)
+	src := fmt.Sprintf(`fn f(n) {
+  if n == 0 { return 0 }
+  f(n - 1) + 1
+}
+print(f(%d))
+`, interp.DefaultMaxCallDepth+1)
+
+	goIP := interp.New(func(string) {})
+	_, goErr := goIP.Run(src)
+	if goErr == nil {
+		t.Fatal("the bootstrap answered a runaway recursion")
+	}
+	goRE, ok := goErr.(*interp.RuntimeError)
+	if !ok {
+		t.Fatalf("bootstrap error is %T: %v", goErr, goErr)
+	}
+
+	dir := t.TempDir()
+	target := filepath.Join(dir, "input.tw")
+	if err := os.WriteFile(target, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// The self-hosted CLI writes its diagnostics to the real os.Stderr through
+	// write_err, so they are captured at the OS level rather than through the
+	// interpreter's output sink.
+	saved := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = w
+	done := make(chan string, 1)
+	go func() {
+		var b strings.Builder
+		io.Copy(&b, r)
+		done <- b.String()
+	}()
+	selfIP := interp.New(func(string) {})
+	selfIP.MaxCallDepth = 20 * interp.DefaultMaxCallDepth
+	_, ranMain, runErr := selfIP.RunFileMain(filepath.Join("..", "..", "src", "main.tw"),
+		[]string{"twill", "run", target})
+	w.Close()
+	os.Stderr = saved
+	selfOut := <-done
+	if runErr != nil {
+		t.Fatalf("self-hosted CLI errored: %v", runErr)
+	}
+	if !ranMain {
+		t.Fatal("self-hosted main did not run")
+	}
+
+	if !strings.Contains(selfOut, goRE.Msg) {
+		t.Fatalf("the two engines disagree.\nbootstrap: %s\nself-hosted: %s", goRE.Msg,
+			strings.TrimSpace(selfOut))
+	}
+	// And it is reported against the program's own call site, not against
+	// something inside src/eval.tw.
+	if want := fmt.Sprintf("%s:3:", target); !strings.Contains(selfOut, want) {
+		t.Errorf("self-hosted refusal %q does not point at %s", strings.TrimSpace(selfOut), want)
+	}
+}
+
+// The case just under the limit runs on the self-hosted evaluator too, and
+// prints the same answer as the bootstrap.
+//
+// The bootstrap's limit is raised for the same reason as in the test above: at
+// the default, six bootstrap frames per twill frame means the outer engine
+// refuses at about 1,660 of the inner engine's calls. That ceiling is real and
+// it is what `twill run src/main.tw run prog.tw` gets today; this test is about
+// the inner limit, so it lifts the outer one out of the way.
+func TestSelfHostedRecursionJustUnderTheLimitStillRuns(t *testing.T) {
+	skipUnderShort(t)
+	depth := interp.DefaultMaxCallDepth - 1
+	src := fmt.Sprintf(`fn depth(n) {
+  if n == 0 { return 0 }
+  depth(n - 1) + 1
+}
+print(depth(%d))
+`, depth)
+
+	var goOut strings.Builder
+	goIP := interp.New(func(s string) { goOut.WriteString(s) })
+	if _, err := goIP.Run(src); err != nil {
+		t.Fatalf("the bootstrap refused a %d-deep recursion: %v", depth, err)
+	}
+
+	dir := t.TempDir()
+	target := filepath.Join(dir, "input.tw")
+	if err := os.WriteFile(target, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var selfOut strings.Builder
+	selfIP := interp.New(func(s string) { selfOut.WriteString(s) })
+	selfIP.MaxCallDepth = 20 * interp.DefaultMaxCallDepth
+	if _, ranMain, err := selfIP.RunFileMain(filepath.Join("..", "..", "src", "main.tw"),
+		[]string{"twill", "run", target}); err != nil {
+		t.Fatalf("self-hosted CLI errored: %v", err)
+	} else if !ranMain {
+		t.Fatal("self-hosted main did not run")
+	}
+
+	if goOut.String() != selfOut.String() {
+		t.Fatalf("go = %q, self = %q", goOut.String(), selfOut.String())
+	}
+	if !strings.Contains(goOut.String(), fmt.Sprint(depth)) {
+		t.Errorf("a %d-deep recursion printed %q", depth, goOut.String())
+	}
+}

@@ -567,6 +567,28 @@ fn matmul2(A: [n, k], B: [k, m]) -> [n, m] {
 Here `k` must match between `A` and `B`, and the result is checked against
 `[n, m]`.
 
+### Recursion, and how deep it goes
+
+Functions may recurse, and there is a limit: 10,000 nested calls. Past it the
+program is refused with an ordinary error naming the function and the call's
+line.
+
+```
+$ twill run fact.tw
+fact.tw:2: runtime error: call depth limit reached: "fact" is 10000 calls deep,
+which is as deep as twill goes. A recursion this deep is almost always a
+missing base case; if it is not, rewrite it as a loop
+  2 |   n * fact(n - 1)
+```
+
+The limit is there because the alternative is not a deeper recursion, it is a
+crash: the evaluator runs on the host's stack, and running out of it takes the
+whole process down with nothing an error handler can catch. 10,000 is about
+forty-six times the deepest recursion in this repository, its standard library
+and its satellite projects put together, so a program that reaches it has
+almost certainly lost its base case. Recursion is not the language's loop; a
+`while` costs no stack at all.
+
 ## Control flow
 
 `if` is an expression:

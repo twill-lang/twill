@@ -1026,8 +1026,41 @@ fn is_f64_anno(type_name: Str, u: Opt[ast.UnitAnno]) -> Bool {
 }
 
 # CALL_DEPTH counts the closures currently executing. It is what tells a `?`
-# at the top of a file that there is no function to return the failure from.
+# at the top of a file that there is no function to return the failure from,
+# and it is what the recursion limit counts.
 let CALL_DEPTH: Arr[I64] = [0]
+
+# MAX_CALL_DEPTH is how many twill calls may be nested before the evaluator
+# refuses to go further, and it is interp.DefaultMaxCallDepth: the two engines
+# refuse the same programs at the same depth with the same words.
+#
+# The bootstrap's reason for having a limit at all is that a Go stack overflow
+# is fatal and cannot be recovered from, so a missing base case took the whole
+# process down with several hundred lines of runtime internals. This evaluator
+# runs on the bootstrap and so inherits that, and would in any case want the
+# same refusal for its own sake. The number is measured, not guessed: see
+# DefaultMaxCallDepth in internal/interp/interp.go for what was measured.
+#
+# One consequence is worth writing down. When this evaluator runs on the
+# bootstrap, each twill frame here costs about six bootstrap frames, so a
+# program run as `twill run src/main.tw run prog.tw` meets the bootstrap's limit
+# at about a sixth of this one. The refusal is still a twill diagnostic; it just
+# names a function in this file rather than one in prog.tw. Interp.MaxCallDepth
+# is the knob an embedder raises to get the inner limit back.
+let MAX_CALL_DEPTH: I64 = 10000
+
+# call_depth_message is the refusal. interp.callDepthMessage is the same text
+# and the two must agree character for character.
+fn call_depth_message(name: Str, depth: I64) -> Str {
+  let who: Str = "an anonymous function"
+  if len(name) > 0 {
+    who = quoted(name)
+  }
+  bytes.concat("call depth limit reached: ", bytes.concat(who,
+    bytes.concat(" is ", bytes.concat(str(depth),
+      bytes.concat(" calls deep, which is as deep as twill goes. A recursion this deep is ",
+        "almost always a missing base case; if it is not, rewrite it as a loop")))))
+}
 
 # How many gradient passes are running, so that a gradient taken inside one is
 # refused rather than answered with a zero.
@@ -2045,6 +2078,14 @@ fn call_closure(c: Closure, args: Arr[Value], line: I64) -> Res[Value, RuntimeEr
     }
     return Err(runtime_error(line, bytes.concat(who, bytes.concat(" expects ",
       bytes.concat(str(len(c.params)), bytes.concat(" argument(s), got ", str(len(args))))))))
+  }
+  # The depth check comes before the frame is built, so the refusal has a stack
+  # left to unwind through and so that it wins over anything the frame's own
+  # setup might report. The bootstrap this runs on cannot recover from a stack
+  # overflow at all, so there is no after-the-fact version to fall back on.
+  # interp.callClosure checks in the same place for the same reasons.
+  if CALL_DEPTH[0] >= MAX_CALL_DEPTH {
+    return Err(runtime_error(line, call_depth_message(c.name, MAX_CALL_DEPTH)))
   }
   # The call's scope hangs off the closure's captured environment, not off the
   # caller's. That is the whole of lexical scoping and getting it wrong gives
