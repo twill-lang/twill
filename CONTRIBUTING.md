@@ -43,9 +43,31 @@ Or use the Makefile: `make build`, `make test`, `make check`, `make bench`,
 detector over `internal/tensor` and `internal/interp`, and every example as a
 smoke test.
 
-There is no way to run `src/` yet. Changes there are reviewed by reading, and by
-the differential harness in `tools/diff/` where the corresponding Go component
-exists.
+`src/` does run. The self-hosted CLI is a twill program, so the Go bootstrap can
+execute it, and the path it is given is resolved relative to `src/`:
+
+```bash
+./twill run src/main.tw run "$PWD/examples/hello.tw"   # self-hosted
+./twill run examples/hello.tw                          # bootstrap
+```
+
+That is what the conformance gate automates, and it is the only honest way to
+review a change to `src/`:
+
+```bash
+make conformance         # regenerate docs/conformance.md, then commit it
+make conformance-check   # the table is current, and the std suites still agree
+make diff                # the fixture corpus still matches its goldens
+```
+
+`make conformance-check` runs every suite in `std/tests/` twice, once on each
+implementation, and compares the bytes. The divergences that exist today are
+listed in `testdata/conformance/suite-allow.txt`, and the ones between the
+fixture corpus and its recorded goldens are in
+`testdata/conformance/golden-allow.txt`. Both lists may only shrink: a
+divergence that is not on the list fails the build, and so does a line on the
+suite list that no longer diverges. Adding a line to either file is a change
+that has to be argued for in the pull request, not a way to get a build green.
 
 ## Layout
 
