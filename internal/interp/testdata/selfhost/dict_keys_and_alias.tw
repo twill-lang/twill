@@ -1,0 +1,20 @@
+mode systems
+
+# An integer key maps to its decimal string, which is what makes
+# Dict[I64, V] work; a dictionary is a handle, so a store through one binding
+# is seen through every other.
+fn main() {
+  let d: Dict[I64, Str] = dict_new()
+  dict_set(d, 7, "seven")
+  dict_set(d, 9007199254740993, "big")
+  print(str(dict_get(d, 7)))
+  print(str(dict_get(d, 9007199254740993)))
+  print(str(dict_keys(d)))
+  let alias: Dict[I64, Str] = d
+  dict_set(alias, 8, "eight")
+  print(str(len(d)))
+  # An empty brace literal at a Dict annotation is a dictionary, not a record.
+  let e: Dict[Str, I64] = {}
+  dict_set(e, "k", 1)
+  print(str(e))
+}

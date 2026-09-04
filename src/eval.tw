@@ -126,6 +126,27 @@ struct ForeignVal {
   handle: I64,
 }
 
+# A dictionary: internal/value.Dict, an insertion-ordered map with string keys.
+# Insertion order is why this is a struct around a Dict rather than something
+# built out of two lists: a Dict in this language already keeps it, so
+# dict_keys and the `{b: 3, a: 1}` rendering come back in the order the program
+# built them, which is what makes a printed dictionary reproducible and what
+# the Go side's parallel Keys slice exists to give.
+#
+# The keys are Str because the Go side's are: dict_key_of maps an integer key
+# to its decimal text, which is how Dict[I64, V] works there and here.
+struct DictVal {
+  entries: Dict[Str, Value],
+}
+
+# A byte buffer: internal/value.Bytes. bytes_new grows one and buf_new
+# allocates one at a fixed length, and they are the same value on the Go side,
+# so they are the same value here -- a buffer built by bytes_push can be read
+# back with buf_get8.
+struct BytesVal {
+  buf: Bytes,
+}
+
 enum Value {
   # A plain number: one that carries no shape and no gradient history. The
   # bootstrap has this as a distinct case from a rank-0 tensor purely for
@@ -144,6 +165,13 @@ enum Value {
   VStr(Str),
   VList(ListVal),
   VRecord(RecordVal),
+  # A dictionary and a byte buffer are reference values, the way a list and a
+  # record are: the payload holds the same underlying Dict or Bytes, so a store
+  # through one binding is seen through every other. That is the Go bootstrap's
+  # pointer semantics, and a dictionary that copied on every pass would break
+  # every caller that builds one in a loop.
+  VDict(DictVal),
+  VBytes(BytesVal),
   VClosure(Closure),
   VBuiltin(BuiltinVal),
   VForeign(ForeignVal),
@@ -161,6 +189,8 @@ fn type_name(v: Value) -> Str {
     VStr(_) => "string",
     VList(_) => "list",
     VRecord(_) => "record",
+    VDict(_) => "dict",
+    VBytes(_) => "bytes",
     VClosure(_) => "function",
     VBuiltin(_) => "builtin",
     VForeign(f) => f.kind,
@@ -352,6 +382,22 @@ fn assign_to(target: ast.Expr, v: Value, env: Env, line: I64) -> Res[Unit, Runti
     EIndex(t) => {
       let obj: Value = eval_expr(t.target, env)?
       let idx_val: Value = eval_expr(t.index, env)?
+      # A dictionary is subscripted by its key, `counts[tok] = n`, which is how
+      # every caller writes it. dict_set is the same store under a name. The
+      # test comes before the numeric index below because a key is a string and
+      # would fail that one.
+      match obj {
+        VDict(d) => {
+          match idx_val {
+            VStr(k) => {
+              dict_set(d.entries, k, v)
+              return Ok(unit)
+            },
+            _ => return Err(runtime_error(t.line, "a dictionary key must be a string")),
+          }
+        },
+        _ => unit,
+      }
       let idx: I64 = 0
       match rank0_number(idx_val) {
         Some(n) => idx = i64_of_f64(n),
@@ -392,7 +438,8 @@ fn exec_stmt(s: ast.Stmt, env: Env) -> Res[Flow, RuntimeError] {
   match s {
     SLet(st) => {
       let v: Value = eval_expr(st.value, env)?
-      v = empty_container_for(st.type_name, v)
+      v = container_for_annotation(st.type_name, v)
+      v = tensor_for_annotation(anno_name(st.type_name, st.unit), v)
       # A number bound at an `I64` annotation becomes an Int, and one bound at
       # `F64` a Num: the annotation is where the program says which half of the
       # language the value lives in.
@@ -762,6 +809,10 @@ fn canonical(v: Value, depth: I64) -> Str {
     # at the top level, so the exact spelling here is not compared.
     VVariant(_) => "opaque *value.Variant",
     VVariantCtor(_) => "opaque *value.Builtin",
+    # A dictionary and a byte buffer have no case in cmd/twill/dump.go either,
+    # so they fall to its `opaque %T` default and print the Go type name.
+    VDict(_) => "opaque *value.Dict",
+    VBytes(_) => "opaque *value.Bytes",
     VForeign(f) => bytes.concat("opaque ", f.kind),
   }
 }
@@ -857,10 +908,10 @@ fn struct_field_type(type_name: Str, field: Str) -> Opt[Str] {
 }
 
 # coerce_field applies a struct field's declared type to a value stored in it:
-# an empty literal at a container type builds the container, and a number at an
-# I64 or F64 field converts, the same two rules a `let` annotation follows.
+# a literal at a container type builds the container, and a number at an I64 or
+# F64 field converts, the same two rules a `let` annotation follows.
 fn coerce_field(field_type: Str, v: Value, line: I64) -> Res[Value, RuntimeError] {
-  let out: Value = empty_container_for(field_type, v)
+  let out: Value = container_for_annotation(field_type, v)
   coerce_scalar_anno(field_type, None, out, line)
 }
 
@@ -1079,29 +1130,100 @@ fn anno_head(type_name: Str) -> Str {
   type_name
 }
 
-# empty_container_for reads an empty literal at a container annotation as that
-# container. `[]` and `{}` are each ambiguous on their own: a bracket literal
-# with no elements is an empty tensor, and a brace literal with no fields is an
-# empty record, and both are what those spellings mean with nothing else to go
-# on. But `let seen: Dict[Str, I64] = {}` says which one is meant, and reading
-# it as a record left the value unusable -- every later dict_set on it failed,
-# which is what the annotation was there to prevent. Only the empty forms are
-# converted, so no literal that carries data changes meaning.
-fn empty_container_for(type_name: Str, v: Value) -> Value {
+# container_for_annotation reads a literal at a container annotation as that
+# container. A bracket literal is a tensor when its elements are numbers and a
+# list otherwise, and a brace literal with no fields is a record: those are the
+# right defaults with nothing else to go on, but an annotation is something
+# else to go on.
+#
+#   let seen: Dict[Str, I64] = {}   // a dictionary, not an empty record
+#   let want: Arr[I64] = [1]        // a list of one, not a 1-element tensor
+#
+# This used to convert only the *empty* bracket literal, and that is docs/BUGS.md
+# open divergence 1: `let a: Arr[I64] = [3, 1, 2]` kept its tensor, so every
+# later list operation on it took the tensor path and `str(a)` printed
+# `tensor([3, 1, 2], shape=[3])` where the bootstrap printed `[3, 1, 2]`. A
+# wrong answer rather than a refusal, which is the worse kind: a program that
+# sorts a list of numbers got a tensor sort and no error.
+#
+# Only tensors of rank 0 or 1 convert, since a list is flat; a higher-rank
+# tensor at an Arr annotation is left alone rather than silently flattened.
+fn container_for_annotation(type_name: Str, v: Value) -> Value {
   let head: Str = anno_head(type_name)
   if bytes.equal(head, "Arr") or bytes.equal(head, "List") {
     match v {
       VTensor(t) => {
-        if tensor.numel(t) == 0 { return VList(ListVal { items: arr_new() }) }
+        if len(t.shape) <= 1 {
+          let items: Arr[Value] = arr_new()
+          let i: I64 = 0
+          while i < tensor.numel(t) {
+            push(items, VNum(tensor.at(t, i)))
+            i = i + 1
+          }
+          return VList(ListVal { items: items })
+        }
       },
       _ => unit,
     }
   }
-  # The `Dict` half of this rule is the bootstrap's alone. A dictionary is not
-  # one of this evaluator's values -- there is no VDict in the Value enum above
-  # -- so there is nothing here to convert an empty record into, the same
-  # position `quantize` and the gpu_* builtins are in. The annotation is still
-  # honoured where dictionaries actually run, which is the bootstrap.
+  if bytes.equal(head, "Dict") {
+    match v {
+      VRecord(r) => {
+        if len(dict_keys(r.fields)) == 0 { return VDict(DictVal { entries: dict_new() }) }
+      },
+      _ => unit,
+    }
+  }
+  v
+}
+
+# anno_name is the annotation's name whichever slot the parser put it in: a bare
+# name arrives as a one-factor unit, a qualified or generic one as text.
+fn anno_name(type_name: Str, u: Opt[ast.UnitAnno]) -> Str {
+  if len(type_name) > 0 { return type_name }
+  match u {
+    Some(anno) => {
+      if len(anno.factors) == 1 and anno.factors[0].exp == 1 { return anno.factors[0].name }
+      ""
+    },
+    None => "",
+  }
+}
+
+# tensor_for_annotation reads a list of numbers at a `Tensor` annotation as a
+# tensor. A bracket literal is a tensor when its elements are numeric literals
+# and a list otherwise, so `[1.0, 2.0]` is a tensor but `arr(1.0, 2.0)` is not,
+# and a caller who annotated `Tensor` and meant it gets one.
+#
+# This has no counterpart in the container rule above and is not a special case
+# of it: that one turns a tensor into a list, this one turns a list into a
+# tensor, and a program can want either. It matters here because `arr` had no
+# implementation in this evaluator until now, so the annotation could not
+# previously be reached with a list to convert -- the program failed earlier,
+# loudly. Porting `arr` without this would have turned that refusal into a
+# wrong answer, which is the trade docs/BUGS.md keeps arguing against.
+#
+# A list holding anything but numbers is left alone rather than refused: there
+# is no tensor to make of it, and the bootstrap leaves it alone too.
+fn tensor_for_annotation(name: Str, v: Value) -> Value {
+  if not bytes.equal(name, "Tensor") { return v }
+  match v {
+    VList(l) => {
+      let data: Arr[F64] = arr_new()
+      let i: I64 = 0
+      while i < len(l.items) {
+        match rank0_number(l.items[i]) {
+          Some(x) => push(data, x),
+          None => return v,
+        }
+        i = i + 1
+      }
+      let shape: Arr[I64] = arr_new()
+      push(shape, len(data))
+      return VTensor(tensor.mk_raw(shape, data, tensor.DT_F64))
+    },
+    _ => unit,
+  }
   v
 }
 
@@ -1798,6 +1920,22 @@ fn deep_equal(l: Value, r: Value) -> Bool {
         _ => false,
       }
     },
+    # A dictionary and a byte buffer compare by contents, not by identity: two
+    # separately built dictionaries with the same entries are equal, the way
+    # two separately built records are. deepEqual on the Go side has a case for
+    # each, and TestVariantsCompareStructurally asserts the dictionary one.
+    VDict(a) => {
+      match r {
+        VDict(b) => dict_equal(a, b),
+        _ => false,
+      }
+    },
+    VBytes(a) => {
+      match r {
+        VBytes(b) => bytes.equal(bytes_val_to_str(a), bytes_val_to_str(b)),
+        _ => false,
+      }
+    },
     # An enum value is its case and its payload: `Some(1) == Some(1)`, the way
     # `[1] == [1]`.
     VVariant(a) => {
@@ -1861,6 +1999,21 @@ fn record_equal(a: RecordVal, b: RecordVal) -> Bool {
     match dict_get(b.fields, k) {
       Some(v) => {
         if not deep_equal(dict_must(a.fields, k), v) { return false }
+      },
+      None => return false,
+    }
+  }
+  true
+}
+
+# Key order does not affect equality either, for the same reason it does not
+# for a record: it is kept for printing, not for identity.
+fn dict_equal(a: DictVal, b: DictVal) -> Bool {
+  if len(dict_keys(a.entries)) != len(dict_keys(b.entries)) { return false }
+  for k in dict_keys(a.entries) {
+    match dict_get(b.entries, k) {
+      Some(v) => {
+        if not deep_equal(dict_must(a.entries, k), v) { return false }
       },
       None => return false,
     }
@@ -2020,7 +2173,7 @@ fn coerce_return(c: Closure, v: Value) -> Res[Value, RuntimeError] {
   if is_i64_anno(c.ret_type, c.ret_unit) or is_f64_anno(c.ret_type, c.ret_unit) {
     return coerce_scalar_anno(c.ret_type, c.ret_unit, v, ast.expr_line(c.body))
   }
-  Ok(v)
+  Ok(tensor_for_annotation(anno_name(c.ret_type, c.ret_unit), v))
 }
 
 # param_type_name is a parameter's annotation as a bare name, or "" for a shape
@@ -2083,6 +2236,24 @@ fn call_closure(c: Closure, args: Arr[Value], line: I64) -> Res[Value, RuntimeEr
 fn eval_index(x: ast.Index, env: Env) -> Res[Value, RuntimeError] {
   let target: Value = eval_expr(x.target, env)?
   let idx_val: Value = eval_expr(x.index, env)?
+  # The read half of the dictionary store in assign_to. A missing key is an
+  # error rather than a zero: dict_get returns an Opt for the caller who wants
+  # to ask, and `d[k]` is the form that says the key is expected to be there.
+  match target {
+    VDict(d) => {
+      match idx_val {
+        VStr(k) => {
+          match dict_get(d.entries, k) {
+            Some(got) => return Ok(got),
+            None => return Err(runtime_error(x.line, bytes.concat("no key ",
+              bytes.concat(quoted(k), " in the dictionary")))),
+          }
+        },
+        _ => return Err(runtime_error(x.line, "a dictionary key must be a string")),
+      }
+    },
+    _ => unit,
+  }
   let idx: I64 = 0
   match rank0_number(idx_val) {
     Some(n) => idx = i64_of_f64(n),
@@ -2233,6 +2404,13 @@ fn builtin_arity(name: Str) -> I64 {
   if in_words(ARITY1, name) { return 1 }
   if in_words(ARITY2, name) { return 2 }
   if in_words("where clip fold with_field linspace arange", name) { return 3 }
+  # The systems runtime's arities, from the same `def` calls the bodies below
+  # are ported from. `arr` is the one variadic among them, so it is absent here
+  # and takes whatever it is given.
+  if in_words("arr_new dict_new bytes_new", name) { return 0 }
+  if in_words("pop arr_clear arr_of_tensor numel dict_keys bytes_to_str buf_new buf_len chr str_quote i64_of_str str_to_f64 f64_to_str num_to_text f64_hex", name) { return 1 }
+  if in_words("push arr_push dict_get dict_has dict_must dict_del bytes_push buf_get8", name) { return 2 }
+  if in_words("dict_set dict_or slice buf_set8", name) { return 3 }
   # The builtins returned by grad/grads/value_and_grad take whatever the
   # function they wrap takes; jacobian's and hessian's take exactly one.
   if in_words("jacobian(fn) hessian(fn)", name) { return 1 }
@@ -2447,6 +2625,17 @@ let MAKERS: Str = "tensor scalar zeros ones fill randn rand seed permutation eye
 # permutation are the two MAKERS left out: neither makes a tensor.
 let DTYPE_MAKERS: Str = "tensor scalar zeros ones fill randn rand eye"
 let INSPECT: Str = "shape len item range list str int dtype"
+# The systems-dialect runtime, ported in three families. Each of these names
+# was in src/builtins.tw and nowhere in this dispatch, so a program that used
+# one type-checked and then failed with "named in the builtin table but has no
+# implementation" -- which is to say the second implementation could not run
+# the dialect the second implementation is written in.
+let ARR_OPS: Str = "arr_new arr push arr_push pop arr_clear arr_of_tensor numel"
+let DICT_OPS: Str = "dict_new dict_set dict_get dict_has dict_must dict_or dict_keys dict_del"
+# bytes_* grows a buffer and buf_* indexes a fixed-size one; they are the same
+# value on the Go side and the same value here.
+let BUF_OPS: Str = "bytes_new bytes_push bytes_to_str buf_new buf_get8 buf_set8 buf_len"
+let STR_OPS: Str = "chr slice str_quote i64_of_str str_to_f64 f64_to_str num_to_text f64_hex"
 let FILE_OPS: Str = "read_csv read_frame write_frame save load columns field with_field"
 
 fn call_builtin(b: BuiltinVal, args: Arr[Value], line: I64) -> Res[Value, RuntimeError] {
@@ -2485,6 +2674,10 @@ fn call_builtin(b: BuiltinVal, args: Arr[Value], line: I64) -> Res[Value, Runtim
   if bytes.equal(name, "nbytes") { return bi_nbytes(args, line) }
   if in_words("and or band bor xor shl shr", name) { return bi_bitwise(name, args, line) }
   if bytes.equal(name, "bnot") { return bi_bnot(args, line) }
+  if in_words(ARR_OPS, name) { return bi_arr(name, args, line) }
+  if in_words(DICT_OPS, name) { return bi_dict(name, args, line) }
+  if in_words(BUF_OPS, name) { return bi_buf(name, args, line) }
+  if in_words(STR_OPS, name) { return bi_str(name, args, line) }
   # i64 and f64 are the two conversions across the systems-mode seam. i64 makes
   # an exact I64 of a number, truncating a fraction toward zero; f64 makes an
   # F64 of an I64, which loses precision above 2^53.
@@ -2536,6 +2729,13 @@ fn format_value(v: Value) -> Str {
     VStr(s) => s,
     VList(l) => format_list(l),
     VRecord(r) => format_record(r),
+    # A dictionary renders like a record, `{key: value, ...}`, in insertion
+    # order rather than sorted -- internal/value.Format walks the Keys slice.
+    VDict(d) => format_dict(d),
+    # A byte buffer renders as the text of its bytes, which is what Go's
+    # `string(t.Data)` gives. It is not quoted and not escaped: a Bytes is a
+    # string under construction, and printing one should read as the string.
+    VBytes(b) => bytes_val_to_str(b),
     VClosure(c) => format_closure(c),
     VBuiltin(b) => bytes.concat("<builtin ", bytes.concat(b.name, ">")),
     # A foreign value renders through the Go value's String() there. A fitted gbm
@@ -2654,6 +2854,22 @@ fn format_record(r: RecordVal) -> Str {
   }
   bytes.concat("{", bytes.concat(bytes.join(parts, ", "), "}"))
 }
+
+# A dictionary's keys, also in insertion order: internal/value.Format walks the
+# Dict's Keys slice, which is the same order this Dict hands back. Nothing
+# sorts, so `{b: 3, a: 1}` prints in the order it was built.
+fn format_dict(d: DictVal) -> Str {
+  let parts: Arr[Str] = arr_new()
+  for k in dict_keys(d.entries) {
+    push(parts, bytes.concat(k, bytes.concat(": ", format_value(dict_must(d.entries, k)))))
+  }
+  bytes.concat("{", bytes.concat(bytes.join(parts, ", "), "}"))
+}
+
+# The bytes of a buffer as a Str, Go's `string(t.Data)`. The buffer itself is
+# what bytes_to_str reads, so this is that builtin's body as well as the
+# formatter's.
+fn bytes_val_to_str(b: BytesVal) -> Str = bytes.to_str(b.buf)
 
 fn format_closure(c: Closure) -> Str {
   let name: Str = c.name
@@ -4917,6 +5133,13 @@ fn bi_inspect(name: Str, args: Arr[Value], line: I64) -> Res[Value, RuntimeError
   # tensor here: `len(3)` is an error. That is the Go behaviour and it is worth
   # keeping, because a number silently having a length is how a loop over the
   # wrong variable runs once instead of failing.
+  #
+  # The Str, Dict and Bytes arms are docs/BUGS.md open divergence 2. This
+  # refused a Str where the bootstrap answers its byte length, which is what
+  # docs/language-guide.md documents and what src/lex.tw itself relies on when
+  # the bootstrap runs it -- so the self-hosted evaluator could not have run the
+  # self-hosted lexer. A Str is a byte string, so its length is its byte count,
+  # matching how the lexer and the systems string code index it.
   if bytes.equal(name, "len") {
     match args[0] {
       VTensor(t) => {
@@ -4924,7 +5147,10 @@ fn bi_inspect(name: Str, args: Arr[Value], line: I64) -> Res[Value, RuntimeError
         return Ok(VTensor(tensor.scalar(f64_of_i64(t.shape[0]))))
       },
       VList(l) => return Ok(VTensor(tensor.scalar(f64_of_i64(len(l.items))))),
-      _ => return Err(runtime_error(line, "len expects a tensor or list")),
+      VStr(s) => return Ok(VTensor(tensor.scalar(f64_of_i64(len(s))))),
+      VDict(d) => return Ok(VTensor(tensor.scalar(f64_of_i64(len(dict_keys(d.entries)))))),
+      VBytes(b) => return Ok(VTensor(tensor.scalar(f64_of_i64(buf_len(b.buf))))),
+      _ => return Err(runtime_error(line, "len expects a tensor, list, string, dict or bytes")),
     }
   }
   if bytes.equal(name, "item") {
@@ -4994,6 +5220,305 @@ fn bi_range(args: Arr[Value], line: I64) -> Res[Value, RuntimeError] {
     x = x + step
   }
   Ok(VList(ListVal { items: items }))
+}
+
+# ---- the systems runtime: Arr, Dict, buffers and strings --------------------
+#
+# The port of the systems-dialect half of internal/interp/builtins.go: the
+# growable list, the insertion-ordered dictionary, the byte buffer, and the
+# handful of string primitives that cross to the host. These are the names the
+# self-hosted compiler is itself written in, so until they were here the second
+# implementation could check a program that used them and not run it.
+#
+# Where the host has the same primitive -- pop, arr_clear, dict_del, buf_get8,
+# str_quote -- the body is a delegation rather than a re-implementation. That
+# is not laziness: this evaluator runs on the bootstrap, so delegating is what
+# makes the answer identical by construction instead of identical by
+# inspection, and the cases that cannot delegate (a Str's length, an Opt's
+# shape) are exactly the ones that had drifted.
+
+# Opt as a Value. dict_get, i64_of_str and str_to_f64 all answer with one, and
+# the Go side builds a *value.Variant for each.
+fn some_value(payload: Value) -> Value =
+  VVariant(VariantVal { name: "Some", payload: Some(payload), has_payload: true })
+
+fn none_value() -> Value =
+  VVariant(VariantVal { name: "None", payload: None, has_payload: false })
+
+fn arg_list(v: Value, who: Str, line: I64) -> Res[ListVal, RuntimeError] {
+  match v {
+    VList(l) => Ok(l),
+    _ => Err(runtime_error(line, bytes.concat(who, " expects a list"))),
+  }
+}
+
+fn arg_dict(v: Value, who: Str, line: I64) -> Res[DictVal, RuntimeError] {
+  match v {
+    VDict(d) => Ok(d),
+    _ => Err(runtime_error(line, bytes.concat(who, " expects a dict"))),
+  }
+}
+
+# The two buffer families word their refusal differently -- bytes_* says "byte
+# buffer" and buf_* says "buffer" -- so the noun is a parameter rather than a
+# decision made here. The Go file says both, and the harness compares the text.
+fn arg_buffer(v: Value, who: Str, noun: Str, line: I64) -> Res[BytesVal, RuntimeError] {
+  match v {
+    VBytes(b) => Ok(b),
+    _ => Err(runtime_error(line, bytes.concat(who, bytes.concat(" expects a ", noun)))),
+  }
+}
+
+# Go's asStr: a Str, or the bytes of a buffer. A Bytes is a string under
+# construction, so the builtins that read text read either.
+fn arg_text(v: Value) -> Opt[Str] {
+  match v {
+    VStr(s) => Some(s),
+    VBytes(b) => Some(bytes_val_to_str(b)),
+    _ => None,
+  }
+}
+
+# A dictionary key as the string it is stored under. Keys are strings
+# internally, and the systems dialect also has Dict[I64, V] -- the checker keys
+# its recursion guard by function id -- so an integer key maps to its decimal
+# string. A program keeps one key type per dict, so a numeric and a textual key
+# never alias in practice.
+fn dict_key_of(v: Value, who: Str, line: I64) -> Res[Str, RuntimeError] {
+  match v {
+    VStr(s) => return Ok(s),
+    _ => unit,
+  }
+  # as_int first, so a value that is exactly an integer keeps every bit of it:
+  # rounding a key through an f64 is how a Dict[I64, V] above 2^53 would start
+  # aliasing two different keys onto one entry.
+  match as_int(v) {
+    Some(n) => return Ok(str(n)),
+    None => unit,
+  }
+  match single_number(v) {
+    Some(x) => {
+      let n: I64 = i64_of_f64(f64_trunc(x))
+      return Ok(str(n))
+    },
+    None => unit,
+  }
+  Err(runtime_error(line, bytes.concat(who, " expects a string or integer key")))
+}
+
+fn bi_arr(name: Str, args: Arr[Value], line: I64) -> Res[Value, RuntimeError] {
+  if bytes.equal(name, "arr_new") { return Ok(VList(ListVal { items: arr_new() })) }
+  # arr is a list literal as a call: arr(a, b, c) is [a, b, c]. A fresh list
+  # every call, so two callers never share backing storage.
+  if bytes.equal(name, "arr") {
+    let items: Arr[Value] = arr_new()
+    let i: I64 = 0
+    while i < len(args) {
+      push(items, args[i])
+      i = i + 1
+    }
+    return Ok(VList(ListVal { items: items }))
+  }
+  if bytes.equal(name, "push") {
+    let l: ListVal = arg_list(args[0], "push", line)?
+    push(l.items, args[1])
+    return Ok(VUnit)
+  }
+  # arr_push returns the list it appended to, so it reads as an expression,
+  # `out = arr_push(out, x)`, as well as a statement. push is the same append
+  # and returns unit; the two names differ only in that.
+  if bytes.equal(name, "arr_push") {
+    let l: ListVal = arg_list(args[0], "arr_push", line)?
+    push(l.items, args[1])
+    return Ok(args[0])
+  }
+  if bytes.equal(name, "pop") {
+    let l: ListVal = arg_list(args[0], "pop", line)?
+    if len(l.items) == 0 {
+      return Err(runtime_error(line, "pop from an empty list"))
+    }
+    return Ok(pop(l.items))
+  }
+  # arr_clear empties a list in place, so a buffer can be reused across passes
+  # without reallocating. In place is the whole of it: a fresh list here would
+  # leave every other binding pointing at the old contents.
+  if bytes.equal(name, "arr_clear") {
+    let l: ListVal = arg_list(args[0], "arr_clear", line)?
+    arr_clear(l.items)
+    return Ok(VUnit)
+  }
+  # arr_of_tensor is the inverse of tensor(arr), at any rank: the elements come
+  # out in row-major order, which is the order they are stored in and the order
+  # tensor(arr) reads them back. A Num is refused, matching the Go type switch:
+  # this takes a tensor, and a scalar has no elements to copy.
+  if bytes.equal(name, "arr_of_tensor") {
+    match args[0] {
+      VTensor(t) => {
+        let items: Arr[Value] = arr_new()
+        let i: I64 = 0
+        while i < tensor.numel(t) {
+          push(items, VNum(tensor.at(t, i)))
+          i = i + 1
+        }
+        return Ok(VList(ListVal { items: items }))
+      },
+      _ => return Err(runtime_error(line, "arr_of_tensor expects a tensor")),
+    }
+  }
+  # numel is the total element count, the product of the shape, where `shape`
+  # gives the dimensions and `len` gives only the first of them.
+  match args[0] {
+    VNum(_) => return Ok(VTensor(tensor.scalar(1.0))),
+    VTensor(t) => return Ok(VTensor(tensor.scalar(f64_of_i64(tensor.numel(t))))),
+    _ => unit,
+  }
+  Err(runtime_error(line, "numel expects a tensor"))
+}
+
+fn bi_dict(name: Str, args: Arr[Value], line: I64) -> Res[Value, RuntimeError] {
+  if bytes.equal(name, "dict_new") { return Ok(VDict(DictVal { entries: dict_new() })) }
+  let d: DictVal = arg_dict(args[0], name, line)?
+  if bytes.equal(name, "dict_keys") {
+    let items: Arr[Value] = arr_new()
+    for k in dict_keys(d.entries) {
+      push(items, VStr(k))
+    }
+    return Ok(VList(ListVal { items: items }))
+  }
+  let key: Str = dict_key_of(args[1], name, line)?
+  if bytes.equal(name, "dict_set") {
+    dict_set(d.entries, key, args[2])
+    return Ok(VUnit)
+  }
+  # dict_get returns an Opt: Some(value) when the key is present, None when not.
+  if bytes.equal(name, "dict_get") {
+    match dict_get(d.entries, key) {
+      Some(v) => return Ok(some_value(v)),
+      None => return Ok(none_value()),
+    }
+  }
+  if bytes.equal(name, "dict_has") { return Ok(VBool(dict_has(d.entries, key))) }
+  # dict_must is dict_get without the Opt, for the call sites that have already
+  # checked the key is present.
+  if bytes.equal(name, "dict_must") {
+    match dict_get(d.entries, key) {
+      Some(v) => return Ok(v),
+      None => return Err(runtime_error(line, bytes.concat("dict_must: no key ", quoted(key)))),
+    }
+  }
+  # dict_or returns the value at a key, or a default when it is absent.
+  if bytes.equal(name, "dict_or") {
+    match dict_get(d.entries, key) {
+      Some(v) => return Ok(v),
+      None => return Ok(args[2]),
+    }
+  }
+  # Deleting a key that is not there is not an error, and the host delete drops
+  # it from the key order as well as the map, which is what keeps dict_keys
+  # from handing back a key that is gone.
+  dict_del(d.entries, key)
+  Ok(VUnit)
+}
+
+fn bi_buf(name: Str, args: Arr[Value], line: I64) -> Res[Value, RuntimeError] {
+  if bytes.equal(name, "bytes_new") { return Ok(VBytes(BytesVal { buf: bytes_new() })) }
+  # A buf is a fixed-size byte buffer, the packed storage a narrow-dtype tensor
+  # keeps. It reuses the same value, allocated to length up front.
+  if bytes.equal(name, "buf_new") {
+    let n: I64 = int_of(args[0], "buf_new", line)?
+    return Ok(VBytes(BytesVal { buf: buf_new(n) }))
+  }
+  if bytes.equal(name, "bytes_push") {
+    let b: BytesVal = arg_buffer(args[0], "bytes_push", "byte buffer", line)?
+    let c: I64 = int_of(args[1], "bytes_push", line)?
+    bytes_push(b.buf, c)
+    return Ok(VUnit)
+  }
+  if bytes.equal(name, "bytes_to_str") {
+    let b: BytesVal = arg_buffer(args[0], "bytes_to_str", "byte buffer", line)?
+    return Ok(VStr(bytes_val_to_str(b)))
+  }
+  let b: BytesVal = arg_buffer(args[0], name, "buffer", line)?
+  if bytes.equal(name, "buf_len") { return Ok(VTensor(tensor.scalar(f64_of_i64(buf_len(b.buf))))) }
+  let i: I64 = int_of(args[1], name, line)?
+  if i < 0 or i >= buf_len(b.buf) {
+    return Err(runtime_error(line, bytes.concat(name,
+      bytes.concat(" index ", bytes.concat(str(i), " out of range")))))
+  }
+  if bytes.equal(name, "buf_get8") {
+    return Ok(VTensor(tensor.scalar(f64_of_i64(buf_get8(b.buf, i)))))
+  }
+  # The store narrows to a byte, so 258 lands as 2. That is the Go conversion
+  # and it is what the packed dtype layouts rely on.
+  let v: I64 = int_of(args[2], "buf_set8", line)?
+  buf_set8(b.buf, i, v)
+  Ok(VUnit)
+}
+
+fn bi_str(name: Str, args: Arr[Value], line: I64) -> Res[Value, RuntimeError] {
+  # chr is a one-byte string with the given byte value. UTF-8 text is built by
+  # concatenating the bytes of a rune, which is why this is a byte and not a
+  # rune.
+  if bytes.equal(name, "chr") {
+    let c: I64 = int_of(args[0], "chr", line)?
+    return Ok(VStr(chr(c)))
+  }
+  # slice is a byte substring s[i:j], clamped to the string so an out-of-range
+  # index yields the empty overlap rather than a failure. Indices are byte
+  # offsets, matching how the lexer and the width code index a Str. Unlike the
+  # text readers below it takes a Str and not a buffer, which is the Go type
+  # assertion rather than asStr.
+  if bytes.equal(name, "slice") {
+    let s: Str = ""
+    match args[0] {
+      VStr(x) => s = x,
+      _ => return Err(runtime_error(line, "slice expects a string")),
+    }
+    let lo: I64 = int_of(args[1], "slice", line)?
+    let hi: I64 = int_of(args[2], "slice", line)?
+    let n: I64 = len(s)
+    if lo < 0 { lo = 0 }
+    if hi > n { hi = n }
+    if lo > hi { lo = hi }
+    return Ok(VStr(slice(s, lo, hi)))
+  }
+  # The rest read text. f64_to_str, num_to_text and f64_hex read a number
+  # instead, and are grouped here because what they produce is text.
+  if bytes.equal(name, "f64_to_str") {
+    return Ok(VStr(f64_to_str(scalar_of(args[0], "f64_to_str", line)?)))
+  }
+  # num_to_text is the runtime number rendering print and str use: an integer
+  # without a point, otherwise %.6f with trailing zeros trimmed.
+  if bytes.equal(name, "num_to_text") {
+    return Ok(VStr(num_to_text(scalar_of(args[0], "num_to_text", line)?)))
+  }
+  # f64_hex is the exact hexadecimal-float form, for the canonical dump the
+  # differential harness compares bit for bit.
+  if bytes.equal(name, "f64_hex") {
+    return Ok(VStr(f64_hex(scalar_of(args[0], "f64_hex", line)?)))
+  }
+  let text: Str = ""
+  match arg_text(args[0]) {
+    Some(t) => text = t,
+    None => return Err(runtime_error(line, bytes.concat(name, " expects a string"))),
+  }
+  if bytes.equal(name, "str_quote") { return Ok(VStr(str_quote(text))) }
+  # i64_of_str parses a decimal integer, returning an Opt. The payload is an
+  # Int and not a scalar: the whole point of parsing an I64 from text is the
+  # values an f64 cannot hold, and rounding the answer here would put the
+  # precision back exactly where the caller was trying to keep it.
+  if bytes.equal(name, "i64_of_str") {
+    match i64_of_str(text) {
+      Some(n) => return Ok(some_value(VInt(n))),
+      None => return Ok(none_value()),
+    }
+  }
+  # str_to_f64 parses a float from its decimal (or hex-float) text, also as an
+  # Opt. Underscores are digit separators and dropped, matching the parser.
+  match str_to_f64(text) {
+    Some(x) => Ok(some_value(VTensor(tensor.scalar(x)))),
+    None => Ok(none_value()),
+  }
 }
 
 # ---- files, frames and records ---------------------------------------------

@@ -1,0 +1,14 @@
+mode systems
+
+# arr_of_tensor is the inverse of tensor(arr): row-major, any rank. numel is
+# the product of the shape, where len is only its first dimension.
+fn main() {
+  let t: Tensor = [[1.0, 2.0], [3.0, 4.0]]
+  print(str(arr_of_tensor(t)))
+  print(str(numel(t)))
+  print(str(len(t)))
+  print(str(numel(2.5)))
+  let v: Arr[F64] = arr_of_tensor([5.0, 6.0])
+  print(str(v))
+  print(str(len(v)))
+}
