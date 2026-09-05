@@ -259,8 +259,8 @@ error. The bitwise meaning has its own name for the same reason the bitwise
 complement is `bnot` and not `not`. `and(a, b)` and `or(a, b)` in call form
 remain the bitwise operations, for the code that already wrote them that way.
 
-`I64` is two's complement and exactly 64 bits. `and`, `or`, `xor` and `not` are
-defined bit by bit on that representation and have nothing to say about sign.
+`I64` is two's complement and exactly 64 bits. `band`, `bor`, `xor` and `bnot`
+are defined bit by bit on that representation and have nothing to say about sign.
 `shl` discards bits shifted off the top, so it wraps, and it is the same
 operation for negative and non-negative operands.
 
@@ -285,7 +285,7 @@ computed, range-check it.
 
 #### Getting a logical right shift
 
-There is no `ushr` operator. Build one. `src/float.tw`'s `ushr` is the idiom,
+There is no `ushr` operator. Build one. `std/float.tw`'s `ushr` is the idiom,
 and it is what every caller in the ecosystem should use or copy:
 
 ```rust
@@ -294,7 +294,7 @@ let SIGN_BIT: I64 = shl(1, 63)
 fn ushr(x: I64, k: I64) -> I64 {
   if k == 0 { return x }
   if x >= 0 { return shr(x, k) }
-  or(shr(and(x, not(SIGN_BIT)), k), shl(1, 63 - k))
+  or(shr(and(x, bnot(SIGN_BIT)), k), shl(1, 63 - k))
 }
 ```
 
@@ -523,6 +523,70 @@ x = x + 1      # reassign an existing binding (error if not yet bound)
 
 `let` always introduces a new variable. Plain assignment updates the nearest
 existing binding, which is what makes training loops work.
+
+### `const`
+
+`const` binds the way `let` does and then refuses an assignment through the
+name, the binding itself and an element or field of it alike:
+
+```rust
+const HEX = ["#000", "#fff"]
+HEX = other()      # refused
+HEX[0] = "#eee"    # refused
+```
+
+It is written wherever a `let` can be, and the reason it exists is the top
+level. A plain `import` drops a file's top-level definitions into the importing
+scope, and they stay **the one binding**, so a lookup table a library declares
+with `let` can be replaced by anything that imports it, and every other importer
+then reads the replacement. Declaring the table `const` is how a theme file says
+it did not mean that to happen.
+
+A `const` is also the only binding of its name in the scope that declares it. A
+second `let` of the same name there is refused rather than silently taking the
+const's place:
+
+```rust
+const HEX = ["#000"]
+let HEX = other()   # refused
+```
+
+That is a rule about one scope, not about the name. A `let` in a nearer scope is
+a different binding, and it is mutable:
+
+```rust
+const K: I64 = 1
+fn f() -> I64 {
+  let K: I64 = 2   # a new binding, not the const
+  K = 3            # fine
+  K
+}
+```
+
+Two things `const` deliberately does not do.
+
+**It does not cross a file boundary yet.** The checker reads one file, so it
+refuses a write to `HEX` in the file that declares it and accepts the same write
+in a file that imports it:
+
+```rust
+import "theme.tw"
+HEX = other()       # accepted today, though theme.tw declared HEX const
+```
+
+That is the case `const` is eventually for, and it is not done. `docs/roadmap.md`
+entry 28 tracks it.
+
+**It is not a deep freeze.** It guards what is written through the name, so
+`HEX[0] = ...` is refused, but `push(HEX, x)` is not, and neither is a function
+handed the handle: `Arr`, `Dict`, `struct` and `Bytes` have reference semantics
+(see **`struct`, and what a parameter is**) and nothing tracks where a handle
+goes. `const` says this name will not be pointed somewhere else and will not be
+edited here.
+
+`let` was left mutable at the top level on purpose. Module-level counters are
+written that way across the ecosystem, including by this repository's own
+`std/tests/harness.tw`, so the guarantee is asked for rather than imposed.
 
 ## Functions
 
@@ -1156,11 +1220,20 @@ name. The parameters go in `[]` after the name, and stand for whatever the use
 site supplies.
 
 ```rust
+mode systems
+
 struct Box[T] { value: T, tag: Str }
 enum Tree[T] { Leaf(T), Branch(Arr[T]), Empty }
 
 fn first[T](xs: Arr[T]) -> T = xs[0]
 ```
+
+The `mode systems` line is load-bearing for the last of those three. In numeric
+mode a bare name in return position is resolved as a unit, and the declaration's
+own parameters are not consulted first, so `-> T` there answers
+`unknown unit "T"`. `struct Box[T]`, `enum Tree[T]`, `x: T` in a parameter list
+and `-> Arr[T]` are all fine in either mode; it is only the bare parameter
+returned. `docs/BUGS.md`, Open, has the entry.
 
 **They are erased.** The runtime is the same code whatever `T` is, so nothing is
 specialised and nothing is generated: the parameters exist for the checker and

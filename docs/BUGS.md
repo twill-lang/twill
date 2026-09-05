@@ -427,42 +427,192 @@ shadowing a builtin, which twill supports.
 
 ---
 
-## Open
+## 12. The self-hosted evaluator had no list, dictionary or string runtime
 
-**Three ways the self-hosted evaluator answers differently from the bootstrap.**
-Found on 2026-09-03 while making the two implementations of `sort` agree, and
-none of them is caused by that change: the same three reproduce against `main`'s
-binary. They are recorded together because they have one cause between them,
-which is that nothing compares the two implementations at *runtime*. The
-differential harness in `tools/diff/` compares `check` and `fmt` over 443 files
-and says nothing about what a program prints.
+**Symptom.** A systems-mode program that used any of the names the systems
+dialect is actually written in ran under the bootstrap and refused under the
+self-hosted evaluator:
 
-```rust
-mode systems
-fn main() {
-  let a: Arr[I64] = [3, 1, 2]
-  print(str(a))          // bootstrap: [3, 1, 2]   self-hosted: tensor([3, 1, 2], shape=[3])
-  let s: Str = "abc"
-  print(str(len(s)))     // bootstrap: 3           self-hosted: runtime error: len expects a tensor or list
-}
-main()                   // needed: `twill run` calls main, `src/cli` does not
+```
+runtime error: builtin "arr_new" is named in the builtin table but has no
+implementation
 ```
 
-1. **A numeric list literal under an `Arr[I64]` annotation becomes a tensor.**
-   The annotation is honoured by the bootstrap and ignored by `src/eval.tw`, so
-   every list operation on it takes the tensor path instead. `Arr[Str]` is
-   correct in both.
-2. **`len` refuses a `Str`.** The bootstrap answers its byte length, which is
-   what `docs/language-guide.md` documents and what `src/lex.tw` itself relies
-   on when the bootstrap runs it.
-3. **`twill run <file>` calls `main` and the self-hosted CLI does not.** A
-   systems-mode program run through `src/cli/main.tw` defines `main` and exits
-   without calling it, so it prints nothing and succeeds.
+128 of the names in `src/builtins.tw` were in that state, which is the
+message `src/eval.tw` prints when a name reaches the end of its dispatch. (The
+denominator first written here was 247; the table holds 248, counted from the
+`NAMES` line on 2026-09-04, and `internal/checker/builtintable_test.go` now
+holds the two tables to the same set.) Two
+of them did worse than refuse, and those two are open divergences 1 and 2 from
+the section below:
 
-The first two are wrong answers rather than refusals, which is the worse kind:
-a program that sorts a list of numbers under the self-hosted evaluator gets a
-tensor sort and no error. Fixing them is separate work from the sort, and the
-thing that would have caught all three is a differential harness over `run`.
+```rust
+let a: Arr[I64] = [3, 1, 2]
+print(str(a))       // bootstrap: [3, 1, 2]   self-hosted: tensor([3, 1, 2], shape=[3])
+let s: Str = "abc"
+print(str(len(s)))  // bootstrap: 3           self-hosted: runtime error: len expects a tensor or list
+```
+
+**Root cause.** Two different ones, which is why the entry is about a runtime
+and not about a builtin.
+
+The list, dictionary and buffer builtins had no dispatch because the evaluator
+had no value to put behind them: `Value` had `VList` and `VRecord` and nothing
+else, and the comment on the annotation rule said so out loud -- "a dictionary
+is not one of this evaluator's values -- there is no VDict in the Value enum
+above". A missing case in an enum is a quiet thing. It reads as a decision, and
+what it actually was is the work not being done.
+
+`len` and the `Arr` annotation are different: both had a case and both had the
+wrong one. `len` handled a tensor and a list and refused everything else, where
+the bootstrap also answers a `Str`, a `Dict` and a `Bytes`. The annotation rule
+converted only the *empty* bracket literal, where the bootstrap converts any
+literal of rank 0 or 1. In both, the port had stopped at the case the author
+had in front of them, and nothing compared the two implementations at runtime
+to say so.
+
+**How it was caught.** Not by any gate in the repository, and the harness
+this paragraph first named is not one either. `tools/diff/run` takes `-old` and
+`-new` **Go** binaries, so it never looks at `src/` at all, and it is referenced
+by neither the `Makefile` nor `.github/workflows/ci.yml`, so nothing runs it in
+any case. The self-hosted tests in `internal/interp/selfhost_test.go` all invoke
+`check`. So the two evaluators were free to disagree, and the divergences were
+found by hand and written down rather than by anything that would notice them
+again.
+
+**Fix.** This commit. `VDict` and `VBytes` join the `Value` enum, each wrapping
+the host's own `Dict` and `Bytes` so a store through one binding is seen
+through every other, and 31 names are dispatched: the `Arr` family, the `Dict`
+family, the two byte-buffer families, and the string primitives. Where the host
+has the same primitive -- `pop`, `arr_clear`, `dict_del`, `buf_get8`,
+`str_quote`, `f64_hex` -- the body delegates to it rather than reimplementing
+it, which makes the answer identical by construction instead of identical by
+inspection.
+
+**Regression test.** `TestSelfHostedRunMatchesBootstrap` in
+`internal/interp/selfhost_run_test.go`, which is the differential harness over
+`run` that the section below asks for. Each fixture in
+`internal/interp/testdata/selfhost/` is executed twice over the same bytes, by
+the bootstrap and by `src/eval.tw` driven through `src/main.tw`, and stdout is
+compared byte for byte and so is the runtime error line -- a message is as much
+of a builtin's behaviour as its answer, and half the fixtures exist to pin one.
+
+---
+
+## Open
+
+**The self-hosted evaluator still refuses 97 of the 248 builtin names.** Entry
+12 above ported 31 of them and closed divergences 1 and 2 of the three recorded
+here. What is left is the filesystem, the clock, the process, the RNG, the
+`f64_*` scalar intrinsics, the GPU stubs and the memory counters, each of which
+still ends at "named in the builtin table but has no implementation". The count
+is measurable rather than estimated: run each remaining name through
+`src/main.tw run` and read the first stderr line. Re-measured that way on
+2026-09-04, against this branch merged with `main`: 248 names in `src/builtins.tw`,
+151 dispatched, 97 refused.
+
+**`src/cli/main.tw` does not call a systems-mode program's `main`.** This is
+divergence 3 of the three, and it is still open. `src/main.tw` grew a `run_main`
+and calls it; the decorated driver in `src/cli/main.tw` runs the top level and
+exits, so a systems-mode program run through it defines `main`, prints nothing
+and succeeds.
+
+**Diagnostics where the self-hosted evaluator words a refusal differently.**
+Each is the same shape: the port improved the message and the harness compares
+text. None of the four in the table is a wrong answer. Two further members of
+the last row's family were added by the strings, Arr and Dict port itself, and
+are listed under the table rather than folded into it, because a divergence a
+change creates should be readable as such:
+
+| program | bootstrap | `src/eval.tw` |
+| --- | --- | --- |
+| `a["x"]` on a list | `index must be a scalar number` | `an index must be a number` |
+| `a[5]` on a 1-list | `list index 5 out of range` | `index 5 out of range for a list of length 1` |
+| `true[0]` | `value is not indexable` | `cannot index a bool` |
+| `for x in 1.0` | `can only iterate 1-D tensors` | `cannot iterate a number` |
+
+Added by this port, in the same family: `for k in <dict>` and `for x in <bytes>`
+answer `value is not iterable` on the bootstrap and `cannot iterate a dict` or
+`cannot iterate a bytes` self-hosted. Both are refusals on both sides.
+
+**Truthiness in a condition refuses self-hosted where the bootstrap runs.** This
+is a worse shape than the wording rows above, and it is recorded separately for
+that reason. `let d: Dict[Str, I64] = dict_new()  dict_set(d, "a", 1)  if d { }`
+runs on the bootstrap and dies self-hosted with `condition must be a bool or a
+scalar number, got a dict`. The behaviour is pre-existing for lists, records and
+strings, which main already refuses the same way. The dict and bytes instances
+are new here, because neither value existed self-hosted before this port. The
+right fix is to decide once what a non-boolean condition means in twill and make
+both evaluators agree; until then this is a refusal where the other side runs,
+which is exactly what the conformance allow-list is for.
+
+**Nested assignment through a tensor is silently dropped self-hosted.** Out of
+scope for this port and recorded so it is not lost: `let m: Tensor = [[1.0,
+2.0], [3.0, 4.0]]  m[0][1] = 9.0` mutates on the bootstrap and does nothing at
+all self-hosted, with no error. That is a wrong answer rather than a refusal,
+and it is the most serious item on this page. `src/eval.tw` has no port of the
+Go `assignNested` path.
+
+**The `einsum` gradient panics for a bare summed axis.** Reproduced 2026-09-04
+against this branch merged with `main`. The backward pass of an einsum whose
+output subscript drops a label crashes rather than returning a gradient:
+
+```rust
+let A = tensor([[1.0, 2.0], [3.0, 4.0]])
+fn f(x) = sum(einsum("ij->i", x))
+print(grad(f)(A))            # panic: index out of range [0] with length 0
+```
+
+The gradient of an einsum is another einsum with the operand's subscript as the
+output, so differentiating `"ij->i"` asks for an output `ij` from an input whose
+only subscript is `i`. The label `j` appears in no input; it sizes to zero, the
+output buffer is empty, and `einsumRaw` indexes it. `Einsum`'s backward closure
+in `internal/tensor/einsum.go` has a `continue` for the case where sizing
+returns an *error*, which is a second defect on the same line and would have
+answered a silent zero, but it is not what runs today.
+
+This is on the ordinary path, since summing an axis away is what einsum is for.
+It is recorded here because `docs/roadmap.md` has carried it since the
+self-hosting exercise found it, described as a silent zero, and the symptom has
+changed. Not fixed: no test covers it yet, and the fix is a real decision about
+what the gradient of a dropped label should be rather than a guard.
+
+**A bare type parameter in return position is read as a unit, in numeric mode
+only.** Found 2026-09-04 by checking that the code blocks in the documentation
+run. Both implementations do it, so it is a shared rule rather than a
+divergence.
+
+```rust
+fn first[T](xs: Arr[T]) -> T = xs[0]
+# shape error: unknown unit "T" (declare it with `unit T`)
+```
+
+Put `mode systems` at the top of that file and it checks clean;
+`internal/checker/generics_test.go`'s `TestParameterIsInScopeForTheSignature`
+asserts exactly that and passes. Units are a numeric-mode feature, and in
+numeric mode a bare name in return position is resolved as a unit without the
+declaration's type parameters being consulted first.
+
+Nothing else in the section misses. In numeric mode `struct Box[T]`,
+`enum Tree[T]`, `x: T` in a parameter list, `xs: Arr[T]` and `-> Arr[T]` all
+check clean, so the rule that refuses `-> T` accepts every neighbouring form of
+the same parameter.
+
+The diagnostic's suggestion makes it worse rather than better. Declaring
+`unit T` silences the error and binds the return to a unit-tagged scalar, so in
+a systems-mode program that then declares `unit T`, `let s: Str = first(xs)` on
+an `Arr[Str]` is reported as `"s" is declared Str but the value is F64`: a wrong
+type, confidently stated, on a program the guide says is correct.
+
+`docs/language-guide.md`'s "Type parameters" section and `docs/RELEASE-1.7.md`
+both printed that line in a block with no `mode systems` on it, which is how
+this was found; both now say which mode the block is.
+`internal/checker/generics_test.go`'s
+`TestABareTypeParameterInReturnPositionIsAUnitInNumericMode` pins the present
+behaviour, so fixing it fails the suite with the files to correct.
+
+Not fixed here: that pass changes documentation and its tests, and a resolution
+order in both checkers is a language change that wants its own review.
 
 **`einsum` refuses a label repeated within one operand.** `einsum("ii->", A)`,
 the trace, returns "repeated label \"i\" within one operand is not supported".

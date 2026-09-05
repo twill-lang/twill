@@ -1,7 +1,7 @@
 BINARY := twill
 PKG := ./cmd/twill
 
-.PHONY: build test vet fmt race lint check ci bench examples install clean
+.PHONY: build test vet fmt race lint check ci bench examples install clean conformance conformance-check
 
 build:
 	go build -o $(BINARY) $(PKG)
@@ -38,8 +38,40 @@ lint:
 check: build vet test race
 	gofmt -l . | tee /dev/stderr | (! read)
 
-# Everything, including the linters. What the release gate should be.
-ci: check lint
+# --- conformance ------------------------------------------------------------
+#
+# Twill has two implementations and the README says they agree. That is true of
+# the lexer, the parser, the checker and the formatter, and it is not true of
+# the evaluator: roughly half the names in the shared builtin table have no
+# implementation under src/eval.tw. Nothing in the build said so, because
+# nothing compared them, so these two targets are the comparison. The count is
+# in docs/conformance.md, which is generated, and is deliberately not repeated
+# here: a number nobody regenerates is a number that goes wrong quietly.
+#
+# They are not in `check` because the self-hosted side runs the Go interpreter
+# interpreting src/*.tw, which is the slowest thing in the repository. They are
+# in `ci`, and they have their own CI job, so a new divergence fails the build
+# on the pull request that introduced it.
+
+# Regenerate docs/conformance.md. Run this after adding a builtin to either
+# implementation, and commit the result.
+conformance: build
+	go run ./tools/conformance builtins -bin ./$(BINARY)
+
+# The gate. Two separate claims:
+#   1. docs/conformance.md matches what the two implementations actually do.
+#   2. Every std/tests suite produces the same bytes under both, except the ones
+#      on testdata/conformance/suite-allow.txt, each of which is keyed to the
+#      divergence it excuses rather than to the suite's name.
+# The allow-list may only shrink. A new disagreement is a failure, and so is a
+# divergence that has changed into a different one under an existing line.
+conformance-check: build
+	go run ./tools/conformance builtins -bin ./$(BINARY) -check
+	go run ./tools/conformance suites -bin ./$(BINARY)
+
+# Everything, including the linters and the conformance gate. What the release
+# gate should be.
+ci: check lint conformance-check
 
 bench:
 	go test -run=XXX -bench=. ./internal/tensor/

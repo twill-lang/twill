@@ -242,6 +242,7 @@ fn parse_stmt_body(p: Parser) -> Res[ast.Stmt, lex.SyntaxError] {
 
   if t.kind == lex.KIND_KEYWORD {
     if bytes.equal(t.value, "let") { return parse_let(p) }
+    if bytes.equal(t.value, "const") { return parse_let(p) }
     # A `fn` followed by a name is a declaration; a `fn` followed by `(` is a
     # lambda in expression position, and falls through to parse_expr below.
     if bytes.equal(t.value, "fn") and peek(p, 1).kind == lex.KIND_IDENT {
@@ -298,8 +299,13 @@ fn is_assignable(x: ast.Expr) -> Bool {
   }
 }
 
+# parse_let reads `let` and `const`, which differ only in whether the binding
+# may be assigned to afterwards. The two spell the same statement, so they share
+# a node and a parser and part company in the checker.
 fn parse_let(p: Parser) -> Res[ast.Stmt, lex.SyntaxError] {
-  let line: I64 = next_tok(p).line
+  let kw: lex.Token = next_tok(p)
+  let line: I64 = kw.line
+  let is_const: Bool = bytes.equal(kw.value, "const")
   let name: Str = expect_ident(p)?
   # An annotation on a `let` introduces a unit: `let px: USD/share = ...`. It is
   # not a type annotation today, and in systems mode it has to become one, which
@@ -323,7 +329,7 @@ fn parse_let(p: Parser) -> Res[ast.Stmt, lex.SyntaxError] {
   }
   expect(p, "=")?
   let v: ast.Expr = parse_expr(p)?
-  Ok(ast.let_stmt(p.ids, name, unit, type_name, v, line))
+  Ok(ast.let_stmt(p.ids, name, unit, type_name, v, is_const, line))
 }
 
 fn parse_fn_decl(p: Parser) -> Res[ast.Stmt, lex.SyntaxError] {

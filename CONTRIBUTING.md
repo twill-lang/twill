@@ -38,14 +38,109 @@ go vet ./...                    # static checks
 gofmt -l .                      # should print nothing
 ```
 
-Or use the Makefile: `make build`, `make test`, `make check`, `make bench`,
-`make examples`. CI additionally runs staticcheck, a dead-code check, the race
-detector over `internal/tensor` and `internal/interp`, and every example as a
-smoke test.
+**The gate is `make check`**, not the four commands above: it is
+`build vet test race` plus `gofmt -l`, and the race pass is the part the four
+leave out. The Makefile says why -- 1.6.5 shipped with a CI failure because the
+local gate was `vet test` and gofmt while CI was that plus a race pass. Run
+`make check` before you claim a change is green. `make ci` adds the two linters
+CI runs, which need the network. `make bench` and `make examples` are the other
+targets.
 
-There is no way to run `src/` yet. Changes there are reviewed by reading, and by
-the differential harness in `tools/diff/` where the corresponding Go component
-exists.
+`src/` runs on the bootstrap. `./twill run src/main.tw run "$PWD/file.tw"` runs
+a program through the self-hosted toolchain, and `check` and `fmt` work the same
+way, so a change there can be executed rather than only read. Give the inner
+path in full: the self-hosted CLI resolves a relative one against its own
+directory rather than yours, so `run examples/hello.tw` answers
+`twill: cannot read file "examples/hello.tw"`. The same bug makes
+`examples/frames.tw` look for its CSV under `src/`.
+
+Use `src/main.tw`, not `src/cli/main.tw`. `src/main.tw` is the plain CLI, the
+one `internal/interp/selfhost_test.go` drives and the one its own header calls
+byte-locked to the Go binary. `src/cli/main.tw` is the decorated front end and
+it has a defect `src/main.tw` does not: it never calls a systems-mode program's
+`main()`, so `mode systems / fn main() { print("from main") }` prints nothing
+through it and exits zero.
+
+**How far the two implementations actually agree.** The front end agrees and the
+evaluator does not, so what a self-hosted run tells you depends on which stage
+you exercised. Over every `.tw` file this repository tracks -- `git ls-files
+'*.tw'`, the whole tree and not the four top-level directory names an earlier
+draft of this paragraph counted -- `check` agrees on every one and `fmt` agrees
+on every one apart from a by-design blank-line rule. Budget minutes, not
+seconds: `src/eval.tw` alone takes minutes through the self-hosted checker
+against well under a second on the bootstrap, so a harness with a per-file cap
+in the tens of seconds reports the slow files as timeouts rather than as
+agreement. The evaluator is a different story: a large minority of the names in
+`src/builtins.tw` still reach an explicit "named in the builtin table but has no
+implementation", and `src/` therefore cannot run `src/`. Do not read a clean
+self-hosted `check` as evidence that a change is correct on both sides.
+`docs/BUGS.md` entry 12 and its Open section carry the current state of the
+evaluator and the probe that re-derives it; `docs/roadmap.md`, "What the second
+implementation agrees on, and what it does not", carries the front-end half.
+
+Three things check it, and they are not the same thing:
+
+- `make conformance-check` is the corpus-scale comparison, and it runs in CI.
+  See below for what it covers and what the allow-list does and does not excuse.
+- `internal/interp/selfhost_test.go` runs `src/` on the Go interpreter and
+  compares the two implementations, `runBothWays` on printed output and
+  `runSelfHostedCheck` on diagnostics, and
+  `internal/interp/selfhost_run_test.go` does the same over `run` for the
+  fixtures in `internal/interp/testdata/selfhost/`. These are the bulk of
+  `internal/interp`'s runtime and they are skipped under `-short`, which is why
+  `make race` passes `-short` and `make test` does not. They are hand-written
+  programs, not a corpus, so a divergence that only a real program reaches is
+  not in their range.
+- `./twill test std/tests` is the twill-level suite: every `*_test.tw` under
+  that directory, about half a second. `harness.tw` and `systems_harness.tw`
+  are helpers rather than suites and are imported by the rest.
+
+`tools/diff/` is a fourth thing and answers a different question: it compares
+two Go binaries over the fixture corpus in `testdata/`, so it never looks at
+`src/`. Its checked-in goldens have drifted behind the corpus, so `-verify`
+reports mismatches on a clean checkout. Read a diff before re-recording: the
+ones there today are library functions added since, and a real regression would
+appear in the same list.
+
+One test holds the two builtin tables to each other rather than to memory.
+`internal/checker/builtintable_test.go` asserts that the Go checker's
+`builtinNames` and `src/builtins.tw`'s `NAMES` are the same set, which is the
+drift that `docs/roadmap.md`'s third bootstrap bug was, found by reading.
+
+`src/` does run. The self-hosted CLI is a twill program, so the Go bootstrap can
+execute it, and the path it is given is resolved relative to `src/`:
+
+```bash
+./twill run src/main.tw run "$PWD/examples/hello.tw"   # self-hosted
+./twill run examples/hello.tw                          # bootstrap
+```
+
+That is what the conformance gate automates, and it is the only honest way to
+review a change to `src/`:
+
+```bash
+make conformance         # regenerate docs/conformance.md, then commit it
+make conformance-check   # the table is current, and the std suites still agree
+```
+
+`make conformance-check` runs every suite in `std/tests/` twice, once on each
+implementation, and compares the bytes. The divergences that exist today are
+listed in `testdata/conformance/suite-allow.txt`.
+
+The list does not excuse a file. Each line names one divergence and carries a
+signature of it, so an entry stops covering a suite the moment the suite starts
+failing a different way:
+
+```
+io_test.tw               9786e999b01b   # the signature of the divergence
+```
+
+`conformance suites -list` prints the lines a run would accept, and the gate
+prints the measured signature next to the recorded one when they disagree. The
+list may only shrink. Four things fail: a divergence that is not on the list, a
+divergence that is not the one its line records, a line that no longer diverges,
+and a line that names nothing. Adding a line is a change that has to be argued
+for in the pull request, not a way to get a build green.
 
 ## Layout
 

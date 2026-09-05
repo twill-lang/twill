@@ -2,7 +2,109 @@
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-09-05
+
 ### Added
+
+- **`const`, a binding that cannot be assigned to.** It is written wherever a
+  `let` can be, and both checkers refuse an assignment through the name: the
+  binding itself, an element of it, a field of it, and any nesting of those
+  (`REC.d[0] = ...`) alike:
+
+  ```
+  HEX is declared const on line 2, so nothing may be assigned through that
+  name: not the binding, and not an element or field of it. Bind a new name
+  for the changed value, or declare it with let if it is meant to change.
+  ```
+
+  **A `const` is also the only binding of its name in the scope that declares
+  it.** A second `let` of that name there is refused rather than quietly taking
+  the const's place:
+
+  ```
+  HEX is declared const on line 1, so the name cannot be bound a second time
+  in the same scope: a second binding would take its place and everything
+  after it would be assignable again. Rename one of them, or declare line 1
+  with let if the name is meant to change.
+  ```
+
+  That case was a silent revocation and, worse, an order-dependent one:
+  top-level consts are registered before the walk starts, so a `let` above the
+  `const` was refused and a `let` below it was not. Two plain `let`s of one name
+  stay legal, and an inner scope is still a different scope.
+
+  The rule lives in the Go checker and in `src/check.tw`, word for word. The
+  two refusal tests in `internal/interp/selfhost_test.go` take the expected text
+  from `checker.Check` rather than writing it as a literal, so a reworded
+  diagnostic on either side fails the build instead of splitting the two
+  implementations.
+
+  **What is not delivered: a caller in another file can still assign to an
+  imported `const`.** That is `docs/roadmap.md` entry 28's actual complaint --
+  weft's `HEX`, `QUADRANTS`, `DENSITY` and `LEVELS` are lookup tables an
+  importer replaces -- and this change does not answer it. A plain `import`
+  copies the name into the importing scope and the handle is shared, so a
+  second file's `HEX = ...` or `HEX[0] = ...` is still accepted by both
+  checkers and is still what every other importer then reads. What `const`
+  refuses today is a write in the file the binding was declared in, which
+  catches a library breaking its own promise rather than a caller breaking it.
+  Entry 28 stays open.
+
+  A cross-file rule was written and is withdrawn. It rode on the Go checker's
+  import walk, the walk that exists for cross-module enum exhaustiveness, and
+  changing that walk broke it: a file importing nine or more siblings where a
+  later one declared an enum stopped being followed, so a non-exhaustive
+  `match` that `main` refuses was accepted, and whether it was accepted
+  depended on the order the imports were written in. The same change made an
+  aliased-import walk exponential in fan-out. `internal/checker/imports.go` is
+  therefore byte-identical to the file on `main`, and `check()` in
+  `src/check.tw` reads one file as it always did.
+
+  `let` was **not** made read-only at the top level instead, which is the other
+  half of what weft asked for. A read-only `let` was implemented behind a flag
+  and swept over the 545 `.tw` files under `src/`, `std/`, `testdata/` and
+  `examples/` here plus the five satellite repositories entry 28 counts (spool,
+  loom, bobbin, weft, warp): it refused 45 of them, including this repository's
+  own `std/tests/harness.tw` and `src/eval.tw`, the test harness in every one
+  of the five satellites, warp's `examples/train.tw`, fourteen `testdata/cases`
+  fixtures, and twelve numeric-mode programs under `examples/` whose training
+  loop is written at file level, ten of which are mirrored again under
+  `testdata/examples/`. Making `let` read-only would have refused all of them,
+  so the guarantee is asked for rather than imposed.
+
+  One further limit is deliberate and is written down in
+  `docs/language-guide.md` under **`const`**. It is not a deep freeze:
+  `HEX[0] = ...` is refused but `push(HEX, x)` is not, and neither is a
+  function handed the handle, because `Arr` has reference semantics and nothing
+  tracks where a handle goes.
+||||||| fcb32ae
+- **A conformance gate, and what it found when it was first run.** Twill has two
+  implementations and the README said they agree. That is true of the lexer, the
+  parser, the checker and the formatter. It was never true of the evaluator, and
+  nothing in the build said so, because nothing compared them.
+
+  `tools/conformance` is the comparison. `builtins` calls every name in
+  `src/builtins.tw` on both implementations and writes `docs/conformance.md`
+  from what came back, so the table is measured rather than declared; `-check`
+  fails the build if the committed file is not what a run produces. `suites`
+  runs every `std/tests/*_test.tw` twice, once on the Go bootstrap and once on
+  `src/main.tw`, and compares exit code, stdout and stderr exactly.
+  `make conformance-check` is the gate, and it has its own CI job.
+
+  Part of the shared builtin table has no implementation under `src/eval.tw`;
+  `docs/conformance.md` has the count and the names, and is the only file that
+  states either. Most of the standard-library suites diverge,
+  `testdata/conformance/suite-allow.txt` says why for each, and the worst of
+  them is `gradcheck_test.tw`, which errors nowhere and simply gets a different
+  answer.
+
+  The allow-list is keyed to the divergence, not to the file. Each line carries
+  a signature of the disagreement it excuses, so `io_test.tw` cannot stop dying
+  on the builtin its line names, start printing a wrong number, and stay green
+  on the strength of its name still being listed. A suite that runs out of time
+  is keyed on which side ran out and on whether the two agreed over the output
+  both produced, so "too slow" does not also excuse "and wrong". The list may
+  only shrink.
 
 - **`black_box(x)`, a compiler barrier, and the correction that it was already
   needed.** `docs/roadmap.md` entry 30 is bobbin's, and it was filed with the
@@ -115,6 +217,57 @@
   a second declaration of one name in one file is an edit that went wrong; a
   sweep of 458 `.tw` files across the ecosystem found no case that was not.
   `docs/BUGS.md` entry 11.
+
+- **The documentation says what the code does.** No code changed. `docs/roadmap.md`
+  ranked thirty-two missing features and then went stale without saying so:
+  twenty-six of them had been delivered and two marked. Every row now carries
+  the release that delivered it, checked by running the current binary rather
+  than by reading this file, and the ranking argument is untouched, because the
+  ranking is what the document is for. Four entries are open (24, 28, 29, 32)
+  and two are half done (17, 31). Entry 30, the compiler barrier, is the one of
+  the twenty-six that is delivered on `main` rather than in a tagged release.
+
+  Three things that were plainly wrong are fixed with it. The roadmap's list of
+  bugs in the bootstrap said none of the three was fixed and that no further Go
+  changes would be made: two are fixed, the ruling did not hold, and the third
+  now panics rather than answering a silent zero (`docs/BUGS.md`, Open).
+  `CONTRIBUTING.md` said there was no way to run `src/`, which
+  `internal/interp/selfhost_test.go` and `twill run src/main.tw` have made
+  untrue. `docs/language-guide.md`'s own `ushr` idiom did not run: it called
+  `not` where the builtin is `bnot`, and named a file that does not exist.
+
+  A fourth was found the same way and is recorded rather than fixed. The generic
+  function `docs/language-guide.md` and `docs/RELEASE-1.7.md` both print,
+  `fn first[T](xs: Arr[T]) -> T = xs[0]`, does not check outside `mode systems`:
+  in numeric mode a bare name in return position is resolved as a unit before
+  the declaration's own parameters, so it answers `unknown unit "T"`. Both
+  implementations do it and it reproduces against `main`. Both blocks now carry
+  the `mode systems` line they need, `docs/BUGS.md` Open has the entry, and
+  `internal/checker/generics_test.go` pins the behaviour so a fix fails the
+  suite with the files to correct.
+
+- **Where the two implementations agree, measured over the whole tree.** The
+  comparison behind the section above ran over every `.tw` file
+  `git ls-files '*.tw'` reports, which is the whole tree read recursively. An
+  earlier draft of it gave a smaller number and named `testdata/cases`,
+  `examples`, `std` and `src`: those four names had been read as top-level
+  globs, so everything in their subdirectories and everything under `bench/` was
+  outside the count while the sentence claimed the tree. The documentation now
+  carries no `.tw` file count at all, in any of the five files that used to have
+  one, because the corpus grows and the claim is about every file in it. What is
+  claimed: `check` agrees on exit status for every file, and `fmt` agrees for
+  every file once blank lines are set aside, with no token differing anywhere
+  and the extra blank lines always on the self-hosted side.
+
+  The evaluator's side of the same measurement now lives in one place,
+  `docs/BUGS.md`, rather than being quoted in six. A split quoted in six files
+  goes stale in five of them.
+
+  `internal/checker/builtintable_test.go` asserts the invariant underneath all
+  of it: the Go checker's `builtinNames` and `src/builtins.tw`'s `NAMES` are the
+  same set. That drift, three names present on one side and absent on the other,
+  is the third bootstrap bug `docs/roadmap.md` records, and it was found by
+  reading rather than by a test.
 
 ## [1.9.0] - 2026-09-03
 
@@ -517,7 +670,12 @@ The self-hosted `grads` is wrong when the same tensor is passed as two
 arguments: the whole gradient lands on the second parameter. Distinct arguments
 agree, and the bootstrap is correct.
 
-## [Unreleased]
+## Recorded as unreleased, shipped in 1.6.4
+
+> Left under an "Unreleased" heading when 1.6.4 was cut, and it stayed there.
+> Everything below shipped: it is the `jvp`/`vjp`/`hvp` entry above, at greater
+> length. Kept in place rather than merged upward, so the record of when each
+> change was written is not rewritten.
 
 ### Added
 
@@ -1124,7 +1282,13 @@ for most of them for months.
   headline feature, and it was firing on the compiler's own source.
 
 
-## [Unreleased]
+## Recorded as unreleased, shipped in 1.5.0
+
+> Left under an "Unreleased" heading when 1.5.0 was cut, and it stayed there.
+> Everything below shipped: `twill test` (`cmd/twill/test.go` first appears at
+> `v1.5.0`), `linspace`, `arange` and the `std/num` additions. Kept in place
+> rather than merged upward, so the record of when each change was written is
+> not rewritten.
 
 ### Added
 
@@ -1707,7 +1871,14 @@ unchanged and fully backward compatible.
   matters more than it looks: an unstable one returns the same values in a
   different arrangement, and the gradient follows the arrangement.
 
-## [Unreleased]
+## Recorded as unreleased, shipped in 1.5.0
+
+> Left under an "Unreleased" heading when 1.5.0 was cut, and it stayed there.
+> Everything below shipped: function types in annotations, and `arr_push`
+> (first in `internal/interp/builtins.go` at `v1.5.0`). This block also sits in
+> the wrong place, between 1.2.0 and 1.1.0, while its entries are dated
+> 2026-08-11. Kept in place rather than moved, so the record of when each change
+> was written is not rewritten.
 
 ### Added
 

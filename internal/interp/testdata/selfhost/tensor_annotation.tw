@@ -1,0 +1,18 @@
+mode systems
+
+# A `Tensor` annotation reads a list of numbers back as a tensor. A bracket
+# literal is a tensor when its elements are numeric literals and a list
+# otherwise, so `[1.0, 2.0]` is already a tensor but `arr(1.0, 2.0)` is not,
+# and a caller who wrote the annotation meant the tensor.
+fn two() -> Tensor = arr(3.0, 4.0)
+
+fn main() {
+  let t: Tensor = arr(1.0, 2.0)
+  print(str(t))
+  print(str(two()))
+  # A list whose elements are not numbers is left alone: there is no tensor to
+  # make of it, and flattening or refusing would both be worse than leaving the
+  # annotation unenforced.
+  let names: Tensor = arr("a", "b")
+  print(str(names))
+}

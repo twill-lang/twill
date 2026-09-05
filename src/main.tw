@@ -29,7 +29,7 @@ import "fmt.tw" as fmt
 import "eval.tw" as eval
 import "bytes.tw" as bytes
 
-let VERSION: Str = "1.9.0"
+let VERSION: Str = "1.10.0"
 
 let EXIT_OK: I64 = 0
 let EXIT_ERROR: I64 = 1

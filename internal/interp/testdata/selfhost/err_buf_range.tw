@@ -1,0 +1,6 @@
+mode systems
+
+fn main() {
+  let b: Bytes = buf_new(2)
+  print(str(buf_get8(b, 5)))
+}

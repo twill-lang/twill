@@ -1,0 +1,27 @@
+mode systems
+
+# A dictionary and a byte buffer compare by contents, not by identity: two
+# built separately with the same entries are equal, the way two records are.
+fn main() {
+  let d1: Dict[Str, I64] = {}
+  let d2: Dict[Str, I64] = {}
+  dict_set(d1, "a", 1)
+  dict_set(d2, "a", 1)
+  print(str(d1 == d2))
+  dict_set(d2, "b", 2)
+  print(str(d1 == d2))
+  # Key order is kept for printing, not for identity.
+  let d3: Dict[Str, I64] = {}
+  dict_set(d3, "b", 2)
+  dict_set(d3, "a", 1)
+  print(str(d2 == d3))
+  print(str(d2))
+  print(str(d3))
+  let b1: Bytes = bytes_new()
+  let b2: Bytes = bytes_new()
+  bytes_push(b1, 104)
+  bytes_push(b2, 104)
+  print(str(b1 == b2))
+  bytes_push(b2, 105)
+  print(str(b1 == b2))
+}

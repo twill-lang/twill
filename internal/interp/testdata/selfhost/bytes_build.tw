@@ -1,0 +1,14 @@
+mode systems
+
+# The growable byte buffer, which is what makes building a string linear
+# instead of quadratic.
+fn main() {
+  let b: Bytes = bytes_new()
+  bytes_push(b, 104)
+  bytes_push(b, 105)
+  print(bytes_to_str(b))
+  print(str(len(b)))
+  bytes_push(b, 33)
+  print(bytes_to_str(b))
+  print(str(len(bytes_new())))
+}
