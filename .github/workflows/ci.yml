@@ -91,13 +91,16 @@ jobs:
 
       # Every std/tests suite, run once on the Go bootstrap and once on
       # src/main.tw, compared byte for byte. Known divergences live on
-      # testdata/conformance/suite-allow.txt and may only be removed.
+      # testdata/conformance/suite-allow.txt, each line keyed to the divergence
+      # it excuses, so a suite that starts failing a different way fails here
+      # even though its name is already on the list. Lines may only be removed.
       - name: Standard library suites agree on both implementations
         run: go run ./tools/conformance suites -bin ./twill
 
       # tools/diff/run, which was in the tree unreferenced by this workflow and
       # by the Makefile since it was written. testdata/conformance/golden-allow.txt
-      # holds the 33 findings that had accumulated while nothing was looking.
+      # holds the findings that had accumulated while nothing was looking, each
+      # line keyed to the kind of finding it excuses.
       - name: Fixture corpus matches its recorded goldens
         run: |
           go run ./tools/diff/run -corpus testdata -bin ./twill -verify \
