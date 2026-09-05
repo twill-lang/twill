@@ -1041,12 +1041,21 @@ let CALL_DEPTH: Arr[I64] = [0]
 # same refusal for its own sake. The number is measured, not guessed: see
 # DefaultMaxCallDepth in internal/interp/interp.go for what was measured.
 #
-# One consequence is worth writing down. When this evaluator runs on the
-# bootstrap, each twill frame here costs about six bootstrap frames, so a
-# program run as `twill run src/main.tw run prog.tw` meets the bootstrap's limit
-# at about a sixth of this one. The refusal is still a twill diagnostic; it just
-# names a function in this file rather than one in prog.tw. Interp.MaxCallDepth
-# is the knob an embedder raises to get the inner limit back.
+# One consequence is worth writing down, because it decides how the two engines
+# are made to agree. When this evaluator runs on the bootstrap there are two
+# counters over one stack, and each twill frame here costs exactly eight
+# bootstrap frames: measured on `twill run src/main.tw run prog.tw`, the outer
+# depth is 8*inner + 9. So the outer limit is met first at 1,248 of the inner
+# program's calls, and the refusal, while still a twill diagnostic, names a
+# function in this file rather than one in prog.tw.
+#
+# Sharing one constant cannot fix that: reaching L here needs more than 8L
+# frames out there, which is more than L for every L. The host has to be given
+# the larger number, and TWILL_MAX_CALL_DEPTH is how. 80,013 is the bisected
+# number this evaluator needs, the bootstrap's stack lasts to 150,000, and
+# `TWILL_MAX_CALL_DEPTH=100000 twill run src/main.tw run prog.tw` prints the
+# same bytes the bootstrap prints for prog.tw. That command is what
+# interp.TestSelfHostedRefusalsMatchTheBootstrap runs.
 let MAX_CALL_DEPTH: I64 = 10000
 
 # call_depth_message is the refusal. interp.callDepthMessage is the same text

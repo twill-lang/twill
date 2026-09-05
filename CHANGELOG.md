@@ -46,20 +46,36 @@
     2 |   n * fact(n - 1)
   ```
 
-  What it replaced was 424 lines of Go runtime internals and no exit status. A
-  Go stack overflow is a *fatal* error: no recover catches it, so the only way
-  to get a diagnostic at all is to refuse before the stack runs out. `fn fact(n)
-  = n * fact(n - 1)` with the base case forgotten is the most likely first
-  mistake anyone makes in a new language, and it was the most likely first thing
-  they saw.
+  What it replaced was 424 lines of Go runtime internals and exit code 2, which
+  is twill's code for "you invoked it wrong". A Go stack overflow is a *fatal*
+  error: no recover catches it, so the only way to get a diagnostic at all is to
+  refuse before the stack runs out. `fn fact(n) = n * fact(n - 1)` with the base
+  case forgotten is the most likely first mistake anyone makes in a new
+  language, and it was the most likely first thing they saw. It now exits 1,
+  like any other program that failed.
 
-  The number is measured. The deepest legitimate recursion anywhere in this
-  repository or the nine satellites is the self-hosted compiler checking
-  `src/parse.tw`, which nests 217 calls; everything in `examples/`,
-  `std/tests/`, `testdata/` and the satellites' own tests and examples stays
-  under 30. The bootstrap's stack gives out between 80,000 and 120,000 nested
-  calls. 10,000 is about 46x above the deepest real program and about 8x below
-  the crash.
+  The number is measured, over 1,163 runs of every `.tw` file in `src/`,
+  `examples/`, `std/`, `std/tests/`, `testdata/` and the nine satellites, on
+  both engines. The deepest legitimate recursion anywhere is the self-hosted
+  compiler checking `src/parse.tw`, at 217 nested calls; no user program passes
+  18. The bootstrap's stack survives 150,000 nested calls and dies at 151,562.
+  So 10,000 is about 46x above the deepest real program and about 15x below the
+  crash. `docs/needs.md` NEEDS-30 has the table.
+
+- **`TWILL_MAX_CALL_DEPTH`, so the two engines can refuse a program with the
+  same words.** Running the self-hosted evaluator on the bootstrap puts two
+  counters over one stack, and the outer depth is `8*inner + 9` exactly, so the
+  host stops first and names a function inside `src/eval.tw`. No shared constant
+  fixes that: reaching L inside costs 8L+9 outside, which is more than L for
+  every L. The host has to be handed the larger number.
+
+  ```
+  TWILL_MAX_CALL_DEPTH=100000 twill run src/main.tw run prog.tw
+  ```
+
+  prints for `prog.tw` exactly the bytes `twill run prog.tw` prints. 100,000 is
+  above the 80,013 the self-hosted evaluator needs -- bisected on the shipped
+  CLI, not derived -- and well under the 150,000 where the stack gives out.
 
 ### Changed
 
@@ -73,6 +89,10 @@
   this file, at https://github.com/twill-lang/twill/issues
     1 | print(argmax(zeros(0)))
   ```
+
+  A top-level `break` under `--no-check` was the same thing in 15 lines
+  (`panic: (interp.breakSignal)`) and now says ``  `break` outside a loop``.
+  Both used to exit 2, twill's code for a bad invocation; both now exit 1.
 
   The person at the keyboard is running a twill program and cannot act on a Go
   stack. This is the second half of the recursion limit and not a replacement

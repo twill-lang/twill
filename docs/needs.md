@@ -758,11 +758,49 @@ Calls: `interp.DefaultMaxCallDepth` and `src/eval.tw`'s `MAX_CALL_DEPTH` are
 both 10,000, and a call nested deeper than that is an ordinary twill error
 naming the function, the depth and the call's line. It is checked on the way
 into the frame, because a Go stack overflow is a fatal error that no recover
-catches: past the limit there is nothing left to report with. The number was
-measured rather than guessed. The deepest legitimate recursion in this
-repository and the nine satellites is the self-hosted compiler checking
-`src/parse.tw` at 217 nested calls, everything else stays under 30, and the
-bootstrap's own stack gives out between 80,000 and 120,000.
+catches: past the limit there is nothing left to report with.
+
+The number was measured rather than guessed, and here is the measurement, taken
+on macOS arm64 with the 1 GB default goroutine stack. The interpreter was
+instrumented to record the peak value of `callDepth` and every file below was
+run through it.
+
+| what was measured | files | deepest |
+| --- | ---: | ---: |
+| self-hosted compiler checking `src/*.tw` | 11 | **217** (`src/parse.tw`) |
+| self-hosted compiler checking `examples/`, `std/`, `std/tests/` and the nine satellites | 234 | 102 (`bobbin/src/report.tw`) |
+| self-hosted compiler checking `testdata/` | 354 | 47 |
+| bootstrap running the nine satellites' tests and examples | 167 | 18 (`selvedge/tests/registry_test.tw`) |
+| bootstrap running `std/tests/` | 17 | 14 (`json_test.tw`) |
+| bootstrap running `examples/` | 26 | 8 (`llama.tw`) |
+| bootstrap running `testdata/` | 354 | 4 |
+
+That is the whole of the corpus, 1,163 measured runs, and the deepest anything
+legitimate reaches is 217 -- the self-hosted compiler, not a user program. The
+depth there follows the *nesting* of the file being checked rather than its
+length: a synthetic file of 800 top-level statements peaks at 18, while a single
+120-term `+` chain reaches 245.
+
+The other end was bisected: the bootstrap survives 150,000 nested twill calls
+and dies at 151,562. A fat frame -- five parameters, three locals, a nested
+expression -- dies at the same depth, because what fills the stack is the
+interpreter's own Go frames rather than anything the twill frame holds. So
+10,000 is about 46x above the deepest real program and about 15x below the
+crash.
+
+Two counters, one stack: when `src/eval.tw` runs on the bootstrap, the peak
+outer depth for a program that nests `k` calls is `8k + 9` exactly (measured at
+k = 3, 11, 51, 101 and 201). A host left at 10,000 therefore stops the inner
+program at 1,248 of its own calls -- checked: 1,248 runs, 1,249 is refused --
+and reports against a function inside `src/eval.tw`.
+
+No single shared constant can fix that. Reaching L inside costs more than 8L
+outside, which is more than L for every L, so the host has to be given the
+larger number, and `TWILL_MAX_CALL_DEPTH` is how. The number needed was
+bisected on the shipped CLI rather than derived from the slope: at
+`TWILL_MAX_CALL_DEPTH=80012` the host still refuses first, at `80013` the guest
+does. `TWILL_MAX_CALL_DEPTH=100000` is the documented value: above 80,013, well
+under 150,000.
 
 Parsing and checking: still uncounted, and still the exposure this entry was
 opened for. The parser and the checker are recursive descent over user input,
@@ -774,9 +812,9 @@ written program reaches and well within what a hostile input can send, so it is
 an input-validation problem rather than a usability one, and it wants the same
 treatment -- a depth counter in the descent, with a diagnostic.
 
-*Go bootstrap:* `internal/interp.Interp.MaxCallDepth` for the call half. None
-for the parse half; a sufficiently nested twill file still crashes the Go
-parser.
+*Go bootstrap:* `internal/interp.Interp.MaxCallDepth`, defaulted by
+`TWILL_MAX_CALL_DEPTH`, for the call half. None for the parse half; a
+sufficiently nested twill file still crashes the Go parser.
 
 ## NEEDS-31: deliberate divergence: `t[]`
 

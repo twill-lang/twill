@@ -64,16 +64,45 @@ func CheckLegacyExt(path string) error {
 // first thing they saw. A counter checked on the way in turns it into an
 // ordinary twill error, which is the only way to get one at all.
 //
-// The number is measured, not guessed. The deepest legitimate recursion in the
-// repository and its satellites is the self-hosted compiler checking
-// src/parse.tw, which nests 217 calls (every other program in examples/,
-// std/tests/, testdata/ and the nine satellite repositories stays under 30).
-// The bootstrap's own stack gives out between 80,000 and 120,000 nested calls
-// on a 1 GB goroutine stack, depending on how much each frame holds. 10,000
-// sits about 46x above the deepest real program and about 8x below the crash,
-// which leaves room on both sides for programs and machines unlike the ones
-// measured.
+// The number is measured, not guessed, and the measurement is written down in
+// docs/needs.md NEEDS-30 with the command that produced it. The deepest
+// legitimate recursion found by running every .tw file in examples/,
+// std/tests/, testdata/ and the nine satellite repositories, and by putting
+// every file in src/, examples/, std/ and the satellites through the
+// self-hosted compiler, is the self-hosted compiler checking src/parse.tw at
+// 217 nested calls. Nothing a user program does comes close: the deepest are
+// selvedge/tests/registry_test.tw at 18 and std/tests/json_test.tw at 14.
+//
+// The other end was measured by bisection on this machine (macOS arm64, the 1
+// GB default goroutine stack): the bootstrap survives 150,000 nested twill
+// calls and dies at 151,562, and a frame holding five parameters, three locals
+// and a nested expression dies at the same depth, because what fills the stack
+// is the interpreter's own Go frames rather than anything the twill frame
+// holds.
+//
+// So 10,000 is about 46x above the deepest real program and about 15x below the
+// crash, which leaves room on both sides for programs and machines unlike the
+// ones measured.
 const DefaultMaxCallDepth = 10000
+
+// maxCallDepthEnv overrides DefaultMaxCallDepth for interpreters made by New.
+//
+// It exists for one caller: a host running an interpreter written in twill. See
+// Interp.MaxCallDepth for why that case needs a different number from every
+// other one, and why no single shared constant can serve both.
+const maxCallDepthEnv = "TWILL_MAX_CALL_DEPTH"
+
+// envMaxCallDepth is DefaultMaxCallDepth unless TWILL_MAX_CALL_DEPTH holds a
+// positive integer. A value that is not one is ignored rather than refused:
+// this is a safety limit, and failing to start because its override is
+// misspelled would be a worse outcome than running at the default.
+func envMaxCallDepth() int {
+	n, err := strconv.Atoi(os.Getenv(maxCallDepthEnv))
+	if err != nil || n < 1 {
+		return DefaultMaxCallDepth
+	}
+	return n
+}
 
 // callDepthMessage is the refusal, in the one place both engines copy it from.
 // src/eval.tw's call_depth_message is the same text and the two must agree
@@ -166,18 +195,30 @@ type Interp struct {
 	// all the position a panic from inside the interpreter has to report. See
 	// recovered.
 	line int
-	// MaxCallDepth is the recursion limit for this interpreter, set to
-	// DefaultMaxCallDepth by New.
+	// MaxCallDepth is the recursion limit for this interpreter, set by New to
+	// DefaultMaxCallDepth or to whatever TWILL_MAX_CALL_DEPTH says.
 	//
 	// It is a field rather than a constant because of one case: an interpreter
-	// written in twill, running on this one. Each of the inner interpreter's
-	// twill frames costs about six of the outer one's -- measured on
-	// `twill run src/main.tw run prog.tw` -- so an outer interpreter left at the
-	// default cuts the inner program off at roughly a sixth of the limit, and
-	// reports it against a function inside src/eval.tw rather than against the
-	// program's own. An embedder in that position raises this. Raise it too far
-	// and the stack overflow the limit exists to prevent comes back, so raise it
-	// deliberately and no further than the nesting actually needs.
+	// written in twill, running on this one. Two counters are then measuring the
+	// same Go stack, and the outer one always reaches its limit first, because
+	// each of the inner interpreter's frames costs several of the outer one's.
+	// Measured on `twill run src/main.tw run prog.tw`, the outer depth is
+	// 8*inner + 9 exactly, so an outer interpreter left at 10,000 cuts the inner
+	// program off at 1,248 of its own calls and names a function inside
+	// src/eval.tw rather than one in prog.tw.
+	//
+	// No single shared constant fixes that, and it is worth being precise about
+	// why: if both engines refuse at L, the inner engine needs 8L+9 outer frames
+	// to reach L, and the outer engine stops at L first for every positive L.
+	// The only way the two can refuse the same program with the same words is
+	// for the host to be given a larger number than the guest, which is what
+	// this field and TWILL_MAX_CALL_DEPTH are for. The number the self-hosted
+	// evaluator needs was bisected on the shipped CLI rather than derived: at
+	// 80,012 the host still refuses first, at 80,013 the guest does. The
+	// bootstrap's stack does not give out until 150,000, so
+	// TWILL_MAX_CALL_DEPTH=100000 buys the identical message with margin on both
+	// sides. Raise it past 150,000 and the stack overflow this whole mechanism
+	// exists to prevent comes back.
 	MaxCallDepth int
 	// rngs holds the independent generator streams `rng_open` hands out, by
 	// handle. A twill value cannot carry a native pointer, so a stream is named
@@ -211,7 +252,7 @@ func New(out func(string)) *Interp {
 		structFields:    map[string]map[string]string{},
 		rngs:            map[int64]*rand.Rand{},
 		tr:              trace.New(nil),
-		MaxCallDepth:    DefaultMaxCallDepth,
+		MaxCallDepth:    envMaxCallDepth(),
 	}
 	ip.installBuiltins()
 	return ip

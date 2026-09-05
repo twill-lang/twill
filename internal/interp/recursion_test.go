@@ -155,43 +155,88 @@ func TestInterpreterPanicBecomesATwillError(t *testing.T) {
 	}
 }
 
-// The two engines refuse the same program with the same words. The message is
-// written twice -- once in Go, once in twill -- so this is what keeps the two
-// copies equal; a change to one that is not made to the other fails here.
+// selfHostedHostDepth is what TWILL_MAX_CALL_DEPTH has to be for the
+// self-hosted evaluator to reach its own limit before the bootstrap under it
+// reaches the bootstrap's.
 //
-// The self-hosted evaluator is reached at its own limit only by raising the
-// bootstrap's, because each twill frame in src/eval.tw costs about six frames
-// of the interpreter running it, so the default would refuse from the outer
-// engine first (naming a function inside src/eval.tw) long before the inner
-// counter got anywhere near 10,000. Raising it is exactly the case
-// Interp.MaxCallDepth documents.
-func TestSelfHostedRecursionLimitMessageMatches(t *testing.T) {
-	skipUnderShort(t)
-	src := fmt.Sprintf(`fn f(n) {
+// It is not a taste. Running the self-hosted evaluator on the bootstrap puts
+// two counters over one Go stack, and the outer depth grows by 8 for each of
+// the inner engine's frames (measured; see Interp.MaxCallDepth). The host limit
+// at which the inner engine gets to refuse first was found by bisecting the
+// shipped CLI: 80,012 is not enough and 80,013 is. Any host below that refuses
+// first and names a function inside src/eval.tw. 100,000 clears 80,013 and
+// stays well under the 150,000 where the bootstrap's stack actually gives out.
+const selfHostedHostDepth = 100000
+
+// recursionCases are the programs the two engines are held to. Each is a
+// runaway recursion of a different shape, because "the two messages agree" was
+// previously checked on one shape -- a named top-level function -- and one
+// shape does not cover the two things the message is built from: which closure
+// is named, and which line the call is on.
+var recursionCases = []struct {
+	name string
+	src  string
+	// line is where the refusal must be reported, so that a message which
+	// agrees but points at the wrong place still fails.
+	line int
+}{
+	{"named function", `fn f(n) {
   if n == 0 { return 0 }
   f(n - 1) + 1
 }
-print(f(%d))
-`, interp.DefaultMaxCallDepth+1)
+print(f(1000000))
+`, 3},
+	{"anonymous function", `let go = fn(n) = 0
+go = fn(n) = go(n + 1)
+print(go(0))
+`, 2},
+	{"mutual recursion", `fn ping(n) = pong(n + 1)
+fn pong(n) = ping(n + 1)
+print(ping(0))
+`, 2},
+	// Three functions, not two: with an even limit a two-cycle always refuses
+	// the same one of the pair, so a counter that is off by one between the
+	// engines still agrees. A three-cycle does not let that hide.
+	{"three-way mutual recursion", `fn a(n) = b(n + 1)
+fn b(n) = c(n + 1)
+fn c(n) = a(n + 1)
+print(a(0))
+`, 1},
+	// The recursive call is made by a builtin, not by twill code, so the depth
+	// the two engines count has to survive a trip out through map and back.
+	{"recursion through a builtin", `fn f(n) = map(fn(x) = f(x + 1), [n])
+print(f(0))
+`, 1},
+	// The call spans lines. Both engines must name the line the call starts on,
+	// which is not the line the argument is on and not the line it closes on.
+	{"call spanning several lines", `fn f(n) {
+  if n == 0 { return 0 }
+  f(
+    n - 1
+  ) + 1
+}
+print(f(1000000))
+`, 3},
+	// A closure reached through a record field, which is the anonymous case
+	// again by a different route into the evaluator.
+	{"closure in a record field", `let r = { go: fn(n) = 0 }
+r = { go: fn(n) = r.go(n + 1) }
+print(r.go(0))
+`, 2},
+}
 
-	goIP := interp.New(func(string) {})
-	_, goErr := goIP.Run(src)
-	if goErr == nil {
-		t.Fatal("the bootstrap answered a runaway recursion")
-	}
-	goRE, ok := goErr.(*interp.RuntimeError)
-	if !ok {
-		t.Fatalf("bootstrap error is %T: %v", goErr, goErr)
-	}
-
+// selfHostedStderr runs the self-hosted CLI on source and returns what it wrote
+// to the real stderr. The self-hosted CLI's diagnostics go through write_err to
+// os.Stderr rather than through the interpreter's sink, so they are captured at
+// the OS level; the temporary path is rewritten to placeholder so a caller can
+// compare against a message built for a path of its own.
+func selfHostedStderr(t *testing.T, source, placeholder string, hostDepth int) string {
+	t.Helper()
 	dir := t.TempDir()
 	target := filepath.Join(dir, "input.tw")
-	if err := os.WriteFile(target, []byte(src), 0o644); err != nil {
+	if err := os.WriteFile(target, []byte(source), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// The self-hosted CLI writes its diagnostics to the real os.Stderr through
-	// write_err, so they are captured at the OS level rather than through the
-	// interpreter's output sink.
 	saved := os.Stderr
 	r, w, err := os.Pipe()
 	if err != nil {
@@ -204,74 +249,212 @@ print(f(%d))
 		io.Copy(&b, r)
 		done <- b.String()
 	}()
-	selfIP := interp.New(func(string) {})
-	selfIP.MaxCallDepth = 20 * interp.DefaultMaxCallDepth
-	_, ranMain, runErr := selfIP.RunFileMain(filepath.Join("..", "..", "src", "main.tw"),
+	ip := interp.New(func(string) {})
+	ip.MaxCallDepth = hostDepth
+	_, ranMain, runErr := ip.RunFileMain(filepath.Join("..", "..", "src", "main.tw"),
 		[]string{"twill", "run", target})
 	w.Close()
 	os.Stderr = saved
-	selfOut := <-done
+	out := <-done
 	if runErr != nil {
 		t.Fatalf("self-hosted CLI errored: %v", runErr)
 	}
 	if !ranMain {
 		t.Fatal("self-hosted main did not run")
 	}
+	return strings.ReplaceAll(out, target, placeholder)
+}
 
-	if !strings.Contains(selfOut, goRE.Msg) {
-		t.Fatalf("the two engines disagree.\nbootstrap: %s\nself-hosted: %s", goRE.Msg,
-			strings.TrimSpace(selfOut))
-	}
-	// And it is reported against the program's own call site, not against
-	// something inside src/eval.tw.
-	if want := fmt.Sprintf("%s:3:", target); !strings.Contains(selfOut, want) {
-		t.Errorf("self-hosted refusal %q does not point at %s", strings.TrimSpace(selfOut), want)
+// The two engines refuse the same program with the same words, on every shape
+// of runaway recursion in recursionCases, and point at the same line.
+//
+// The message is written twice -- once in Go, once in twill -- so this is what
+// keeps the two copies equal; a change to one that is not made to the other
+// fails here. The previous version of this test compared one program and
+// compared it with strings.Contains, which passes on a message that agrees
+// about the words and differs about the function or the line. This one builds
+// the diagnostic the CLI would print for the bootstrap's error and requires the
+// self-hosted CLI's first line to equal it byte for byte.
+//
+// The host's limit is raised to selfHostedHostDepth for the reason that
+// constant documents, and that is not a test-only fiction: the same run from a
+// shell is
+//
+//	TWILL_MAX_CALL_DEPTH=100000 twill run src/main.tw run prog.tw
+//
+// which is what TestMaxCallDepthComesFromTheEnvironment covers.
+func TestSelfHostedRefusalsMatchTheBootstrap(t *testing.T) {
+	skipUnderShort(t)
+	for _, tc := range recursionCases {
+		t.Run(tc.name, func(t *testing.T) {
+			goIP := interp.New(func(string) {})
+			goIP.MaxCallDepth = interp.DefaultMaxCallDepth
+			_, goErr := goIP.Run(tc.src)
+			if goErr == nil {
+				t.Fatal("the bootstrap answered a runaway recursion")
+			}
+			goRE, ok := goErr.(*interp.RuntimeError)
+			if !ok {
+				t.Fatalf("bootstrap error is %T: %v", goErr, goErr)
+			}
+			if goRE.Line != tc.line {
+				t.Errorf("the bootstrap reports line %d; the call is on line %d",
+					goRE.Line, tc.line)
+			}
+
+			// The first line of what cmd/twill prints for this error, which is
+			// also the first line the self-hosted CLI prints for its own.
+			want := fmt.Sprintf("INPUT:%d: runtime error: %s", goRE.Line, goRE.Msg)
+			out := selfHostedStderr(t, tc.src, "INPUT", selfHostedHostDepth)
+			got := strings.SplitN(strings.TrimSpace(out), "\n", 2)[0]
+			if got != want {
+				t.Errorf("the two engines disagree.\nbootstrap:   %s\nself-hosted: %s", want, got)
+			}
+		})
 	}
 }
 
-// The case just under the limit runs on the self-hosted evaluator too, and
-// prints the same answer as the bootstrap.
+// The boundary, on both engines: a program that nests exactly MaxCallDepth
+// calls runs and answers, and one that nests a single call more is refused.
 //
-// The bootstrap's limit is raised for the same reason as in the test above: at
-// the default, six bootstrap frames per twill frame means the outer engine
-// refuses at about 1,660 of the inner engine's calls. That ceiling is real and
-// it is what `twill run src/main.tw run prog.tw` gets today; this test is about
-// the inner limit, so it lifts the outer one out of the way.
-func TestSelfHostedRecursionJustUnderTheLimitStillRuns(t *testing.T) {
-	skipUnderShort(t)
-	depth := interp.DefaultMaxCallDepth - 1
-	src := fmt.Sprintf(`fn depth(n) {
+// `f(n)` reaches n+1 frames, so f(DefaultMaxCallDepth-1) is the deepest program
+// the limit admits. Testing only the refusal leaves the other edge unmeasured,
+// and a limit that also refuses the deepest legitimate program is not a
+// diagnostic, it is a new bug.
+func TestRecursionAtTheLimitAndOneBeyond(t *testing.T) {
+	src := func(n int) string {
+		return fmt.Sprintf(`fn depth(n) {
   if n == 0 { return 0 }
   depth(n - 1) + 1
 }
 print(depth(%d))
-`, depth)
+`, n)
+	}
+	atTheLimit := interp.DefaultMaxCallDepth - 1
 
-	var goOut strings.Builder
-	goIP := interp.New(func(s string) { goOut.WriteString(s) })
-	if _, err := goIP.Run(src); err != nil {
-		t.Fatalf("the bootstrap refused a %d-deep recursion: %v", depth, err)
+	var out strings.Builder
+	ip := interp.New(func(s string) { out.WriteString(s) })
+	if _, err := ip.Run(src(atTheLimit)); err != nil {
+		t.Fatalf("a program nesting exactly %d calls was refused: %v",
+			interp.DefaultMaxCallDepth, err)
+	}
+	if got := strings.TrimSpace(out.String()); got != fmt.Sprint(atTheLimit) {
+		t.Errorf("depth(%d) printed %q", atTheLimit, got)
 	}
 
+	over := interp.New(func(string) {})
+	_, err := over.Run(src(atTheLimit + 1))
+	if err == nil {
+		t.Fatalf("a program nesting %d calls, one past the limit, was answered",
+			interp.DefaultMaxCallDepth+1)
+	}
+	if !strings.Contains(err.Error(), "call depth limit") {
+		t.Errorf("message %q is not the depth refusal", err.Error())
+	}
+}
+
+// The same boundary on the self-hosted evaluator, and it prints what the
+// bootstrap prints on both sides of it.
+func TestSelfHostedRecursionAtTheLimitAndOneBeyond(t *testing.T) {
+	skipUnderShort(t)
+	src := func(n int) string {
+		return fmt.Sprintf(`fn depth(n) {
+  if n == 0 { return 0 }
+  depth(n - 1) + 1
+}
+print(depth(%d))
+`, n)
+	}
+	atTheLimit := interp.DefaultMaxCallDepth - 1
+
+	// At the limit: it runs, and prints the bootstrap's answer.
+	var goOut strings.Builder
+	goIP := interp.New(func(s string) { goOut.WriteString(s) })
+	goIP.MaxCallDepth = interp.DefaultMaxCallDepth
+	if _, err := goIP.Run(src(atTheLimit)); err != nil {
+		t.Fatalf("the bootstrap refused a %d-deep recursion: %v", atTheLimit+1, err)
+	}
 	dir := t.TempDir()
-	target := filepath.Join(dir, "input.tw")
-	if err := os.WriteFile(target, []byte(src), 0o644); err != nil {
+	target := filepath.Join(dir, "atlimit.tw")
+	if err := os.WriteFile(target, []byte(src(atTheLimit)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	var selfOut strings.Builder
 	selfIP := interp.New(func(s string) { selfOut.WriteString(s) })
-	selfIP.MaxCallDepth = 20 * interp.DefaultMaxCallDepth
+	selfIP.MaxCallDepth = selfHostedHostDepth
 	if _, ranMain, err := selfIP.RunFileMain(filepath.Join("..", "..", "src", "main.tw"),
 		[]string{"twill", "run", target}); err != nil {
 		t.Fatalf("self-hosted CLI errored: %v", err)
 	} else if !ranMain {
 		t.Fatal("self-hosted main did not run")
 	}
-
 	if goOut.String() != selfOut.String() {
-		t.Fatalf("go = %q, self = %q", goOut.String(), selfOut.String())
+		t.Fatalf("at the limit: go = %q, self = %q", goOut.String(), selfOut.String())
 	}
-	if !strings.Contains(goOut.String(), fmt.Sprint(depth)) {
-		t.Errorf("a %d-deep recursion printed %q", depth, goOut.String())
+	if !strings.Contains(goOut.String(), fmt.Sprint(atTheLimit)) {
+		t.Errorf("a %d-deep recursion printed %q", atTheLimit+1, goOut.String())
+	}
+
+	// One past it: refused, with the bootstrap's words and the bootstrap's line.
+	overIP := interp.New(func(string) {})
+	overIP.MaxCallDepth = interp.DefaultMaxCallDepth
+	_, goErr := overIP.Run(src(atTheLimit + 1))
+	if goErr == nil {
+		t.Fatal("the bootstrap answered a program one call past the limit")
+	}
+	goRE := goErr.(*interp.RuntimeError)
+	want := fmt.Sprintf("INPUT:%d: runtime error: %s", goRE.Line, goRE.Msg)
+	out := selfHostedStderr(t, src(atTheLimit+1), "INPUT", selfHostedHostDepth)
+	got := strings.SplitN(strings.TrimSpace(out), "\n", 2)[0]
+	if got != want {
+		t.Errorf("one past the limit, the two engines disagree.\nbootstrap:   %s\nself-hosted: %s",
+			want, got)
+	}
+}
+
+// TWILL_MAX_CALL_DEPTH sets the limit for interpreters made by New. It is the
+// only way a host can give a guest interpreter more depth than itself, and
+// without it `twill run src/main.tw run prog.tw` cannot print what
+// `twill run prog.tw` prints for the same prog.tw -- see Interp.MaxCallDepth
+// for the arithmetic that makes a single shared constant unable to do it.
+//
+// A value that is not a positive integer is ignored rather than refused. This
+// is a safety limit; refusing to start because its override is misspelled would
+// be a worse outcome than starting at the default.
+func TestMaxCallDepthComesFromTheEnvironment(t *testing.T) {
+	for _, tc := range []struct {
+		set  string
+		want int
+	}{
+		{"100000", 100000},
+		{"1", 1},
+		{"", interp.DefaultMaxCallDepth},
+		{"0", interp.DefaultMaxCallDepth},
+		{"-5", interp.DefaultMaxCallDepth},
+		{"lots", interp.DefaultMaxCallDepth},
+	} {
+		t.Run(fmt.Sprintf("%q", tc.set), func(t *testing.T) {
+			t.Setenv("TWILL_MAX_CALL_DEPTH", tc.set)
+			if got := interp.New(func(string) {}).MaxCallDepth; got != tc.want {
+				t.Errorf("TWILL_MAX_CALL_DEPTH=%q gave MaxCallDepth %d, want %d",
+					tc.set, got, tc.want)
+			}
+		})
+	}
+
+	// And it is the limit that is actually enforced, not just a field that got
+	// written: at 20 a 50-deep recursion is refused and says 20.
+	t.Setenv("TWILL_MAX_CALL_DEPTH", "20")
+	_, err := interp.New(func(string) {}).Run(`fn f(n) {
+  if n == 0 { return 0 }
+  f(n - 1) + 1
+}
+print(f(50))
+`)
+	if err == nil {
+		t.Fatal("a 50-deep recursion was answered at a limit of 20")
+	}
+	if !strings.Contains(err.Error(), "is 20 calls deep") {
+		t.Errorf("message %q does not report the limit the environment set", err.Error())
 	}
 }
