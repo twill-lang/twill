@@ -1,0 +1,57 @@
+mode systems
+
+# The path builtins are string operations and touch no filesystem, so every
+# answer here is fixed text and a divergence is unambiguous. The awkward
+# arguments are the point: a trailing separator, a dotted segment, a name with
+# two dots in it, a leading dot, and the empty string, which is where the two
+# implementations would part company if one of them delegated and the other
+# reimplemented.
+fn show(label: Str, value: Str) {
+  write_out(label)
+  write_out(" = ")
+  write_out(str_quote(value))
+  write_out("\n")
+}
+
+fn main() {
+  show("join", path_join("a", "b", "c"))
+  show("join empty middle", path_join("a", "", "c"))
+  show("join nothing", path_join())
+  show("join trailing", path_join("a/", "b"))
+  show("join dotdot", path_join("a", "..", "b"))
+  show("join absolute", path_join("/a", "b"))
+
+  show("base", path_base("a/b/c.txt"))
+  show("base trailing", path_base("a/b/"))
+  show("base bare", path_base("c.txt"))
+  show("base root", path_base("/"))
+
+  show("dir", path_dir("a/b/c.txt"))
+  show("dir bare", path_dir("c.txt"))
+  show("dir root", path_dir("/c.txt"))
+
+  show("ext", path_ext("a/b/c.tar.gz"))
+  show("ext none", path_ext("a/b/c"))
+  show("ext dotfile", path_ext("a/.hidden"))
+
+  show("stem", path_stem("a/b/c.tar.gz"))
+  show("stem none", path_stem("a/b/c"))
+  show("stem dotfile", path_stem("a/.hidden"))
+
+  show("normalize", path_normalize("a/./b/../c"))
+  show("normalize empty", path_normalize(""))
+  show("normalize backslash", path_normalize("a\\b"))
+
+  write_out("is_abs relative = ")
+  write_out(str(path_is_abs("a/b")))
+  write_out("\nis_abs absolute = ")
+  write_out(str(path_is_abs("/a/b")))
+  write_out("\n")
+
+  # resolve_path's two-argument form resolves against a named file's directory
+  # and leaves an absolute path alone. Both answers are fixed text; the
+  # one-argument form is not, because it names the directory the case is
+  # running in, so it is checked in fs.tw against a path it can predict.
+  show("resolve against a file", resolve_path("/one/two/three.tw", "beside.txt"))
+  show("resolve an absolute", resolve_path("/one/two/three.tw", "/elsewhere.txt"))
+}

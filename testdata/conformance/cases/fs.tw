@@ -1,0 +1,149 @@
+mode systems
+
+# A whole filesystem round trip inside a directory this case makes and removes.
+# Nothing here prints a path: the temporary directory's name is different on
+# every run, so what is printed is what is true of it.
+#
+# The one path that is printed is a resolved relative one, and it is printed
+# relative to the case's own directory rather than absolutely. That is the
+# assertion the whole PROGRAM_BASE mechanism exists for: a relative path in a
+# program means the same file whichever implementation is running it.
+
+fn say(label: Str, value: Str) {
+  write_out(label)
+  write_out(" = ")
+  write_out(value)
+  write_out("\n")
+}
+
+fn yes(label: Str, value: Bool) {
+  say(label, str(value))
+}
+
+fn main() {
+  let dir: Str = ""
+  match temp_dir("twillcase") {
+    Ok(d) => dir = d,
+    Err(m) => {
+      say("temp_dir failed", m)
+      return unit
+    },
+  }
+  yes("the temporary directory is a directory", path_is_dir(dir))
+  yes("and it exists", path_exists(dir))
+
+  let nested: Str = path_join(dir, "one/two")
+  match mkdir_all(nested) {
+    Ok(_) => yes("mkdir_all made a nested directory", path_is_dir(nested)),
+    Err(m) => say("mkdir_all failed", m),
+  }
+
+  let f: Str = path_join(nested, "note.txt")
+  match write_file(f, "hello\nworld\n") {
+    Ok(_) => unit,
+    Err(m) => say("write_file failed", m),
+  }
+  yes("the file exists", path_exists(f))
+  yes("but it is not a directory", path_is_dir(f))
+  say("its size", str(file_size(f)))
+  yes("its mtime is after the epoch", mtime(f) > 0)
+
+  match read_file(f) {
+    Ok(s) => say("read back", str_quote(s)),
+    Err(m) => say("read_file failed", m),
+  }
+  match read_file_at(f, 6, 5) {
+    Ok(s) => say("read from an offset", str_quote(s)),
+    Err(m) => say("read_file_at failed", m),
+  }
+  # A short read past the end is not a failure: it is what the end of the file
+  # looks like to a reader that will ask again.
+  match read_file_at(f, 11, 100) {
+    Ok(s) => say("read past the end", str_quote(s)),
+    Err(m) => say("read_file_at failed", m),
+  }
+
+  say("read_text_or on a missing file", read_text_or(path_join(dir, "absent"), "fallback"))
+  yes("write_text_or into a directory that is not there",
+    write_text_or(path_join(dir, "no/such/dir/f"), "x"))
+  yes("write_text_or where the directory is there", write_text_or(path_join(nested, "b.txt"), "x"))
+
+  match list_dir(nested) {
+    Ok(names) => {
+      say("entries after two writes", str(len(names)))
+      for n in names {
+        say("  entry", n)
+      }
+    },
+    Err(m) => say("list_dir failed", m),
+  }
+
+  let moved: Str = path_join(nested, "renamed.txt")
+  match rename(f, moved) {
+    Ok(_) => unit,
+    Err(m) => say("rename failed", m),
+  }
+  yes("the old name is gone", path_exists(f))
+  yes("the new name is there", path_exists(moved))
+
+  # save_value writes a value as its printed form and load_value reads the text
+  # back. They are two of the three builtins that take the path unresolved,
+  # because the Go bodies do, so a relative path would mean the process's
+  # directory to them and the program's directory to every other call in this
+  # file. The path handed over is absolute, and it is inside the temporary tree
+  # so that the cleanup below takes it with everything else.
+  let saved: Str = path_join(nested, "saved.txt")
+  let numbers: Arr[I64] = arr_new()
+  push(numbers, 1)
+  push(numbers, 2)
+  match save_value(numbers, saved) {
+    Ok(_) => unit,
+    Err(m) => say("save_value failed", m),
+  }
+  match load_value(saved) {
+    Ok(text) => say("save_value wrote", str_quote(text)),
+    Err(m) => say("load_value failed", m),
+  }
+  match load_value(path_join(nested, "no-such-file.txt")) {
+    Ok(_) => say("load_value on a missing file", "succeeded"),
+    Err(_) => say("load_value on a missing file", "failed"),
+  }
+
+  # remove_file refuses a directory and remove_dir refuses a file, because the
+  # recursive one is the dangerous one and a caller should have to name it.
+  match remove_file(nested) {
+    Ok(_) => say("remove_file on a directory", "succeeded"),
+    Err(_) => say("remove_file on a directory", "refused"),
+  }
+  match remove_dir(moved) {
+    Ok(_) => say("remove_dir on a file", "succeeded"),
+    Err(_) => say("remove_dir on a file", "refused"),
+  }
+  match remove_file(moved) {
+    Ok(_) => yes("remove_file removed the file", not path_exists(moved)),
+    Err(m) => say("remove_file failed", m),
+  }
+  # remove_all succeeds on a path that is not there, which is what separates it
+  # from the two above.
+  match remove_all(path_join(dir, "never-existed")) {
+    Ok(_) => say("remove_all on a missing path", "succeeded"),
+    Err(_) => say("remove_all on a missing path", "failed"),
+  }
+  match remove_dir(dir) {
+    Ok(_) => yes("remove_dir cleaned up", not path_exists(dir)),
+    Err(m) => say("remove_dir failed", m),
+  }
+
+  # A relative path resolves to an absolute one ending in the name it was
+  # given. Which directory it lands in cannot be asserted here, because a case
+  # is staged into the same directory as src/*.tw and both answers would be
+  # that directory; the fixture that tells the two apart is
+  # internal/interp/testdata/selfhost/path_base_dir.tw, where they differ.
+  let here: Str = resolve_path("beside.txt")
+  yes("a resolved relative path is absolute", path_is_abs(here))
+  say("and its base name is", path_base(here))
+  match cwd() {
+    Ok(d) => yes("cwd is absolute", path_is_abs(d)),
+    Err(m) => say("cwd failed", m),
+  }
+}

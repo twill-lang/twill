@@ -1,0 +1,36 @@
+mode systems
+
+# module_source resolves an import path to its text. It is the one primitive
+# the self-hosted evaluator's own exec_import needs, and it has two rules that
+# differ: a "std/" path names an embedded standard-library module, and anything
+# else is a file beside the program.
+#
+# The relative case reads this file, which is the only file a case can be sure
+# is next to it, and the answer is checked as a property rather than printed:
+# the source is what it is, and printing it would make this case a copy of
+# itself.
+fn say(label: Str, value: Str) {
+  write_out(label)
+  write_out(" = ")
+  write_out(value)
+  write_out("\n")
+}
+
+fn main() {
+  match module_source("std/text") {
+    Some(src) => say("std/text is longer than a line", str(len(src) > 80)),
+    None => say("std/text", "could not be read"),
+  }
+  match module_source("module.tw") {
+    Some(src) => say("this file starts with a mode line", str(slice(src, 0, 12))),
+    None => say("this file", "could not be read"),
+  }
+  match module_source("std/there-is-no-such-module") {
+    Some(_) => say("a std module that is not there", "was read"),
+    None => say("a std module that is not there", "None"),
+  }
+  match module_source("no-such-file-beside-this-one.tw") {
+    Some(_) => say("a file that is not there", "was read"),
+    None => say("a file that is not there", "None"),
+  }
+}

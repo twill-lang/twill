@@ -1,0 +1,11 @@
+mode systems
+
+# abort stops the program with the value as the message, formatted the way
+# print formats it, which is why the payload here is a list rather than a
+# string: a string would not tell the two formatters apart.
+fn main() {
+  let xs: Arr[I64] = arr_new()
+  push(xs, 3)
+  push(xs, 1)
+  abort(xs)
+}

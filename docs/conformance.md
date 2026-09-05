@@ -23,12 +23,17 @@ name here is available to `src/*.tw` while the Go bootstrap is executing it, so
 
 ## Checking a row by hand
 
-Both sides of a row are one command. The path has to be absolute on the
-self-hosted side: the self-hosted CLI resolves a relative path against the
-directory of the twill file that is reading it, which is `src/`, while the Go
-bootstrap resolves it against the working directory. A relative path there
-does not disagree with this table, it fails to find the file, and every row
-checked that way comes back inconclusive.
+Both sides of a row are one command. The path of the probe file has to be
+absolute on the self-hosted side: the CLI in `src/main.tw` reads the file it
+was pointed at, and a twill file's relative path is resolved against its own
+directory, which for that CLI is `src/`. A relative path there does not
+disagree with this table, it fails to find the probe, and every row checked
+that way comes back inconclusive.
+
+A relative path *inside* the probe is a different question and no longer
+has that answer: the self-hosted evaluator is told which file it is running
+and resolves the program's paths against the program's directory, which is
+the directory the bootstrap would have used.
 
 ```bash
 echo 'read_file(0)' > /tmp/probe.tw
@@ -48,8 +53,8 @@ guessed at.
 |---|---|
 | names in the shared table | 255 |
 | implemented by the Go bootstrap | 255 |
-| implemented by the self-hosted evaluator | 155 |
-| **missing from the self-hosted evaluator** | **99** |
+| implemented by the self-hosted evaluator | 195 |
+| **missing from the self-hosted evaluator** | **59** |
 | missing from the Go bootstrap | 0 |
 | inconclusive (see below) | 1 |
 
@@ -60,31 +65,21 @@ answer. They are listed here so that "the two implementations agree" can be
 read as the bounded claim it is.
 
 ```
-abort                   all_finite              args                    clock_now_ms
-cwd                     emit_line               env                     exit
-f64_bits                f64_bits_hi             f64_bits_lo             f64_ceil
-f64_cos                 f64_exp                 f64_expm1               f64_floor
-f64_from_bits           f64_from_halves         f64_log                 f64_log1p
-f64_mod                 f64_of_i64              f64_pow                 f64_round
-f64_signbit             f64_sin                 f64_sqrt                f64_tanh
-f64_trunc               file_size               gbm_describe            gpu_alloc
+all_finite              f64_bits                f64_bits_hi             f64_bits_lo
+f64_ceil                f64_cos                 f64_exp                 f64_expm1
+f64_floor               f64_from_bits           f64_from_halves         f64_log
+f64_log1p               f64_mod                 f64_of_i64              f64_pow
+f64_round               f64_signbit             f64_sin                 f64_sqrt
+f64_tanh                f64_trunc               gbm_describe            gpu_alloc
 gpu_available           gpu_copy                gpu_device_close        gpu_device_count
 gpu_device_info         gpu_device_info_i64     gpu_device_open         gpu_finish
 gpu_free                gpu_kernel              gpu_launch              gpu_program_build
 gpu_read                gpu_set_arg_buffer      gpu_set_arg_f64         gpu_set_arg_i64
 gpu_set_arg_local       gpu_write               i64_of_f64              is_same
-is_tty_stdout           list_dir                load_value              mem_allocs
-mem_bytes               mem_counters_available  mem_live_bytes          mem_tensors
-mkdir_all               module_source           mono_ns                 mtime
-path_base               path_dir                path_exists             path_ext
-path_is_abs             path_is_dir             path_join               path_normalize
-path_stem               quantize                read_file               read_file_at
-read_text_or            remove_all              remove_dir              remove_file
-rename                  resolve_path            rng_close               rng_f64
+mem_allocs              mem_bytes               mem_counters_available  mem_live_bytes
+mem_tensors             quantize                rng_close               rng_f64
 rng_norm                rng_normal              rng_open                rng_perm
-rng_seed                rng_u53                 rng_uniform             run
-save_value              temp_dir                window_size             write_err
-write_file              write_out               write_text_or
+rng_seed                rng_u53                 rng_uniform
 ```
 
 ## Inconclusive
@@ -97,7 +92,7 @@ implementation is broken. The evidence column says what came back.
 
 | builtin | bootstrap | self-hosted | evidence |
 |---|---|---|---|
-| `clip` | yes | unknown | main.tw:2627: runtime error: no match arm for {shape: [], data: \x00\x00\x00\x00\x00\x00\x00\x00, dtype: 6} |
+| `clip` | yes | unknown | main.tw:2634: runtime error: no match arm for {shape: [], data: \x00\x00\x00\x00\x00\x00\x00\x00, dtype: 6} |
 
 ## Every name
 
@@ -107,7 +102,7 @@ implementation is broken. The evidence column says what came back.
 | `None` | yes | yes |
 | `Ok` | yes | yes |
 | `Some` | yes | yes |
-| `abort` | yes | no |
+| `abort` | yes | yes |
 | `abs` | yes | yes |
 | `all_finite` | yes | no |
 | `and` | yes | yes |
@@ -115,7 +110,7 @@ implementation is broken. The evidence column says what came back.
 | `arange` | yes | yes |
 | `argmax` | yes | yes |
 | `argmin` | yes | yes |
-| `args` | yes | no |
+| `args` | yes | yes |
 | `argsort` | yes | yes |
 | `argtopk` | yes | yes |
 | `arr` | yes | yes |
@@ -138,7 +133,7 @@ implementation is broken. The evidence column says what came back.
 | `ceil` | yes | yes |
 | `chr` | yes | yes |
 | `clip` | yes | unknown |
-| `clock_now_ms` | yes | no |
+| `clock_now_ms` | yes | yes |
 | `columns` | yes | yes |
 | `concat` | yes | yes |
 | `conv2d` | yes | yes |
@@ -147,7 +142,7 @@ implementation is broken. The evidence column says what came back.
 | `cummin` | yes | yes |
 | `cumprod` | yes | yes |
 | `cumsum` | yes | yes |
-| `cwd` | yes | no |
+| `cwd` | yes | yes |
 | `dict_del` | yes | yes |
 | `dict_get` | yes | yes |
 | `dict_has` | yes | yes |
@@ -160,11 +155,11 @@ implementation is broken. The evidence column says what came back.
 | `dot` | yes | yes |
 | `dtype` | yes | yes |
 | `einsum` | yes | yes |
-| `emit_line` | yes | no |
+| `emit_line` | yes | yes |
 | `enumerate` | yes | yes |
-| `env` | yes | no |
+| `env` | yes | yes |
 | `equal` | yes | yes |
-| `exit` | yes | no |
+| `exit` | yes | yes |
 | `exp` | yes | yes |
 | `expm1` | yes | yes |
 | `eye` | yes | yes |
@@ -193,7 +188,7 @@ implementation is broken. The evidence column says what came back.
 | `f64_to_str` | yes | yes |
 | `f64_trunc` | yes | no |
 | `field` | yes | yes |
-| `file_size` | yes | no |
+| `file_size` | yes | yes |
 | `fill` | yes | yes |
 | `flip` | yes | yes |
 | `floor` | yes | yes |
@@ -232,7 +227,7 @@ implementation is broken. The evidence column says what came back.
 | `i64_of_str` | yes | yes |
 | `int` | yes | yes |
 | `is_same` | yes | no |
-| `is_tty_stdout` | yes | no |
+| `is_tty_stdout` | yes | yes |
 | `item` | yes | yes |
 | `jacobian` | yes | yes |
 | `jvp` | yes | yes |
@@ -242,9 +237,9 @@ implementation is broken. The evidence column says what came back.
 | `linear` | yes | yes |
 | `linspace` | yes | yes |
 | `list` | yes | yes |
-| `list_dir` | yes | no |
+| `list_dir` | yes | yes |
 | `load` | yes | yes |
-| `load_value` | yes | no |
+| `load_value` | yes | yes |
 | `log` | yes | yes |
 | `log1p` | yes | yes |
 | `logsumexp` | yes | yes |
@@ -263,24 +258,24 @@ implementation is broken. The evidence column says what came back.
 | `mem_tensors` | yes | no |
 | `min` | yes | yes |
 | `minimum` | yes | yes |
-| `mkdir_all` | yes | no |
-| `module_source` | yes | no |
-| `mono_ns` | yes | no |
-| `mtime` | yes | no |
+| `mkdir_all` | yes | yes |
+| `module_source` | yes | yes |
+| `mono_ns` | yes | yes |
+| `mtime` | yes | yes |
 | `nbytes` | yes | yes |
 | `num_to_text` | yes | yes |
 | `numel` | yes | yes |
 | `ones` | yes | yes |
 | `or` | yes | yes |
-| `path_base` | yes | no |
-| `path_dir` | yes | no |
-| `path_exists` | yes | no |
-| `path_ext` | yes | no |
-| `path_is_abs` | yes | no |
-| `path_is_dir` | yes | no |
-| `path_join` | yes | no |
-| `path_normalize` | yes | no |
-| `path_stem` | yes | no |
+| `path_base` | yes | yes |
+| `path_dir` | yes | yes |
+| `path_exists` | yes | yes |
+| `path_ext` | yes | yes |
+| `path_is_abs` | yes | yes |
+| `path_is_dir` | yes | yes |
+| `path_join` | yes | yes |
+| `path_normalize` | yes | yes |
+| `path_stem` | yes | yes |
 | `permutation` | yes | yes |
 | `pop` | yes | yes |
 | `pow` | yes | yes |
@@ -292,17 +287,17 @@ implementation is broken. The evidence column says what came back.
 | `randn` | yes | yes |
 | `range` | yes | yes |
 | `read_csv` | yes | yes |
-| `read_file` | yes | no |
-| `read_file_at` | yes | no |
+| `read_file` | yes | yes |
+| `read_file_at` | yes | yes |
 | `read_frame` | yes | yes |
-| `read_text_or` | yes | no |
+| `read_text_or` | yes | yes |
 | `relu` | yes | yes |
-| `remove_all` | yes | no |
-| `remove_dir` | yes | no |
-| `remove_file` | yes | no |
-| `rename` | yes | no |
+| `remove_all` | yes | yes |
+| `remove_dir` | yes | yes |
+| `remove_file` | yes | yes |
+| `rename` | yes | yes |
 | `reshape` | yes | yes |
-| `resolve_path` | yes | no |
+| `resolve_path` | yes | yes |
 | `rng_close` | yes | no |
 | `rng_f64` | yes | no |
 | `rng_norm` | yes | no |
@@ -314,9 +309,9 @@ implementation is broken. The evidence column says what came back.
 | `rng_uniform` | yes | no |
 | `roll` | yes | yes |
 | `round` | yes | yes |
-| `run` | yes | no |
+| `run` | yes | yes |
 | `save` | yes | yes |
-| `save_value` | yes | no |
+| `save_value` | yes | yes |
 | `scalar` | yes | yes |
 | `seed` | yes | yes |
 | `sha256` | yes | yes |
@@ -338,7 +333,7 @@ implementation is broken. The evidence column says what came back.
 | `str_to_f64` | yes | yes |
 | `sum` | yes | yes |
 | `tanh` | yes | yes |
-| `temp_dir` | yes | no |
+| `temp_dir` | yes | yes |
 | `tensor` | yes | yes |
 | `topk` | yes | yes |
 | `transpose` | yes | yes |
@@ -347,13 +342,13 @@ implementation is broken. The evidence column says what came back.
 | `value_and_grad` | yes | yes |
 | `vjp` | yes | yes |
 | `where` | yes | yes |
-| `window_size` | yes | no |
+| `window_size` | yes | yes |
 | `with_field` | yes | yes |
-| `write_err` | yes | no |
-| `write_file` | yes | no |
+| `write_err` | yes | yes |
+| `write_file` | yes | yes |
 | `write_frame` | yes | yes |
-| `write_out` | yes | no |
-| `write_text_or` | yes | no |
+| `write_out` | yes | yes |
+| `write_text_or` | yes | yes |
 | `xor` | yes | yes |
 | `zeros` | yes | yes |
 | `zip` | yes | yes |
