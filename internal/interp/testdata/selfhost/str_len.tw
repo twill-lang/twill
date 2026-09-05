@@ -1,0 +1,13 @@
+mode systems
+
+# docs/BUGS.md open divergence 2: `len` on a Str. The bootstrap answers the
+# byte length, which is what docs/language-guide.md documents and what
+# src/lex.tw relies on when the bootstrap runs it; the self-hosted evaluator
+# refused with "len expects a tensor or list".
+fn main() {
+  let s: Str = "abc"
+  print(str(len(s)))
+  print(str(len("")))
+  # A byte length, not a rune count: "é" is two bytes.
+  print(str(len("é")))
+}

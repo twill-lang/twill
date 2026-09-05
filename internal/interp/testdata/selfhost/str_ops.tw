@@ -1,0 +1,16 @@
+mode systems
+
+# The string primitives. Indices are byte offsets everywhere, which is how the
+# self-hosted lexer walks a source file.
+fn main() {
+  print(chr(65))
+  print(chr(10) == "\n")
+  print(slice("hello", 1, 3))
+  # slice clamps rather than failing, so an out-of-range bound gives the empty
+  # overlap and a windowing loop needs no min().
+  print(slice("hello", 3, 99))
+  print(slice("hello", 4, 2))
+  print(slice("hello", 0 - 3, 2))
+  print(str_quote("a\"b\n"))
+  print(str_quote(""))
+}

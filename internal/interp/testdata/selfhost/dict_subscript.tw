@@ -1,0 +1,15 @@
+mode systems
+
+# A dictionary is subscripted by its key: `d[k]` is the form that says the key
+# is expected to be there, where dict_get returns an Opt for the caller who
+# wants to ask.
+fn main() {
+  let d: Dict[Str, I64] = dict_new()
+  d["one"] = 1
+  d["two"] = 2
+  d["one"] = 11
+  print(str(d["one"]))
+  print(str(d["two"]))
+  print(str(d))
+  print(str(len(d)))
+}

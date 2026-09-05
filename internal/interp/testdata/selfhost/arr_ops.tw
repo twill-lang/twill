@@ -1,0 +1,26 @@
+mode systems
+
+# The Arr family: the growable list the systems dialect is written in.
+fn main() {
+  let a: Arr[I64] = arr_new()
+  push(a, 1)
+  push(a, 2)
+  print(str(a))
+  # arr_push hands the list back so it reads as an expression; push returns unit.
+  print(str(arr_push(a, 3)))
+  print(str(pop(a)))
+  print(str(a))
+  print(str(len(a)))
+  arr_clear(a)
+  print(str(a))
+  print(str(len(a)))
+  # arr is a list literal as a call, and a fresh list every time, so two
+  # callers never share backing storage.
+  let b: Arr[I64] = arr(1, 2, 3)
+  print(str(b))
+  print(str(len(arr())))
+  # A list is a handle: the append is seen through every binding that shares it.
+  let alias: Arr[I64] = b
+  push(alias, 4)
+  print(str(b))
+}

@@ -1,0 +1,15 @@
+mode systems
+
+# A buf is a fixed-size byte buffer, the packed storage a narrow-dtype tensor
+# keeps. It is the same value as a Bytes, allocated to length up front.
+fn main() {
+  let b: Bytes = buf_new(3)
+  print(str(buf_len(b)))
+  print(str(buf_get8(b, 0)))
+  buf_set8(b, 1, 200)
+  print(str(buf_get8(b, 1)))
+  # A value wider than a byte is truncated to one, as the store does.
+  buf_set8(b, 2, 258)
+  print(str(buf_get8(b, 2)))
+  print(str(len(b)))
+}

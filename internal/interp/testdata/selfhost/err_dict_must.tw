@@ -1,0 +1,6 @@
+mode systems
+
+fn main() {
+  let d: Dict[Str, I64] = dict_new()
+  print(str(dict_must(d, "z")))
+}
