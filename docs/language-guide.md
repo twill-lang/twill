@@ -946,6 +946,93 @@ fn predict(m: Model, x: [2]) -> [3] {
 Accessing a field a record doesn't have (`m.wieght`) is a checker error, whether
 the record is a literal or a declared type.
 
+## Tuples
+
+A tuple is a fixed-arity positional group, written with a comma inside
+parentheses. It is what a function returns when it has two things to say and
+neither of them wants a name.
+
+```rust
+fn span(xs: Arr[F64]) -> (F64, F64) {
+  let lo: F64 = xs[0]
+  let hi: F64 = xs[0]
+  for x in xs {
+    if x < lo { lo = x }
+    if x > hi { hi = x }
+  }
+  (lo, hi)
+}
+
+let (lo, hi) = span([3.0, 1.0, 4.0])   # lo is 1, hi is 4
+```
+
+**The comma is what decides.** `(x)` is `x` in parentheses and has always been
+grouping; `(x, y)` is a tuple. A one-element tuple is refused rather than
+invented, because `(x,)` is a language explaining a trailing comma:
+
+```rust
+let a = (1.0 + 2.0) * 3.0   # 9: grouping, as it always was
+let b = (1.0,)              # syntax error
+```
+
+A tuple holds between two and eight values. Past eight the positions stop being
+readable and what was wanted is a `struct`, whose fields have names, so the
+parser says that instead of allowing it.
+
+**A tuple is destructured or passed on whole.** There is deliberately no `.0`
+and no named tuple type. A value that wants to be stored and read by name stays
+a `struct`; a tuple that grew accessors would be a second, worse record, and the
+reason this feature exists (docs/roadmap.md entry 1) is that a struct declared
+for one call site costs a type name, not that structs are the wrong shape.
+
+```rust
+let t = (1.0, 2.0)
+t.first        # error: cannot read field "first" of (a scalar, a scalar)
+print(t)       # (1, 2)
+print(span([1.0, 2.0]))   # a tuple may be printed or passed on whole
+```
+
+**A destructuring `let` says how many values it wants**, and both the checker
+and the runtime hold the value to that:
+
+```rust
+let (a, b, c) = span([1.0, 2.0])
+# this let binds 3 names, but the value is (F64, F64), which has 2
+```
+
+`_` takes a position without binding it, the way it does in a pattern:
+
+```rust
+let (a, _, c) = (10.0, 20.0, 30.0)   # a is 10, c is 30
+```
+
+The binding form is `let` only. `const` binds one name, and the rule that a
+`const` name is bound once in its scope is checked over single names, so
+`const (a, b) = ...` is refused rather than have that rule half kept.
+
+**Tuple types are types.** `(F64, F64)` may be written wherever an annotation
+may appear -- a return, a parameter, a binding, a struct field, a type argument
+-- and they nest:
+
+```rust
+struct Pair[T] { span: (T, T) }
+
+fn take(p: (I64, Str), q: fn(I64) -> (I64, I64)) -> (I64, I64) = q(1)
+
+let xs: Arr[(I64, Str)] = arr_new()
+let p: Pair[I64] = Pair { span: (1, 2) }
+```
+
+Arity and order are part of a tuple type's identity: a 2-tuple is not a 3-tuple,
+and `(I64, Str)` is not `(Str, I64)`. Equality is structural and starts with
+arity, so `(1, 2) == (1, 2)` is true, `(1, 2) == (1, 2, 3)` is false, and a
+tuple is never equal to a list holding the same values.
+
+**A tuple is not a parameter tree.** `grad`, `map_leaves` and `zip_leaves` walk
+a list, a record and a variant payload; a tuple is an opaque leaf to all three,
+and `save` refuses one. A model's parameters go in a record, which is what
+`grad` was built to follow.
+
 ## `struct`, and what a parameter is
 
 `struct` is a systems-mode type, declared by name, with typed fields that are

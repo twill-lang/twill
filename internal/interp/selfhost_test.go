@@ -1242,3 +1242,117 @@ let HEX: I64 = 2
 		t.Errorf("the two checkers disagree.\n  go:   %s\n  self: %s", diags[0].Msg, out)
 	}
 }
+
+// --- tuples ----------------------------------------------------------------
+
+// Tuple returns and destructuring `let` (docs/roadmap.md entry 1) touch the
+// parser, the checker, the evaluator and the formatter on both sides. The
+// harness below is the reason they cannot drift: the exit code says the two
+// checkers reached the same verdict, and the captured diagnostic says they
+// reached it for the same stated reason, which is the half an exit code cannot
+// see. `(F64, F64, F64)` against `(F64, F64)` and `(F64, F64)` against a
+// three-name binding are different sentences, and both are written twice.
+func TestSelfHostedCheckTuples(t *testing.T) {
+	bad := map[string]string{
+		"mode systems\nfn f() -> (F64, F64) = (1.0, 2.0, 3.0)\n":                                            "returns (F64, F64, F64) but its signature declares (F64, F64)",
+		"mode systems\nfn f() -> (I64, Str) = (1, 2)\n":                                                     "but its signature declares (I64, Str)",
+		"mode systems\nfn f() -> (F64, F64) = (1.0, 2.0)\nlet (a, b, c) = f()\n":                            "this let binds 3 names, but the value is (F64, F64), which has 2",
+		"mode systems\nlet (a, b) = 5\n":                                                                    "this let destructures a tuple of 2 values, but the value is F64",
+		"mode systems\nlet t: (I64, Str) = (1, 2)\n":                                                        `"t" is declared (I64, Str) but the value is (F64, F64)`,
+		"mode systems\nlet t: (I64, I64) = (1, 2)\nlet u = t + 1\n":                                         "numbers/tensors",
+		"mode systems\nlet t: (I64, I64) = (1, 2)\nlet b = t < 1\n":                                         "cannot order (I64, I64)",
+		"let t = (1.0, 2.0)\nlet y = t.first\n":                                                             "cannot read field",
+		"mode systems\nstruct Pair[T] { span: (T, T) }\nlet p: Pair[I64] = Pair { span: (\"a\", \"b\") }\n": `"p" is declared Pair[I64] but the value is Pair[Str]`,
+	}
+	for src, want := range bad {
+		code, out := runSelfHostedCheckOut(t, src)
+		if code != 1 {
+			t.Errorf("self-hosted check of %q exited %d, want 1", src, code)
+		}
+		if !strings.Contains(out, want) {
+			t.Errorf("self-hosted check of %q said %q, want it to contain %q", src, out, want)
+		}
+	}
+	good := []string{
+		"mode systems\nfn f() -> (I64, Str) = (1, \"a\")\nlet (n, s) = f()\nlet ok: Str = s\n",
+		"mode systems\nlet t: (I64, Str) = (1, \"a\")\n",
+		"mode systems\nfn take(p: (I64, Str), q: fn(I64) -> (I64, I64)) -> (I64, I64) = q(1)\n",
+		"mode systems\nstruct Pair[T] { span: (T, T) }\nlet p: Pair[I64] = Pair { span: (1, 2) }\n",
+		"mode systems\nlet xs: Arr[(I64, Str)] = arr_new()\n",
+		"let (a, _, c) = (1.0, 2.0, 3.0)\nprint(a + c)\n",
+	}
+	for _, src := range good {
+		if code := runSelfHostedCheck(t, src); code != 0 {
+			t.Errorf("self-hosted check of %q exited %d, want 0", src, code)
+		}
+	}
+}
+
+// The three refusals the tuple syntax makes are parser errors, so they are the
+// same bytes on both sides or the differential harness is comparing two
+// different languages. A one-element tuple is refused rather than invented; a
+// ninth element is refused rather than allowed to become an unreadable
+// positional record; and `const` does not destructure.
+func TestSelfHostedTupleSyntaxRefusals(t *testing.T) {
+	cases := map[string]string{
+		"let x = (1.0,)\n":       "a tuple holds at least two values",
+		"let (a) = (1.0, 2.0)\n": "a tuple holds at least two values",
+		"let x = (1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0)\n": "a tuple holds at most 8 values",
+		"const (a, b) = (1.0, 2.0)\n":                             "written with let, not const",
+		"let (a, 3) = (1.0, 2.0)\n":                               "expected a name in a destructuring let",
+		"mode systems\nfn f() -> (F64,) = 1.0\n":                  "a tuple holds at least two values",
+	}
+	for src, want := range cases {
+		code, out := runSelfHostedCheckOut(t, src)
+		if code != 1 {
+			t.Errorf("self-hosted check of %q exited %d, want 1", src, code)
+		}
+		if !strings.Contains(out, want) {
+			t.Errorf("self-hosted check of %q said %q, want it to contain %q", src, out, want)
+		}
+	}
+}
+
+// The evaluator half. A tuple prints as `(1, 2)` and compares structurally, and
+// a destructuring binding that does not fit says so in the same words -- the
+// bootstrap and src/eval.tw are compared byte for byte here.
+func TestSelfHostedTupleEvaluationMatches(t *testing.T) {
+	for _, src := range []string{
+		"print((1.0, 2.0))",
+		`print((1.0, "two", true))`,
+		"print(((1.0, 2.0), (3.0, 4.0)))",
+		"fn span(xs) = (xs[0], xs[2])\nlet (lo, hi) = span([1.0, 2.0, 5.0])\nprint(hi - lo)",
+		"let (a, _, c) = (1.0, 99.0, 2.0)\nprint(a + c)",
+		"print((1.0, 2.0) == (1.0, 2.0))",
+		"print((1.0, 2.0) == (1.0, 3.0))",
+		"print((1.0, 2.0) == (1.0, 2.0, 3.0))",
+		`print((1.0, 2.0) == ["a", "b"])`,
+		"let (a, b, c, d, e, f, g, h) = (1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0)\nprint(h)",
+	} {
+		goOut, selfOut := runBothWays(t, src+"\n")
+		if goOut != selfOut {
+			t.Fatalf("tuple output diverged for %q:\n  go:   %q\n  self: %q", src, goOut, selfOut)
+		}
+	}
+}
+
+// A type argument is a full type under both front ends. `Arr[fn(I64) -> I64]`
+// was a syntax error to the Go parser and clean to src/parse.tw before this
+// change: parseTypeArgs read a type reference where parse_type_args read a type
+// expression. That is a parser divergence older than tuples, and putting a
+// tuple into type-argument position is what found it.
+func TestSelfHostedTypeArgumentIsAFullType(t *testing.T) {
+	for _, src := range []string{
+		"mode systems\nlet f: Arr[fn(I64) -> I64] = arr_new()\n",
+		"mode systems\nlet xs: Arr[(I64, Str)] = arr_new()\n",
+		"mode systems\nlet d: Dict[Str, (I64, I64)] = {}\n",
+	} {
+		if code := runSelfHostedCheck(t, src); code != 0 {
+			t.Errorf("self-hosted check of %q exited %d, want 0", src, code)
+		}
+		ip := interp.New(func(string) {})
+		if _, err := ip.Run(src); err != nil {
+			t.Errorf("the bootstrap refused %q: %v", src, err)
+		}
+	}
+}

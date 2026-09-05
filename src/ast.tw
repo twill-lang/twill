@@ -128,6 +128,16 @@ struct Ident { id: I64, name: Str, line: I64 }
 struct TensorLit { id: I64, elements: Arr[Expr], line: I64 }
 struct ListLit { id: I64, elements: Arr[Expr], line: I64 }
 
+# TupleLit is a fixed-arity positional group written `(a, b)`. The comma is what
+# makes it one: `(x)` is x in parentheses and stays grouping, and `(x,)` is
+# refused by the parser rather than read as a one-element tuple.
+#
+# A tuple is destructured or passed on whole. There is deliberately no `.0` and
+# no named tuple type: a value that wants to be stored and read by name stays a
+# struct, which is what keeps this from becoming a second, worse record. See
+# docs/roadmap.md entry 1.
+struct TupleLit { id: I64, elements: Arr[Expr], line: I64 }
+
 struct Lambda {
   id: I64,
   params: Arr[Param],
@@ -268,6 +278,7 @@ enum Expr {
   EIdent(Ident),
   ETensor(TensorLit),
   EList(ListLit),
+  ETuple(TupleLit),
   ELambda(Lambda),
   EUnary(Unary),
   EBinary(Binary),
@@ -297,6 +308,22 @@ struct Let {
   # table needs, since a plain import makes that binding shared with every file
   # that imports it. See docs/roadmap.md entry 28.
   is_const: Bool,
+  line: I64,
+}
+
+# LetTuple is destructuring: `let (lo, hi) = span(xs)`. It is a separate
+# statement from Let rather than a field on it, so that every consumer of the
+# tree has to say what it does with one instead of quietly binding nothing.
+#
+# names has at least two entries, and `_` is written for a position the program
+# does not want; those bind nothing. There is no `const` form: a const name may
+# not be bound a second time in its scope, and that rule is checked by walking a
+# block's statements for the name's other bindings, so `const (a, b) = ...` is
+# refused at the parser rather than have the rule half kept.
+struct LetTuple {
+  id: I64,
+  names: Arr[Str],
+  value: Expr,
   line: I64,
 }
 
@@ -368,6 +395,7 @@ struct ExprStmt { id: I64, x: Expr, line: I64 }
 
 enum Stmt {
   SLet(Let),
+  SLetTuple(LetTuple),
   SFn(FnDecl),
   SAssign(Assign),
   SWhile(While),
@@ -407,6 +435,7 @@ fn expr_line(e: Expr) -> I64 {
     EIdent(x) => x.line,
     ETensor(x) => x.line,
     EList(x) => x.line,
+    ETuple(x) => x.line,
     ELambda(x) => x.line,
     EUnary(x) => x.line,
     EBinary(x) => x.line,
@@ -430,6 +459,7 @@ fn expr_id(e: Expr) -> I64 {
     EIdent(x) => x.id,
     ETensor(x) => x.id,
     EList(x) => x.id,
+    ETuple(x) => x.id,
     ELambda(x) => x.id,
     EUnary(x) => x.id,
     EBinary(x) => x.id,
@@ -448,6 +478,7 @@ fn expr_id(e: Expr) -> I64 {
 fn stmt_line(s: Stmt) -> I64 {
   match s {
     SLet(x) => x.line,
+    SLetTuple(x) => x.line,
     SFn(x) => x.line,
     SAssign(x) => x.line,
     SWhile(x) => x.line,
@@ -490,6 +521,7 @@ fn fn_end_line(x: FnDecl) -> I64 {
 fn stmt_id(s: Stmt) -> I64 {
   match s {
     SLet(x) => x.id,
+    SLetTuple(x) => x.id,
     SFn(x) => x.id,
     SAssign(x) => x.id,
     SWhile(x) => x.id,
@@ -532,6 +564,9 @@ fn tensor_lit(ids: NodeIds, elements: Arr[Expr], line: I64) -> Expr =
 fn list_lit(ids: NodeIds, elements: Arr[Expr], line: I64) -> Expr =
   EList(ListLit { id: fresh(ids), elements: elements, line: line })
 
+fn tuple_lit(ids: NodeIds, elements: Arr[Expr], line: I64) -> Expr =
+  ETuple(TupleLit { id: fresh(ids), elements: elements, line: line })
+
 fn lambda(ids: NodeIds, params: Arr[Param], ret: Opt[ShapeAnno], ret_unit: Opt[UnitAnno],
           ret_type: Str, body: Expr, line: I64) -> Expr =
   ELambda(Lambda { id: fresh(ids), params: params, ret: ret, ret_unit: ret_unit,
@@ -569,6 +604,9 @@ fn let_stmt(ids: NodeIds, name: Str, unit: Opt[UnitAnno], type_name: Str, value:
             is_const: Bool, line: I64) -> Stmt =
   SLet(Let { id: fresh(ids), name: name, unit: unit, type_name: type_name, value: value,
              is_const: is_const, line: line })
+
+fn let_tuple_stmt(ids: NodeIds, names: Arr[Str], value: Expr, line: I64) -> Stmt =
+  SLetTuple(LetTuple { id: fresh(ids), names: names, value: value, line: line })
 
 fn fn_decl(ids: NodeIds, name: Str, type_params: Arr[Str], params: Arr[Param], ret: Opt[ShapeAnno],
            ret_unit: Opt[UnitAnno], ret_type: Str, body: Expr, line: I64) -> FnDecl =

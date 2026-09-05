@@ -67,6 +67,13 @@ type tFnType struct {
 	ret    Type
 }
 
+// tTuple is `(F64, F64)`: a fixed-arity positional group. Its arity is part of
+// its identity -- a 2-tuple is not a 3-tuple -- and so is the order of its
+// elements, since nothing names them. There is no nominal tuple type and no
+// field access, so this is the whole of what the checker can know about one:
+// how many values, and what each is. See docs/roadmap.md entry 1.
+type tTuple struct{ elems []Type }
+
 func (tInt) isType()    {}
 func (tBytes) isType()  {}
 func (tArr) isType()    {}
@@ -75,6 +82,7 @@ func (tParam) isType()  {}
 func (tEnum) isType()   {}
 func (tCtor) isType()   {}
 func (tFnType) isType() {}
+func (tTuple) isType()  {}
 
 // annoText is an annotation as written, whichever slot the parser stored it
 // in: a qualified or generic name arrives as text and a bare name as a
@@ -165,6 +173,28 @@ func (p *typeParser) parse() Type {
 			ret = p.parse()
 		}
 		return tFnType{params: params, ret: ret}
+	}
+	if p.accept("(") {
+		// A tuple type, `(F64, F64)`. The source parser has already refused a
+		// one-element one, so anything with fewer than two elements arriving
+		// here came from text this checker did not write, and is not a type.
+		var elems []Type
+		for {
+			elems = append(elems, p.parse())
+			if p.accept(",") {
+				continue
+			}
+			if !p.accept(")") {
+				p.err = true
+				return tUnknown{}
+			}
+			break
+		}
+		if len(elems) < 2 {
+			p.err = true
+			return tUnknown{}
+		}
+		return tTuple{elems: elems}
 	}
 	name := p.ident()
 	if name == "" {
@@ -306,6 +336,12 @@ func (c *checker) typeString(t Type) string {
 			return v.name + "[" + strings.Join(parts, ", ") + "]"
 		}
 		return "a record"
+	case tTuple:
+		parts := make([]string, len(v.elems))
+		for i, e := range v.elems {
+			parts[i] = c.typeString(e)
+		}
+		return "(" + strings.Join(parts, ", ") + ")"
 	case tFn, tBuiltin, tFnType:
 		return "a function"
 	}
@@ -424,6 +460,17 @@ func assignable(want, got Type) bool {
 				}
 			}
 			return true
+		}
+		return true
+	case tTuple:
+		g, ok := got.(tTuple)
+		if !ok || len(g.elems) != len(w.elems) {
+			return false
+		}
+		for i := range w.elems {
+			if !assignable(w.elems[i], g.elems[i]) {
+				return false
+			}
 		}
 		return true
 	case tFnType:
@@ -594,6 +641,15 @@ func substParams(t Type, binding map[string]Type) Type {
 			params[i] = substParams(pt, binding)
 		}
 		return tFnType{params: params, ret: substParams(v.ret, binding)}
+	case tTuple:
+		// A tuple inside a generic still judges: `struct Pair[T] { span: (T, T) }`
+		// at Pair[I64] has an (I64, I64) field, not a pair of unsubstituted
+		// parameters that judge nothing.
+		elems := make([]Type, len(v.elems))
+		for i, e := range v.elems {
+			elems[i] = substParams(e, binding)
+		}
+		return tTuple{elems: elems}
 	}
 	return t
 }
@@ -636,6 +692,12 @@ func inferParams(declared, actual Type, binding map[string]Type) {
 				if i < len(a.args) && d.args[i] != nil && a.args[i] != nil {
 					inferParams(d.args[i], a.args[i], binding)
 				}
+			}
+		}
+	case tTuple:
+		if a, ok := actual.(tTuple); ok && len(a.elems) == len(d.elems) {
+			for i := range d.elems {
+				inferParams(d.elems[i], a.elems[i], binding)
 			}
 		}
 	}

@@ -134,6 +134,8 @@ func (p *printer) stmt(s ast.Stmt, indent int) {
 			kw = "const "
 		}
 		p.lineC(indent, kw+name+" = "+p.expr(st.Value), st.Line)
+	case *ast.LetTuple:
+		p.lineC(indent, "let ("+strings.Join(st.Names, ", ")+") = "+p.expr(st.Value), st.Line)
 	case *ast.Assign:
 		p.lineC(indent, p.expr(st.Target)+" = "+p.expr(st.Value), st.Line)
 	case *ast.FnDecl:
@@ -309,6 +311,8 @@ func (p *printer) expr(e ast.Expr) string {
 		return "[" + p.exprList(ex.Elements) + "]"
 	case *ast.ListLit:
 		return "[" + p.exprList(ex.Elements) + "]"
+	case *ast.TupleLit:
+		return "(" + p.exprList(ex.Elements) + ")"
 	case *ast.RecordLit:
 		parts := make([]string, len(ex.Fields))
 		for i, f := range ex.Fields {

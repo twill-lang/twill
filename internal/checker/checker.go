@@ -222,13 +222,25 @@ func (c *checker) prelude(prog *ast.Program) *checkEnv {
 	// `examples/train.tw` has exactly that shape: `train_step` writes `STEPS`
 	// several lines above the `let STEPS` that binds it.
 	for _, s := range prog.Body {
-		if lt, ok := s.(*ast.Let); ok {
+		switch lt := s.(type) {
+		case *ast.Let:
 			if _, seen := env.get(lt.Name); !seen {
 				env.define(lt.Name, tUnknown{})
 			}
 			if lt.Const {
 				if _, already := env.consts[lt.Name]; !already {
 					env.consts[lt.Name] = lt.Line
+				}
+			}
+		case *ast.LetTuple:
+			// Each name a destructuring binding introduces is a top-level name
+			// too, so a function written above it may refer to one.
+			for _, name := range lt.Names {
+				if name == "_" {
+					continue
+				}
+				if _, seen := env.get(name); !seen {
+					env.define(name, tUnknown{})
 				}
 			}
 		}
@@ -719,6 +731,8 @@ func (c *checker) inferStmt(s ast.Stmt, env *checkEnv) {
 		if st.Const {
 			env.consts[st.Name] = st.Line
 		}
+	case *ast.LetTuple:
+		c.checkLetTuple(st, env)
 	case *ast.FnDecl:
 		env.define(st.Name, tFn{node: st, params: st.Params, ret: st.Ret, retUnit: st.RetUnit, retType: st.RetType, body: st.Body, env: env})
 		// Check the body once at definition using the parameter annotations, so
@@ -855,6 +869,46 @@ func (c *checker) reportConstRebinds(body []ast.Stmt) {
 	}
 }
 
+// checkLetTuple judges `let (lo, hi) = span(xs)`. The names are bound whatever
+// happens, so a mistake here reports once rather than once more for every use
+// of a name the destructuring did not manage to bind.
+func (c *checker) checkLetTuple(st *ast.LetTuple, env *checkEnv) {
+	rhs := c.inferExpr(st.Value, env)
+	bind := func(t Type) {
+		for _, name := range st.Names {
+			if name == "_" {
+				continue
+			}
+			env.define(name, t)
+		}
+	}
+	tup, ok := rhs.(tTuple)
+	if !ok {
+		// Only a definite mismatch is reported. An unknown right-hand side --
+		// a call into a module this single-file checker never read -- says
+		// nothing about how many values come back, so it binds unknowns and
+		// stays quiet, which is the policy everywhere else in this file.
+		if !isUnknownType(rhs) {
+			c.report(st.Line, "this let destructures a tuple of %d values, but the value is %s",
+				len(st.Names), c.typeString(rhs))
+		}
+		bind(tUnknown{})
+		return
+	}
+	if len(tup.elems) != len(st.Names) {
+		c.report(st.Line, "this let binds %d names, but the value is %s, which has %d",
+			len(st.Names), c.typeString(tup), len(tup.elems))
+		bind(tUnknown{})
+		return
+	}
+	for i, name := range st.Names {
+		if name == "_" {
+			continue
+		}
+		env.define(name, tup.elems[i])
+	}
+}
+
 // lvalueBase is the name an assignment target ultimately reaches: `x` for `x`,
 // for `x.f`, for `x[i]` and for `a.d[i]`. An assignment through a call or any
 // other expression has no base name, and reports nothing.
@@ -964,6 +1018,12 @@ func (c *checker) inferExpr(e ast.Expr, env *checkEnv) Type {
 			elems[i] = c.inferExpr(el, env)
 		}
 		return tList{elems: elems}
+	case *ast.TupleLit:
+		elems := make([]Type, len(ex.Elements))
+		for i, el := range ex.Elements {
+			elems[i] = c.inferExpr(el, env)
+		}
+		return tTuple{elems: elems}
 	case *ast.Lambda:
 		return tFn{node: ex, params: ex.Params, ret: ex.Ret, retUnit: ex.RetUnit, retType: ex.RetType, body: ex.Body, env: env}
 	case *ast.Unary:
@@ -1769,7 +1829,7 @@ func (c *checker) inferCall(ex *ast.Call, env *checkEnv) Type {
 		return fn.ret
 	case tUnknown:
 		return tUnknown{}
-	case tList, tBool, tStr, tUnit, tRecord, tInt, tArr, tDict, tEnum, tBytes:
+	case tList, tBool, tStr, tUnit, tRecord, tInt, tArr, tDict, tEnum, tBytes, tTuple:
 		c.report(ex.Line, "value is not callable")
 		return tUnknown{}
 	}
@@ -1980,6 +2040,8 @@ func hasValueReturn(e ast.Expr) bool {
 		case *ast.ExprStmt:
 			walkExpr(st.X)
 		case *ast.Let:
+			walkExpr(st.Value)
+		case *ast.LetTuple:
 			walkExpr(st.Value)
 		case *ast.Assign:
 			walkExpr(st.Value)
@@ -3476,7 +3538,7 @@ func join(a, b Type) Type {
 // is judged on a guess.
 func (c *checker) unorderable(t Type) (string, bool) {
 	switch v := t.(type) {
-	case tEnum, tArr, tDict, tRecord, tList, tBytes, tUnit, tBool, tCtor, tFnType, tFn, tBuiltin:
+	case tEnum, tArr, tDict, tRecord, tList, tBytes, tUnit, tBool, tCtor, tFnType, tFn, tBuiltin, tTuple:
 		return c.typeString(t), true
 	case tTensor:
 		// Ordering is scalar-only, so a tensor of known rank above 0 cannot be
@@ -3496,7 +3558,7 @@ func (c *checker) unorderable(t Type) (string, bool) {
 // is left out on purpose: `t.to(f32)` is a field access syntactically.
 func isDefiniteNonRecord(t Type) bool {
 	switch t.(type) {
-	case tInt, tStr, tBool, tBytes, tUnit, tArr, tDict, tEnum, tList:
+	case tInt, tStr, tBool, tBytes, tUnit, tArr, tDict, tEnum, tList, tTuple:
 		return true
 	}
 	return false
@@ -3504,7 +3566,7 @@ func isDefiniteNonRecord(t Type) bool {
 
 func isDefiniteNonTensor(t Type) bool {
 	switch t.(type) {
-	case tBool, tStr, tUnit, tList, tRecord, tFn, tBuiltin, tArr, tDict, tEnum, tBytes, tCtor, tFnType:
+	case tBool, tStr, tUnit, tList, tRecord, tFn, tBuiltin, tArr, tDict, tEnum, tBytes, tCtor, tFnType, tTuple:
 		return true
 	}
 	return false

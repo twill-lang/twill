@@ -286,6 +286,9 @@ fn stmt(p: Printer, s: ast.Stmt, indent: I64) {
       line_c(p, indent, bytes.concat(kw, bytes.concat(name,
         bytes.concat(" = ", expr(p, st.value)))), st.line)
     },
+    SLetTuple(st) => line_c(p, indent,
+      bytes.concat("let (", bytes.concat(bytes.join(st.names, ", "),
+        bytes.concat(") = ", expr(p, st.value)))), st.line),
     SAssign(st) => line_c(p, indent,
       bytes.concat(expr(p, st.target), bytes.concat(" = ", expr(p, st.value))), st.line),
     SFn(st) => fn_decl(p, st, indent),
@@ -523,6 +526,7 @@ fn expr(p: Printer, e: ast.Expr) -> Str {
     # elements, so re-parsing the output rebuilds the same kind.
     ETensor(x) => bytes.concat("[", bytes.concat(expr_list(p, x.elements), "]")),
     EList(x) => bytes.concat("[", bytes.concat(expr_list(p, x.elements), "]")),
+    ETuple(x) => bytes.concat("(", bytes.concat(expr_list(p, x.elements), ")")),
     ERecord(x) => {
       let parts: Arr[Str] = arr_new()
       let i: I64 = 0

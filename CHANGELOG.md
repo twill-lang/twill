@@ -2,6 +2,79 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Tuple returns, and destructuring `let`.** A function with two things to say
+  and no name for either returns them both:
+
+  ```rust
+  fn span(xs: Arr[F64]) -> (F64, F64) { ... }
+
+  let (lo, hi) = span(xs)
+  ```
+
+  That is `docs/roadmap.md` entry 1's third workaround, the one `Res` did not
+  answer: the entry records loom's `Batch` and `StepResult`, and weft's four
+  type names in a library with eleven concepts, as structs declared for a single
+  call site because a function could return one value.
+
+  **The comma is what decides.** `(x)` is `x` in parentheses and stays grouping;
+  `(x, y)` is a tuple. `(x,)` is refused rather than invented:
+
+  ```
+  a tuple holds at least two values: (x,) is not a one-element tuple, and (x)
+  is x in parentheses
+  ```
+
+  A tuple holds two to eight values. The ninth is refused, and says why:
+
+  ```
+  a tuple holds at most 8 values, but this one has 9; a value with that many
+  parts wants a struct, whose fields have names
+  ```
+
+  **A tuple is destructured or passed on whole.** There is deliberately no `.0`
+  and no named tuple type. Reading a part by name is an error, printing one
+  gives `(1, 2)`, and equality is structural and starts with arity, so a 2-tuple
+  is never equal to a 3-tuple and a tuple is never equal to a list holding the
+  same values.
+
+  `(F64, F64)` is a type wherever an annotation may appear -- a return, a
+  parameter, a binding, a struct field, a type argument -- and tuple types nest.
+  `substParams` descends into one, so `struct Pair[T] { span: (T, T) }` at
+  `Pair[I64]` has an `(I64, I64)` field rather than a pair of unsubstituted
+  parameters that judge nothing.
+
+  All of it lands on both implementations: the parser, the checker, the
+  evaluator and the formatter, in Go and in `src/*.tw`, with the diagnostics
+  written the same on both sides. `TestSelfHostedCheckTuples` and
+  `TestSelfHostedTupleSyntaxRefusals` compare the diagnostic text and not only
+  the exit code, and `TestSelfHostedTupleEvaluationMatches` compares printed
+  output byte for byte.
+
+  A tuple is also not a pytree: `grad`, `map_leaves` and `zip_leaves` treat one
+  as an opaque leaf rather than walking into it, and `save` refuses it by name
+  (`save: cannot save a value of this kind ((1, 2))`). The tracer does walk
+  one, which is not optional: a tensor returned inside a tuple escapes its
+  statement exactly as a tensor in a list does, and a `liveTensors` that had
+  not been taught about tuples crashed the traced run rather than slowing it. `TestTracingSeesTensorsInsideATuple` is that case.
+
+  **What is not delivered:** a tuple pattern in `match`, a tuple element
+  coerced by its annotation (`-> (I64, I64)` does not turn a `Num` into an
+  `Int` the way `-> I64` does), tuples as pytree containers, `save` of a
+  tuple, and `const` destructuring, which is refused at the parser rather than
+  have the const-rebinding rule half kept.
+
+### Fixed
+
+- **A type argument is a full type under both front ends.**
+  `Arr[fn(I64) -> I64]` was a syntax error to the Go parser and clean to
+  `src/parse.tw`: `parseTypeArgs` read a type *reference* where
+  `parse_type_args` read a type *expression*. That is a divergence in the two
+  parsers older than this change, and putting a tuple into type-argument
+  position is what found it. Both read a type expression now, so a function
+  type and a tuple both nest there.
+
 ## [1.10.0] - 2026-09-05
 
 ### Added
