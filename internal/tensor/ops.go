@@ -159,14 +159,24 @@ func removeAxis(shape []int, axis int) []int {
 	return out
 }
 
+// normalizeAxis turns a possibly negative axis into an index, or says why it
+// cannot.
+//
+// The message names the axis THE CALLER WROTE, not the half-adjusted value.
+// `sum(m, -7)` on a rank-2 tensor says "axis -7 out of range for rank 2"; it
+// used to say "axis -5", which is -7 plus the rank and appears nowhere in the
+// program, so a reader had to reverse the adjustment to find their own input.
+// src/tensor.tw's normalize_axis already reported the original, so the two
+// implementations disagreed on the one input that reaches this message at all.
 func normalizeAxis(axis, rank int) (int, error) {
-	if axis < 0 {
-		axis += rank
+	adjusted := axis
+	if adjusted < 0 {
+		adjusted += rank
 	}
-	if axis < 0 || axis >= rank {
+	if adjusted < 0 || adjusted >= rank {
 		return 0, fmt.Errorf("axis %d out of range for rank %d", axis, rank)
 	}
-	return axis, nil
+	return adjusted, nil
 }
 
 func reduceAxis(t *Tensor, axis int, mean bool) (*Tensor, error) {

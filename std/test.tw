@@ -1,0 +1,192 @@
+mode systems
+
+# std/test: the assertions a test file is written with.
+#
+# `twill test` shipped in 1.8 and solved discovery: it finds every `*_test.tw`
+# under a path, runs each on a fresh interpreter, and reads the file's verdict
+# out of what the file printed. That last part is a contract -- a summary line
+# and an `OK`/`FAILED` marker, described below -- and until this module existed
+# the toolchain defined the contract and shipped nothing that satisfied it, so
+# every repository in the ecosystem wrote its own satisfier by hand. Eleven
+# harness files and 914 lines by `wc -l`: nine near-identical satellite copies
+# (711 lines), and two here. They had already drifted, and the drift is the
+# argument for every decision below.
+#
+# So this is the other half of the runner. The runner says which file failed;
+# these say which claim inside it failed, and print it in the shape the runner
+# reads.
+#
+# WHAT THE RUNNER READS, and therefore what `report` must print
+#
+# `cmd/twill/test.go` greps two things out of a suite's output:
+#
+#   1. a summary line containing the word `passed` followed by a number and the
+#      word `failed` followed by a number. A nonzero failed count fails the file.
+#   2. a line that is exactly `FAILED`. Its presence fails the file.
+#
+# `report` prints `<suite> passed <p> failed <f>` and then `OK` or `FAILED`,
+# which satisfies both. The words have to be in that order because the runner
+# reads the field *after* each keyword rather than the field before it, and
+# `spool: 3 passed, 1 failed` -- the spelling all nine satellite copies settled
+# on -- matches neither signal: `passed,` is not `passed`, and there is no `OK`
+# or `FAILED` line anywhere. Run one of those suites under `twill test` and it
+# reports `ok <file>` or `FAIL <file>` with no counts beside it. The verdict is
+# still right, because those copies end in `exit(1)` and the runner reads a
+# nonzero exit as a failure, but the numbers are gone and so is the marker, and
+# a suite that printed a summary the runner could read would not have needed
+# the exit at all.
+#
+# WHY `mode systems`
+#
+# Every hand-written copy is `mode systems`, because the repositories with tests
+# to run are the systems-mode ones. `std/tests/harness.tw` in this repository is
+# the numeric-mode exception and stays where it is; a numeric-mode harness needs
+# `abs` and `max` over tensors and untyped parameters, none of which exist here.
+#
+# WHY THE COUNTERS LIVE IN THIS MODULE
+#
+# `std/tests/systems_harness.tw`, which this replaces, threaded a `Report` value
+# through every call instead, and gave a reason: a file-level `let` mutated in
+# place was not specified to work in the systems subset. That reason is about
+# reassigning the binding. Mutating a *field* of a file-level struct is a
+# different thing, it is what all nine satellite copies are built on, and it
+# runs.
+#
+# Threading the value also has a cost the copies were right to refuse. It puts
+# an `rp,` at the front of every assertion that says nothing about what is being
+# asserted, and there is only ever one report per suite, so the parameter is a
+# constant. Taking it out of the six suites in std/tests removed it from 351
+# assertions and changed no byte of their output.
+#
+# WHY THERE ARE NO IMPORTS
+#
+# Nothing here imports anything, including `std/float`. A harness that can fail
+# for a reason unrelated to the code under test is a harness that reports its own
+# bugs as the library's, so `fabs` below is four lines rather than a dependency.
+#
+# WHY EVERYTHING GOES THROUGH `print`
+#
+# `systems_harness.tw` sent its summary to stdout with `write_out` and its
+# failures to stderr with `write_err`, so that a run in a pipeline showed what
+# broke even when the output was redirected. That is a good argument and it cost
+# more than it bought: `src/eval.tw` dispatches neither builtin, so every suite
+# using that harness died self-hosted on the way out of a run that had otherwise
+# agreed line for line, and three of them sat on the conformance allow-list for
+# it. `print` is dispatched by both implementations. Moving to it took
+# io_test.tw, json_test.tw and text_test.tw off that list, which is the strongest
+# evidence available that the divergence was the harness's and not the library's.
+#
+# One consequence to know: failures and the summary now share stdout. A pipeline
+# that wants only the verdict reads the last two lines rather than one stream.
+
+struct Counter {
+  passed: I64,
+  failed: I64,
+}
+
+let TESTS = Counter { passed: 0, failed: 0 }
+
+# Record one check.
+#
+# `name` is a sentence in the present tense saying what should be true, so a
+# failure reads as the negation of a claim rather than as the name of a
+# function. That is what makes a failing run diagnosable without opening the
+# file, and the name of a failing test is the only documentation anyone reads at
+# the moment it fails.
+fn check(name: Str, ok: Bool) {
+  if ok {
+    TESTS.passed = TESTS.passed + 1
+  } else {
+    TESTS.failed = TESTS.failed + 1
+    print("  FAIL  " + name)
+  }
+}
+
+# Record a failure that no comparison here covers, with the reason.
+#
+# This is the escape hatch, and it exists because no copy had one and they grew
+# the same workaround instead: `check(name, false)` for the `None` arm of a
+# match, for a `Res` that came back `Err`, for a branch that should have been
+# unreachable. spool's `is_none_i64` and `equal_opt_i64` are both written that
+# way. It records the failure and throws away the only part of it worth having.
+# `fail(name, why)` keeps the why.
+fn fail(name: Str, why: Str) {
+  TESTS.failed = TESTS.failed + 1
+  print("  FAIL  " + name)
+  print("        " + why)
+}
+
+# Two strings equal, showing both when they are not.
+fn equal_str(name: Str, got: Str, want: Str) {
+  if got == want {
+    TESTS.passed = TESTS.passed + 1
+  } else {
+    TESTS.failed = TESTS.failed + 1
+    print("  FAIL  " + name)
+    print("        got:  " + got)
+    print("        want: " + want)
+  }
+}
+
+# Two integers equal. Compared through their printed forms so that the failure
+# shows the two numbers, which is the whole of what a reader needs.
+fn equal_i64(name: Str, got: I64, want: I64) {
+  equal_str(name, str(got), str(want))
+}
+
+# Two floats equal to within an absolute tolerance, which the caller states.
+#
+# THE TOLERANCE IS NOT DEFAULTED, AND THAT IS THE POINT OF THIS FUNCTION.
+#
+# It is the one place the hand-written copies could quietly disagree about what
+# a float comparison means, and they did: the numeric harness next door defaults
+# to 1e-9 and offers a second function for anything else, while every
+# systems-mode copy takes the tolerance and says in a comment why a default
+# would be wrong. They are right. A default is always wrong for something --
+# 1e-12 rejects a legitimate result from an erfc approximation good to 1e-7, and
+# 1e-7 accepts a broken LU -- and one shared epsilon across a dozen repositories
+# with different numerics in them is wrong for most of them at once.
+#
+# Making it an argument forces each test to state how accurate it believes the
+# function under test to be, which is the useful part of the assertion, and it
+# means a tolerance can never be widened for one caller by an edit somewhere
+# else.
+#
+# The comparison is `<=` rather than `<`, so that a tolerance of 0.0 asserts
+# exact equality rather than asserting nothing that can ever hold.
+fn near(name: Str, got: F64, want: F64, tol: F64) {
+  if fabs(got - want) <= tol {
+    TESTS.passed = TESTS.passed + 1
+  } else {
+    TESTS.failed = TESTS.failed + 1
+    print("  FAIL  " + name)
+    print("        got:  " + str(got))
+    print("        want: " + str(want) + " within " + str(tol))
+  }
+}
+
+# Absolute value. Exported rather than hidden because a suite comparing two
+# arrays element by element writes its own loop and needs it: std/tests/
+# linalg_test.tw is the caller.
+fn fabs(v: F64) -> F64 = if v < 0.0 { 0.0 - v } else { v }
+
+# Print the summary in the shape the runner reads, and give the exit status.
+#
+# Returned rather than raised: a suite ends `report(...)` as the last expression
+# of `fn main() -> I64`, so the status is the file's own return value and the
+# harness needs no `exit`. The nine satellite copies call `exit(1)` instead,
+# which works through a path the runner has to special-case, and a harness that
+# can terminate a process is a harness that can terminate the wrong one.
+#
+# Only failures are printed, never a line per passing check. A passing suite
+# that prints six hundred lines trains people to stop reading it, and then the
+# one line that matters scrolls past.
+fn report(suite: Str) -> I64 {
+  print(suite + " passed " + str(TESTS.passed) + " failed " + str(TESTS.failed))
+  if TESTS.failed > 0 {
+    print("FAILED")
+    return 1
+  }
+  print("OK")
+  0
+}

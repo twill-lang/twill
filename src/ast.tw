@@ -150,7 +150,18 @@ struct Slice { id: I64, target: Expr, start: Opt[Expr], end: Opt[Expr], line: I6
 struct RecordField { name: Str, value: Expr }
 # type_name is the name in front of a typed literal, `Point { x: 1.0 }`, or "".
 # Records are structural, so it is advisory: kept only so the printer reproduces it.
-struct RecordLit { id: I64, type_name: Str, fields: Arr[RecordField], line: I64 }
+#
+# base is the `..expr` of a record update, `{ ..base, x: 1 }`, and None for a
+# plain literal. The value is a copy of base with fields replacing the fields
+# they name. The copy is shallow: a field holding a list or a record holds the
+# same one the base does, exactly as writing `{ x: base.x }` out by hand does.
+struct RecordLit {
+  id: I64,
+  type_name: Str,
+  base: Opt[Expr],
+  fields: Arr[RecordField],
+  line: I64,
+}
 
 # Field is record field access: target.name.
 struct Field { id: I64, target: Expr, name: Str, line: I64 }
@@ -552,8 +563,10 @@ fn index(ids: NodeIds, target: Expr, idx: Expr, line: I64) -> Expr =
 fn slice(ids: NodeIds, target: Expr, start: Opt[Expr], end: Opt[Expr], line: I64) -> Expr =
   ESlice(Slice { id: fresh(ids), target: target, start: start, end: end, line: line })
 
-fn record_lit(ids: NodeIds, type_name: Str, fields: Arr[RecordField], line: I64) -> Expr =
-  ERecord(RecordLit { id: fresh(ids), type_name: type_name, fields: fields, line: line })
+fn record_lit(ids: NodeIds, type_name: Str, base: Opt[Expr], fields: Arr[RecordField],
+              line: I64) -> Expr =
+  ERecord(RecordLit { id: fresh(ids), type_name: type_name, base: base, fields: fields,
+    line: line })
 
 fn field(ids: NodeIds, target: Expr, name: Str, line: I64) -> Expr =
   EField(Field { id: fresh(ids), target: target, name: name, line: line })

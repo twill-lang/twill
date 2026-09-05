@@ -985,14 +985,53 @@ fn looks_like_record(p: Parser) -> Bool {
   if bytes.equal(peek(p, 1).value, "}") {
     return true
   }
+  # `{ ..base }` is a record update, whose base is written before any field, so
+  # two dots settle it on their own. No statement begins with `.`, so a block is
+  # not what is being taken away here either.
+  if is_dot(peek(p, 1)) and is_dot(peek(p, 2)) {
+    return true
+  }
   peek(p, 1).kind == lex.KIND_IDENT and
     peek(p, 2).kind == lex.KIND_PUNCT and bytes.equal(peek(p, 2).value, ":")
 }
 
+# is_dot reports whether a token is the field-access `.`. The lexer has no `..`
+# token: `.` is punctuation and a number literal only starts with one when a
+# digit follows, so `..base` arrives as two of these and an identifier. Reading
+# the pair here rather than in the lexer is what keeps `..` out of every other
+# position in the grammar.
+fn is_dot(t: lex.Token) -> Bool =
+  t.kind == lex.KIND_PUNCT and bytes.equal(t.value, ".")
+
+# at_dot_dot reports whether the parser is looking at the `..` that opens a
+# record update.
+fn at_dot_dot(p: Parser) -> Bool = is_dot(peek(p, 0)) and is_dot(peek(p, 1))
+
 fn parse_record_lit(p: Parser, type_name: Str) -> Res[ast.Expr, lex.SyntaxError] {
   let line: I64 = expect(p, "{")?.line
   let fields: Arr[ast.RecordField] = arr_new()
+  let base: Opt[ast.Expr] = None
+  let have_base: Bool = false
   while not check(p, "}") and not at_end(p) {
+    if at_dot_dot(p) {
+      let t: lex.Token = peek(p, 0)
+      # The base is the whole record being copied, so it has to be read before
+      # the fields that replace parts of it. Allowing it last would mean either a
+      # second rule about which wins or a literal whose meaning depends on where
+      # the reader's eye lands.
+      if have_base or len(fields) > 0 {
+        return Err(err_at(t,
+          "the base of a record update must come first, as `{ ..base, field: value }`"))
+      }
+      next_tok(p)
+      next_tok(p)
+      base = Some(parse_expr(p)?)
+      have_base = true
+      if not accept(p, ",") {
+        break
+      }
+      continue
+    }
     let name: Str = expect_ident(p)?
     expect(p, ":")?
     let val: ast.Expr = parse_expr(p)?
@@ -1002,7 +1041,7 @@ fn parse_record_lit(p: Parser, type_name: Str) -> Res[ast.Expr, lex.SyntaxError]
     }
   }
   expect(p, "}")?
-  Ok(ast.record_lit(p.ids, type_name, fields, line))
+  Ok(ast.record_lit(p.ids, type_name, base, fields, line))
 }
 
 # ---- signatures and annotations --------------------------------------------
