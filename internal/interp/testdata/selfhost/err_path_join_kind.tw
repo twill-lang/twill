@@ -1,0 +1,7 @@
+mode systems
+
+# path_join is the other variadic one. Every component has to be text; the
+# message is about the call and not about which component it was.
+fn main() {
+  print(path_join("a", 1))
+}

@@ -1,0 +1,7 @@
+mode systems
+
+# The sinks take text, and a number is not text. The message names the sink, so
+# there is one of these rather than a loop.
+fn main() {
+  write_out(1)
+}

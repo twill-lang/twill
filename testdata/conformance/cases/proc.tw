@@ -1,0 +1,79 @@
+mode systems
+
+# The process interface: what the program was called with, what is in its
+# environment, whether anyone is watching, and starting another program.
+#
+# The conformance runner gives both implementations a fixed environment holding
+# PATH and nothing else, and runs both with their output on a pipe, so every
+# answer below is the same on two runs of one binary before it is compared
+# across two.
+
+fn say(label: Str, value: Str) {
+  write_out(label)
+  write_out(" = ")
+  write_out(value)
+  write_out("\n")
+}
+
+fn main() {
+  # args is the program's vector and not the interpreter's. The self-hosted CLI
+  # was started as `twill run main.tw run proc.tw`, and a program that saw those
+  # words would be seeing how it happened to be run.
+  let a: Arr[Str] = args()
+  say("argument count", str(len(a)))
+  let i: I64 = 0
+  while i < len(a) {
+    say("  argument", a[i])
+    i = i + 1
+  }
+
+  match env("PATH") {
+    Some(_) => say("PATH is set", "true"),
+    None => say("PATH is set", "false"),
+  }
+  match env("TWILL_A_VARIABLE_NOBODY_SETS") {
+    Some(v) => say("an unset variable reads as", v),
+    None => say("an unset variable reads as", "None"),
+  }
+
+  # Output is a pipe under the runner, so this is false on both sides. It is
+  # here because the answer being the same is the claim.
+  say("stdout is a terminal", str(is_tty_stdout()))
+
+  let w = window_size()
+  say("window cols", str(w.cols))
+  say("window rows", str(w.rows))
+
+  # Starting a program. The program and its arguments stay separate values all
+  # the way to the process: nothing here is a shell.
+  let argv: Arr[Str] = arr_new()
+  push(argv, "twill-conformance")
+  match run("/bin/echo", argv, "") {
+    Ok(out) => say("echo printed", str_quote(out)),
+    Err(m) => say("echo failed", m),
+  }
+  # A program that is not there is an Err and not a crash, so a caller can
+  # degrade instead of dying. The message is the operating system's and is not
+  # printed, because it names an absolute path.
+  let none: Arr[Str] = arr_new()
+  match run("/nonexistent/twill-conformance-program", none, "") {
+    Ok(_) => say("a missing program", "succeeded"),
+    Err(_) => say("a missing program", "failed"),
+  }
+  match run("", none, "") {
+    Ok(_) => say("an empty program name", "succeeded"),
+    Err(m) => say("an empty program name", m),
+  }
+  # A non-zero exit is a failure and its stdout is not the answer.
+  match run("/bin/sh", make_argv("exit 3"), "") {
+    Ok(_) => say("a program that exits 3", "succeeded"),
+    Err(_) => say("a program that exits 3", "failed"),
+  }
+}
+
+fn make_argv(script: Str) -> Arr[Str] {
+  let a: Arr[Str] = arr_new()
+  push(a, "-c")
+  push(a, script)
+  a
+}

@@ -41,8 +41,9 @@ mode systems
 # Elementwise, on the Op enum below:
 #   binary(op, a, b)        -> Res[Tensor, Str]   add sub mul div mod
 #                                                 max min gt lt ge le eq
-#   unary(op, a)            -> Tensor            neg relu exp log sin cos
-#                                                 sqrt tanh sigmoid square
+#   unary(op, a)            -> Tensor            neg relu exp log log1p expm1
+#                                                 sin cos sqrt tanh sigmoid
+#                                                 square
 #   pow_scalar(a, p)        -> Tensor
 #   clip(a, lo, hi)         -> Tensor
 #   where(cond, a, b)       -> Res[Tensor, Str]
@@ -629,6 +630,8 @@ enum Op {
   OpRelu,
   OpExp,
   OpLog,
+  OpLog1p,
+  OpExpm1,
   OpSin,
   OpCos,
   OpSqrt,
@@ -685,6 +688,7 @@ fn op_name(op: Op) -> Str {
     OpGreater => "greater", OpLess => "less", OpGreaterEqual => "greater_equal",
     OpLessEqual => "less_equal", OpEqual => "equal",
     OpNeg => "neg", OpRelu => "relu", OpExp => "exp", OpLog => "log",
+    OpLog1p => "log1p", OpExpm1 => "expm1",
     OpSin => "sin", OpCos => "cos", OpSqrt => "sqrt", OpTanh => "tanh",
     OpSigmoid => "sigmoid", OpSquare => "square", OpPow => "pow",
     OpClip => "clip", OpCast => "cast",
@@ -981,6 +985,10 @@ fn apply_unary(op: Op, x: F64, p0: F64, p1: F64) -> F64 {
     OpRelu => { if x > 0.0 { x } else { 0.0 } },
     OpExp => f64_exp(x),
     OpLog => f64_log(x),
+    # log(1+x) and exp(x)-1 without forming the sum or the difference, so the
+    # cancellation near zero does not throw the answer away.
+    OpLog1p => f64_log1p(x),
+    OpExpm1 => f64_expm1(x),
     OpSin => f64_sin(x),
     OpCos => f64_cos(x),
     OpSqrt => f64_sqrt(x),
@@ -1004,6 +1012,11 @@ fn d_unary(op: Op, x: F64, o: F64, p0: F64, p1: F64) -> F64 {
     OpRelu => { if x > 0.0 { 1.0 } else { 0.0 } },
     OpExp => o,
     OpLog => 1.0 / x,
+    # 1/(1+x) written on x and not on o: recovering x from log1p(x) would give
+    # back the accuracy log1p exists to keep.
+    OpLog1p => 1.0 / (1.0 + x),
+    # expm1' is exp(x), which is the result plus one, so no second exponential.
+    OpExpm1 => o + 1.0,
     OpSin => f64_cos(x),
     OpCos => 0.0 - f64_sin(x),
     OpSqrt => 0.5 / o,
@@ -3382,6 +3395,7 @@ fn is_binary_op(op: Op) -> Bool {
 fn is_unary_op(op: Op) -> Bool {
   if op == OpNeg or op == OpRelu { return true }
   if op == OpExp or op == OpLog { return true }
+  if op == OpLog1p or op == OpExpm1 { return true }
   if op == OpSin or op == OpCos { return true }
   if op == OpSqrt or op == OpTanh { return true }
   if op == OpSigmoid or op == OpSquare { return true }
@@ -4806,6 +4820,8 @@ fn d2_unary(op: Op, x: F64, o: F64, p0: F64, p1: F64) -> F64 {
   match op {
     OpExp => o,
     OpLog => 0.0 - 1.0 / (x * x),
+    OpLog1p => 0.0 - 1.0 / ((1.0 + x) * (1.0 + x)),
+    OpExpm1 => o + 1.0,
     # o is sin(x) and cos(x) respectively, and both are their own negated
     # second derivative.
     OpSin => 0.0 - o,

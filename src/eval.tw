@@ -1414,13 +1414,37 @@ fn eval_expr(e: ast.Expr, env: Env) -> Res[Value, RuntimeError] {
     EIndex(x) => eval_index(x, env),
     ESlice(x) => eval_slice(x, env),
     ERecord(x) => {
+      let fields: Dict[Str, Value] = dict_new()
+      let tn: Str = ""
+      # `{ ..base, x: 1 }` starts from a copy of the base and then lets the
+      # fields written out replace what they name. The copy is shallow: a field
+      # holding a list hands over the same list, which is what `{ x: base.x }`
+      # written out by hand already does, and making this one case deep would be
+      # a second rule for the same syntax.
+      #
+      # The copy carries the base's struct name, so an update of a `Point` is
+      # still a `Point` for the purpose of a later field assignment's coercion.
+      # A type name on the literal itself wins, and is set below.
+      match x.base {
+        Some(b) => {
+          match eval_expr(b, env)? {
+            VRecord(r) => {
+              tn = r.type_name
+              for name in dict_keys(r.fields) {
+                dict_set(fields, name, dict_must(r.fields, name))
+              }
+            },
+            _ => return Err(runtime_error(x.line,
+              "the base of a record update must be a record")),
+          }
+        },
+        None => unit,
+      }
       # A typed literal reads its declared field types, so a number at an I64
       # field is an Int, the same rule a `let` annotation follows. The name is
       # looked up unqualified: `resolve.Catalog` and `Catalog` name the same
       # declaration.
-      let fields: Dict[Str, Value] = dict_new()
       let declared: Opt[Dict[Str, Str]] = dict_get(STRUCT_FIELDS, bare_type_name(x.type_name))
-      let tn: Str = ""
       match declared {
         Some(_) => tn = bare_type_name(x.type_name),
         None => unit,
@@ -2448,7 +2472,7 @@ fn in_words(list: Str, name: Str) -> Bool {
   bytes.index_of(hay, needle) >= 0
 }
 
-let ARITY1: Str = "black_box relu exp log sin cos tanh sigmoid sqrt square abs grad grads value_and_grad jacobian hessian jvp vjp hvp tensor scalar seed permutation eye shape len item dtype str int floor ceil round read_csv read_frame load columns nbytes"
+let ARITY1: Str = "black_box relu exp log log1p expm1 sin cos tanh sigmoid sqrt square abs grad grads value_and_grad jacobian hessian jvp vjp hvp tensor scalar seed permutation eye shape len item dtype str int floor ceil round read_csv read_frame load columns nbytes"
 
 let ARITY2: Str = "pow matmul dot linear conv2d maxpool2d gather maximum minimum greater less greater_equal less_equal equal concat map append gbm_predict write_frame save field map_leaves zip_leaves"
 
@@ -2463,9 +2487,16 @@ fn builtin_arity(name: Str) -> I64 {
   # are ported from. `arr` is the one variadic among them, so it is absent here
   # and takes whatever it is given.
   if in_words("arr_new dict_new bytes_new", name) { return 0 }
-  if in_words("pop arr_clear arr_of_tensor numel dict_keys bytes_to_str buf_new buf_len chr str_quote i64_of_str str_to_f64 f64_to_str num_to_text f64_hex", name) { return 1 }
+  if in_words("pop arr_clear arr_of_tensor numel dict_keys bytes_to_str buf_new buf_len chr str_quote i64_of_str str_to_f64 f64_to_str num_to_text f64_hex sha256 sha256_bytes", name) { return 1 }
   if in_words("push arr_push dict_get dict_has dict_must dict_del bytes_push buf_get8", name) { return 2 }
   if in_words("dict_set dict_or slice buf_set8", name) { return 3 }
+  # The filesystem, the clock and the process, from the same `def` calls.
+  # resolve_path and path_join are the two variadic ones and are absent, as
+  # `arr` is.
+  if in_words("args cwd clock_now_ms mono_ns is_tty_stdout window_size", name) { return 0 }
+  if in_words("write_out write_err emit_line read_file file_size list_dir load_value module_source env exit abort temp_dir path_exists path_is_dir mtime mkdir_all remove_file remove_dir remove_all path_base path_dir path_ext path_stem path_normalize path_is_abs", name) { return 1 }
+  if in_words("write_file read_text_or write_text_or rename save_value", name) { return 2 }
+  if in_words("read_file_at run", name) { return 3 }
   # The builtins returned by grad/grads/value_and_grad take whatever the
   # function they wrap takes; jacobian's and hessian's take exactly one.
   if in_words("jacobian(fn) hessian(fn)", name) { return 1 }
@@ -2666,7 +2697,7 @@ fn lift_v(r: Res[tensor.Tensor, Str], line: I64) -> Res[Value, RuntimeError] =
 
 # ---- the dispatch ----------------------------------------------------------
 
-let UNARY_MATH: Str = "relu exp log sin cos tanh sigmoid sqrt square"
+let UNARY_MATH: Str = "relu exp log log1p expm1 sin cos tanh sigmoid sqrt square"
 let BIN_TENSOR: Str = "matmul dot conv2d maximum minimum greater less greater_equal less_equal equal"
 let REDUCTIONS: Str = "sum mean max min prod median"
 let SCANS: Str = "cumsum cumprod cummax cummin"
@@ -2690,8 +2721,15 @@ let DICT_OPS: Str = "dict_new dict_set dict_get dict_has dict_must dict_or dict_
 # bytes_* grows a buffer and buf_* indexes a fixed-size one; they are the same
 # value on the Go side and the same value here.
 let BUF_OPS: Str = "bytes_new bytes_push bytes_to_str buf_new buf_get8 buf_set8 buf_len"
-let STR_OPS: Str = "chr slice str_quote i64_of_str str_to_f64 f64_to_str num_to_text f64_hex"
+let STR_OPS: Str = "chr slice str_quote i64_of_str str_to_f64 f64_to_str num_to_text f64_hex sha256 sha256_bytes"
 let FILE_OPS: Str = "read_csv read_frame write_frame save load columns field with_field"
+# The second half of that runtime: the filesystem, the clock and the process.
+# Same story as the three lists above -- every name here was in
+# src/builtins.tw and in no dispatch, so a systems-mode program that read a
+# file, asked the time or started a process type-checked and then refused.
+let IO_OPS: Str = "write_out write_err emit_line read_file write_file read_text_or write_text_or file_size list_dir read_file_at save_value load_value module_source resolve_path"
+let PATH_OPS: Str = "path_exists path_is_dir mtime mkdir_all remove_file remove_dir remove_all rename temp_dir cwd path_join path_base path_dir path_ext path_stem path_normalize path_is_abs"
+let PROC_OPS: Str = "args env exit abort is_tty_stdout window_size run clock_now_ms mono_ns"
 
 fn call_builtin(b: BuiltinVal, args: Arr[Value], line: I64) -> Res[Value, RuntimeError] {
   let name: Str = b.name
@@ -2734,12 +2772,15 @@ fn call_builtin(b: BuiltinVal, args: Arr[Value], line: I64) -> Res[Value, Runtim
   if in_words(FILE_OPS, name) { return bi_files(name, args, line) }
   if in_words("gbm_fit gbm_predict", name) { return bi_gbm(name, args, line) }
   if bytes.equal(name, "nbytes") { return bi_nbytes(args, line) }
-  if in_words("and or band bor xor shl shr", name) { return bi_bitwise(name, args, line) }
+  if in_words("and or band bor xor shl shr ushr", name) { return bi_bitwise(name, args, line) }
   if bytes.equal(name, "bnot") { return bi_bnot(args, line) }
   if in_words(ARR_OPS, name) { return bi_arr(name, args, line) }
   if in_words(DICT_OPS, name) { return bi_dict(name, args, line) }
   if in_words(BUF_OPS, name) { return bi_buf(name, args, line) }
   if in_words(STR_OPS, name) { return bi_str(name, args, line) }
+  if in_words(IO_OPS, name) { return bi_io(name, args, line) }
+  if in_words(PATH_OPS, name) { return bi_path(name, args, line) }
+  if in_words(PROC_OPS, name) { return bi_proc(name, args, line) }
   # i64 and f64 are the two conversions across the systems-mode seam. i64 makes
   # an exact I64 of a number, truncating a fraction toward zero; f64 makes an
   # F64 of an I64, which loses precision above 2^53.
@@ -2964,6 +3005,8 @@ fn bi_unary_math(name: Str, args: Arr[Value], line: I64) -> Res[Value, RuntimeEr
   if bytes.equal(name, "relu") { return Ok(VTensor(tr_unary(tensor.OpRelu, t))) }
   if bytes.equal(name, "exp") { return Ok(VTensor(tr_unary(tensor.OpExp, t))) }
   if bytes.equal(name, "log") { return Ok(VTensor(tr_unary(tensor.OpLog, t))) }
+  if bytes.equal(name, "log1p") { return Ok(VTensor(tr_unary(tensor.OpLog1p, t))) }
+  if bytes.equal(name, "expm1") { return Ok(VTensor(tr_unary(tensor.OpExpm1, t))) }
   if bytes.equal(name, "sin") { return Ok(VTensor(tr_unary(tensor.OpSin, t))) }
   if bytes.equal(name, "cos") { return Ok(VTensor(tr_unary(tensor.OpCos, t))) }
   if bytes.equal(name, "tanh") { return Ok(VTensor(tr_unary(tensor.OpTanh, t))) }
@@ -3058,13 +3101,18 @@ fn bi_clip(args: Arr[Value], line: I64) -> Res[Value, RuntimeError] {
 # One argument reduces everything to a scalar; a second reduces a single axis.
 #
 # The axis may be negative and counts from the end, and the normalisation lives
-# in the kernel (src/tensor.tw normalize_axis) rather than here, for a reason
-# worth stating: the
-# message on an out-of-range axis reports the axis *after* the negative
-# adjustment, so `sum(m, -5)` on a rank-2 tensor says "axis -3 out of range for
-# rank 2" and not "-5". Normalising in this file would report the original and
-# the two implementations would disagree on the one input that reaches the
-# message at all.
+# in the kernel (src/tensor.tw normalize_axis) rather than here, so that one
+# place decides both the index and the wording.
+#
+# The message names the axis the CALLER WROTE: `sum(m, -7)` on a rank-2 tensor
+# says "axis -7 out of range for rank 2". This comment used to claim the
+# opposite, that the message reports the axis after the negative adjustment and
+# that normalising here would make the two implementations disagree. The kernel
+# beside it had always reported the original, so the comment was wrong about its
+# own file, and the disagreement it warned about was real and already present:
+# the Go bootstrap printed the adjusted value. Go now reports the original too.
+# A constant axis is refused by the checker before any of this, so the message
+# is only reachable when the axis is computed.
 
 fn bi_reduce(name: Str, args: Arr[Value], line: I64) -> Res[Value, RuntimeError] {
   if len(args) == 0 or len(args) > 2 {
@@ -3431,6 +3479,7 @@ fn bi_bitwise(name: Str, args: Arr[Value], line: I64) -> Res[Value, RuntimeError
   if bytes.equal(name, "xor") { out = xor(a, b) }
   if bytes.equal(name, "shl") { out = shl(a, b) }
   if bytes.equal(name, "shr") { out = shr(a, b) }
+  if bytes.equal(name, "ushr") { out = ushr(a, b) }
   Ok(VInt(out))
 }
 
@@ -5559,6 +5608,25 @@ fn bi_str(name: Str, args: Arr[Value], line: I64) -> Res[Value, RuntimeError] {
   if bytes.equal(name, "f64_hex") {
     return Ok(VStr(f64_hex(scalar_of(args[0], "f64_hex", line)?)))
   }
+  # SHA-256, lower-case hex. std/hash.tw is the specification and holds the
+  # published vectors; this is the same digest reached through the host.
+  #
+  # These two are the exception to arg_text below. Everything else here takes a
+  # Str or a buffer indifferently, because a Bytes is a string under
+  # construction. A digest is a format constant -- spool's lockfiles, selvedge's
+  # archives and warp's cache keys store one and read it back later -- so
+  # sha256 takes a Str and sha256_bytes a Bytes and neither takes the other,
+  # which is the Go builtin's rule and the Go builtin's wording.
+  if bytes.equal(name, "sha256") {
+    match args[0] {
+      VStr(x) => return Ok(VStr(sha256(x))),
+      _ => return Err(runtime_error(line, "sha256 expects a string")),
+    }
+  }
+  if bytes.equal(name, "sha256_bytes") {
+    let sb: BytesVal = arg_buffer(args[0], "sha256_bytes", "byte buffer", line)?
+    return Ok(VStr(sha256_bytes(sb.buf)))
+  }
   let text: Str = ""
   match arg_text(args[0]) {
     Some(t) => text = t,
@@ -5580,6 +5648,414 @@ fn bi_str(name: Str, args: Arr[Value], line: I64) -> Res[Value, RuntimeError] {
   match str_to_f64(text) {
     Some(x) => Ok(some_value(VTensor(tensor.scalar(x)))),
     None => Ok(none_value()),
+  }
+}
+
+# ---- the filesystem, the clock and the process -----------------------------
+#
+# The second half of the systems runtime. Entry 12 of docs/BUGS.md ported the
+# values -- lists, dictionaries, buffers and strings -- and left the effects:
+# reading a file, asking what a path is, reading a clock, starting a program.
+# Every one of those names checked clean on both sides and then died here with
+# "named in the builtin table but has no implementation", so a systems-mode
+# program that did any I/O at all ran on the bootstrap and refused self-hosted.
+#
+# The bodies delegate to the host builtin of the same name, for the reason the
+# Arr and Dict port gives: this evaluator runs on the bootstrap, so delegating
+# makes the answer identical to the bootstrap by construction rather than by
+# inspection. The work that is not delegation is the two things around the
+# syscall -- which argument is coerced first and what its refusal says, and
+# what a relative path is measured from.
+#
+# WHERE A RELATIVE PATH POINTS
+#
+# The bootstrap resolves a relative path against the directory of the file
+# doing the reading. Run a program directly and that is the program's own
+# directory. Run it through this evaluator and the file doing the reading is
+# src/eval.tw, so the same source names a different file: `read_file("in.txt")`
+# would mean <program dir>/in.txt on one side and src/in.txt on the other. That
+# is a wrong answer and not a refusal, which is the kind this port must not
+# add, so PROGRAM_BASE carries the answer instead. src/main.tw records the file
+# it is about to run and every path below is resolved against that file's
+# directory, which is the directory the bootstrap would have used.
+#
+# Three of these builtins deliberately do not resolve anything, because the Go
+# bodies do not: list_dir, save_value and load_value take the path they were
+# given straight to the operating system, so it means what it means to the
+# process rather than to the source file. Passing those through base_resolve
+# would be a tidier rule and a divergence.
+
+# The file being run, as src/main.tw was given it, or empty when nobody set it.
+# An Arr of at most one element rather than a bare Str because a module-level
+# binding is not assignable and a list is, which is the shape CALL_DEPTH and
+# TAPES already use for evaluator state.
+let PROGRAM_BASE: Arr[Str] = arr_new()
+
+# What the program should see through args(). The self-hosted CLI's own argv is
+# not the program's -- the process was invoked as `twill run main.tw run
+# prog.tw`, and a program asking for its arguments must not be handed the two
+# words that got the interpreter started -- so src/main.tw computes the vector
+# the bootstrap would have passed and leaves it here.
+let PROGRAM_ARGS: Arr[Str] = arr_new()
+
+fn set_program_base(path: Str) {
+  arr_clear(PROGRAM_BASE)
+  push(PROGRAM_BASE, path)
+}
+
+fn set_program_args(argv: Arr[Str]) {
+  arr_clear(PROGRAM_ARGS)
+  let i: I64 = 0
+  while i < len(argv) {
+    push(PROGRAM_ARGS, argv[i])
+    i = i + 1
+  }
+}
+
+# base_resolve is the port of the Go interpreter's resolvePath for the program
+# under evaluation: an absolute path is itself, and a relative one is measured
+# from the directory of the file being run. The fallback when nothing has been
+# recorded is resolve_path's own one-argument form, which measures from this
+# file's directory -- the behaviour every path in this evaluator had before
+# PROGRAM_BASE existed, kept so that a driver which does not set the base
+# behaves as it did rather than resolving against the process's directory.
+fn base_resolve(p: Str) -> Str {
+  if path_is_abs(p) { return p }
+  if len(PROGRAM_BASE) == 0 { return resolve_path(p) }
+  resolve_path(resolve_path(PROGRAM_BASE[0]), p)
+}
+
+# args() is shadowed inside the builtin bodies by their own `args` parameter,
+# so the host's is reached through a function that has no such parameter.
+fn host_args() -> Arr[Str] = args()
+
+# Res as a Value, the counterpart of some_value and none_value above. The
+# filesystem, the process and the two persistence builtins all answer with one.
+fn ok_value(payload: Value) -> Value =
+  VVariant(VariantVal { name: "Ok", payload: Some(payload), has_payload: true })
+
+fn err_value(payload: Value) -> Value =
+  VVariant(VariantVal { name: "Err", payload: Some(payload), has_payload: true })
+
+# The one coercion these builtins share. The noun is a parameter because the Go
+# bodies say six different things -- "a path", "string content", "a string
+# fallback", "a base path", "a program name", "a working directory" -- and the
+# differential harness compares the text.
+fn arg_path(v: Value, who: Str, noun: Str, line: I64) -> Res[Str, RuntimeError] {
+  match arg_text(v) {
+    Some(s) => Ok(s),
+    None => Err(runtime_error(line, bytes.concat(who, bytes.concat(" expects ", noun)))),
+  }
+}
+
+# An Arr[Str] as a list of VStr, which is what list_dir and args both answer.
+fn str_list_value(items: Arr[Str]) -> Value {
+  let out: Arr[Value] = arr_new()
+  let i: I64 = 0
+  while i < len(items) {
+    push(out, VStr(items[i]))
+    i = i + 1
+  }
+  VList(ListVal { items: out })
+}
+
+fn bi_io(name: Str, args: Arr[Value], line: I64) -> Res[Value, RuntimeError] {
+  # The three sinks. write_out and write_err print without a trailing newline,
+  # because the source supplies its own; emit_line adds one and goes through
+  # the interpreter's out, which is why a captured print and a captured
+  # emit_line arrive interleaved in the order they were written.
+  if in_words("write_out write_err emit_line", name) {
+    let text: Str = arg_path(args[0], name, "a string", line)?
+    if bytes.equal(name, "write_out") { write_out(text) }
+    if bytes.equal(name, "write_err") { write_err(text) }
+    if bytes.equal(name, "emit_line") { emit_line(text) }
+    return Ok(VUnit)
+  }
+  # save_value is the only builtin here whose path is not the first argument:
+  # it takes the value first, so the value reads as the subject.
+  #
+  # The text is produced by this evaluator's own format_value rather than by
+  # handing the host the Value, because the host would format the enum wrapper
+  # -- VNum, VTensor, VStr -- and not the twill value inside it. Once the text
+  # exists, save_value writes it: the host formats a Str as itself, so the
+  # bytes on disk and the message on a failure are the Go body's exactly,
+  # including the unresolved path, which is the path this builtin uses.
+  if bytes.equal(name, "save_value") {
+    let p: Str = arg_path(args[1], "save_value", "a path", line)?
+    match save_value(format_value(args[0]), p) {
+      Ok(_) => return Ok(ok_value(VUnit)),
+      Err(m) => return Ok(err_value(VStr(m))),
+    }
+  }
+  if bytes.equal(name, "load_value") {
+    let p: Str = arg_path(args[0], "load_value", "a path", line)?
+    match load_value(p) {
+      Ok(s) => return Ok(ok_value(VStr(s))),
+      Err(m) => return Ok(err_value(VStr(m))),
+    }
+  }
+  # list_dir takes the path unresolved, matching the Go body, so a relative one
+  # is read against the process's directory on both sides.
+  if bytes.equal(name, "list_dir") {
+    let p: Str = arg_path(args[0], "list_dir", "a path", line)?
+    match list_dir(p) {
+      Ok(names) => return Ok(ok_value(str_list_value(names))),
+      Err(m) => return Ok(err_value(VStr(m))),
+    }
+  }
+  # module_source resolves an import path to its text: a "std/" path to the
+  # embedded standard library, anything else to a file beside the program. The
+  # std prefix is kept whole -- resolving it against the program's directory
+  # would turn an embedded module into a missing file.
+  if bytes.equal(name, "module_source") {
+    let p: Str = arg_path(args[0], "module_source", "a string", line)?
+    let target: Str = p
+    if not bytes.has_prefix(p, "std/") { target = base_resolve(p) }
+    match module_source(target) {
+      Some(s) => return Ok(some_value(VStr(s))),
+      None => return Ok(none_value()),
+    }
+  }
+  # resolve_path is the one-argument form the file builtins use with the base
+  # implicit, and the two-argument form that resolves against a named file's
+  # directory. The second is pure string work and is delegated whole.
+  if bytes.equal(name, "resolve_path") {
+    if len(args) == 1 {
+      let rel: Str = arg_path(args[0], "resolve_path", "a path", line)?
+      return Ok(VStr(base_resolve(rel)))
+    }
+    if len(args) == 2 {
+      let base: Str = arg_path(args[0], "resolve_path", "a base path", line)?
+      let rel: Str = arg_path(args[1], "resolve_path", "a relative path", line)?
+      return Ok(VStr(resolve_path(base, rel)))
+    }
+    return Err(runtime_error(line, bytes.concat("resolve_path expects 1 or 2 arguments, got ",
+      str(len(args)))))
+  }
+  # The rest read or write a file at a path resolved against the program.
+  let p: Str = arg_path(args[0], name, "a path", line)?
+  let path: Str = base_resolve(p)
+  if bytes.equal(name, "read_file") {
+    match read_file(path) {
+      Ok(s) => return Ok(ok_value(VStr(s))),
+      Err(m) => return Ok(err_value(VStr(m))),
+    }
+  }
+  if bytes.equal(name, "write_file") {
+    let content: Str = arg_path(args[1], "write_file", "string content", line)?
+    match write_file(path, content) {
+      Ok(_) => return Ok(ok_value(VUnit)),
+      Err(m) => return Ok(err_value(VStr(m))),
+    }
+  }
+  # read_text_or and write_text_or are the two above for a caller who has
+  # already decided what a failure means: the fallback text, and a Bool.
+  if bytes.equal(name, "read_text_or") {
+    let fallback: Str = arg_path(args[1], "read_text_or", "a string fallback", line)?
+    return Ok(VStr(read_text_or(path, fallback)))
+  }
+  if bytes.equal(name, "write_text_or") {
+    let content: Str = arg_path(args[1], "write_text_or", "string content", line)?
+    return Ok(VBool(write_text_or(path, content)))
+  }
+  # file_size answers in bytes, or -1 when the path cannot be stat'd, which is
+  # the same convention mtime keeps.
+  if bytes.equal(name, "file_size") {
+    return Ok(VTensor(tensor.scalar(f64(file_size(path)))))
+  }
+  # read_file_at reads at most count bytes from offset. The two counts are read
+  # with as_int and not with int_of: the Go body takes value.AsInt, which
+  # refuses a fractional number rather than truncating it, and truncating here
+  # would accept a call the bootstrap rejects.
+  let offset: I64 = 0
+  match as_int(args[1]) {
+    Some(n) => offset = n,
+    None => return Err(runtime_error(line, "read_file_at expects an integer offset")),
+  }
+  let count: I64 = 0
+  match as_int(args[2]) {
+    Some(n) => count = n,
+    None => return Err(runtime_error(line, "read_file_at expects an integer count")),
+  }
+  match read_file_at(path, offset, count) {
+    Ok(s) => Ok(ok_value(VStr(s))),
+    Err(m) => Ok(err_value(VStr(m))),
+  }
+}
+
+# ---- paths -----------------------------------------------------------------
+#
+# The seven pure ones are string operations and touch no filesystem, so they
+# are delegated with the path exactly as written. The rest stat or change
+# something, and their paths go through base_resolve first -- which also puts
+# the resolved path into the messages that quote one, the way the Go bodies do.
+
+fn bi_path(name: Str, args: Arr[Value], line: I64) -> Res[Value, RuntimeError] {
+  # path_join is variadic: empty components contribute nothing, the rest are
+  # joined with a single separator, and the result is normalised. It is built
+  # here rather than delegated because a twill call cannot spread a list into a
+  # variadic builtin; the normalisation at the end is the same call.
+  if bytes.equal(name, "path_join") {
+    let joined: Str = ""
+    let n: I64 = 0
+    let i: I64 = 0
+    while i < len(args) {
+      let part: Str = ""
+      match arg_text(args[i]) {
+        Some(s) => part = s,
+        None => return Err(runtime_error(line, "path_join expects strings")),
+      }
+      if len(part) > 0 {
+        if n > 0 { joined = bytes.concat(joined, "/") }
+        joined = bytes.concat(joined, part)
+        n = n + 1
+      }
+      i = i + 1
+    }
+    return Ok(VStr(path_normalize(joined)))
+  }
+  if bytes.equal(name, "cwd") {
+    match cwd() {
+      Ok(d) => return Ok(ok_value(VStr(d))),
+      Err(m) => return Ok(err_value(VStr(m))),
+    }
+  }
+  if bytes.equal(name, "temp_dir") {
+    let prefix: Str = arg_path(args[0], "temp_dir", "a name prefix", line)?
+    match temp_dir(prefix) {
+      Ok(d) => return Ok(ok_value(VStr(d))),
+      Err(m) => return Ok(err_value(VStr(m))),
+    }
+  }
+  let raw: Str = arg_path(args[0], name, "a path", line)?
+  if bytes.equal(name, "path_base") { return Ok(VStr(path_base(raw))) }
+  if bytes.equal(name, "path_dir") { return Ok(VStr(path_dir(raw))) }
+  if bytes.equal(name, "path_ext") { return Ok(VStr(path_ext(raw))) }
+  if bytes.equal(name, "path_stem") { return Ok(VStr(path_stem(raw))) }
+  if bytes.equal(name, "path_normalize") { return Ok(VStr(path_normalize(raw))) }
+  if bytes.equal(name, "path_is_abs") { return Ok(VBool(path_is_abs(raw))) }
+  let path: Str = base_resolve(raw)
+  # The two predicates answer Bool and not Res: "it is not there" is the
+  # answer rather than a failure.
+  if bytes.equal(name, "path_exists") { return Ok(VBool(path_exists(path))) }
+  if bytes.equal(name, "path_is_dir") { return Ok(VBool(path_is_dir(path))) }
+  # mtime is whole seconds since the epoch, or -1 when the path cannot be
+  # stat'd. Seconds because this answers "is the artefact older than its
+  # sources", which a filesystem's timestamp resolution does not honestly
+  # support finer.
+  if bytes.equal(name, "mtime") { return Ok(VInt(mtime(path))) }
+  if bytes.equal(name, "mkdir_all") {
+    match mkdir_all(path) {
+      Ok(_) => return Ok(ok_value(VUnit)),
+      Err(m) => return Ok(err_value(VStr(m))),
+    }
+  }
+  if bytes.equal(name, "remove_file") {
+    match remove_file(path) {
+      Ok(_) => return Ok(ok_value(VUnit)),
+      Err(m) => return Ok(err_value(VStr(m))),
+    }
+  }
+  if bytes.equal(name, "remove_dir") {
+    match remove_dir(path) {
+      Ok(_) => return Ok(ok_value(VUnit)),
+      Err(m) => return Ok(err_value(VStr(m))),
+    }
+  }
+  if bytes.equal(name, "remove_all") {
+    match remove_all(path) {
+      Ok(_) => return Ok(ok_value(VUnit)),
+      Err(m) => return Ok(err_value(VStr(m))),
+    }
+  }
+  let to: Str = arg_path(args[1], "rename", "a path", line)?
+  match rename(path, base_resolve(to)) {
+    Ok(_) => Ok(ok_value(VUnit)),
+    Err(m) => Ok(err_value(VStr(m))),
+  }
+}
+
+# ---- the clock and the process ---------------------------------------------
+
+fn bi_proc(name: Str, args: Arr[Value], line: I64) -> Res[Value, RuntimeError] {
+  # clock_now_ms is the wall clock and can step backwards when the system's
+  # time is corrected; mono_ns only ever goes forward and is what a duration
+  # should be measured with. The zero point of the second is arbitrary, so only
+  # a difference between two readings means anything.
+  if bytes.equal(name, "clock_now_ms") {
+    return Ok(VTensor(tensor.scalar(f64(clock_now_ms()))))
+  }
+  if bytes.equal(name, "mono_ns") { return Ok(VInt(mono_ns())) }
+  if bytes.equal(name, "is_tty_stdout") { return Ok(VBool(is_tty_stdout())) }
+  # window_size is the terminal's size as a { cols, rows } record. The Go body
+  # has no size syscall and answers zeros, so the caller falls back to 80x24;
+  # this is that constant rather than a delegation because reading the two
+  # fields back out of a host record would cost more than the constant is
+  # worth. testdata/conformance/cases/proc.tw compares both sides, so a
+  # bootstrap that grows a real syscall fails there rather than diverging
+  # quietly.
+  if bytes.equal(name, "window_size") {
+    let fields: Dict[Str, Value] = dict_new()
+    dict_set(fields, "cols", VTensor(tensor.scalar(0.0)))
+    dict_set(fields, "rows", VTensor(tensor.scalar(0.0)))
+    return Ok(VRecord(plain_record(fields)))
+  }
+  # args is what src/main.tw recorded, not the interpreter's own argv. Nothing
+  # recorded means a driver that did not set it, and the process's own vector
+  # is a better answer than an empty one.
+  if bytes.equal(name, "args") {
+    if len(PROGRAM_ARGS) == 0 { return Ok(str_list_value(host_args())) }
+    return Ok(str_list_value(PROGRAM_ARGS))
+  }
+  if bytes.equal(name, "env") {
+    let key: Str = arg_path(args[0], "env", "a string", line)?
+    match env(key) {
+      Some(v) => return Ok(some_value(VStr(v))),
+      None => return Ok(none_value()),
+    }
+  }
+  # abort stops the program with the value as the message. It is a runtime
+  # error and not an exit status: a caller has asserted something that did not
+  # hold, and the line it happened on is the useful part.
+  if bytes.equal(name, "abort") {
+    return Err(runtime_error(line, bytes.concat("abort: ", format_value(args[0]))))
+  }
+  # exit(n) stops the program with status n, and it is delegated because there
+  # is nothing else it could be: the host's exit unwinds the whole Go
+  # interpreter, this evaluator included, and hands the status to the process.
+  # Building a status that had to be carried back through every Res in this
+  # file would be a second mechanism for one that already works.
+  if bytes.equal(name, "exit") {
+    let code: F64 = scalar_of(args[0], "exit", line)?
+    exit(i64_of_f64(f64_trunc(code)))
+    return Ok(VUnit)
+  }
+  # run starts a program, waits for it and answers with what it printed. The
+  # program and its arguments stay separate values all the way to the host
+  # call: nothing here parses a command line, splits on whitespace or reaches a
+  # shell, and the argument for that is on internal/interp/proc.go.
+  let program: Str = arg_path(args[0], "run", "a program name", line)?
+  let items: Arr[Value] = arr_new()
+  match args[1] {
+    VList(l) => items = l.items,
+    _ => return Err(runtime_error(line, "run expects an Arr[Str] of arguments")),
+  }
+  let argv: Arr[Str] = arr_new()
+  let i: I64 = 0
+  while i < len(items) {
+    match arg_text(items[i]) {
+      Some(s) => push(argv, s),
+      None => return Err(runtime_error(line, "run expects every argument to be a string")),
+    }
+    i = i + 1
+  }
+  let dir: Str = arg_path(args[2], "run", "a working directory", line)?
+  # An empty directory means "where the running program's relative paths
+  # point", which is the base every path builtin above resolves against, so a
+  # caller does not have to know two rules. base_resolve("") is that directory.
+  match run(program, argv, base_resolve(dir)) {
+    Ok(s) => Ok(ok_value(VStr(s))),
+    Err(m) => Ok(err_value(VStr(m))),
   }
 }
 

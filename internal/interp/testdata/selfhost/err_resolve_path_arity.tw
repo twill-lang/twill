@@ -1,0 +1,7 @@
+mode systems
+
+# resolve_path is variadic, so the count is checked by the builtin rather than
+# by apply, and it says what it wanted instead of naming an arity.
+fn main() {
+  print(resolve_path("a", "b", "c"))
+}

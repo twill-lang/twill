@@ -1,0 +1,98 @@
+# builtins_test.tw: the builtins with no library module in front of them.
+#
+# Run with:  twill std/tests/builtins_test.tw
+#
+# `ushr`, `sha256`, `sha256_bytes`, `log1p` and `expm1` are language surface
+# rather than library, so no other suite here would have covered them. They are
+# covered here because this directory is what `make conformance-check` runs
+# under both implementations: a builtin that answered differently on the two
+# would show up as a divergence in this file rather than in whatever downstream
+# program noticed first.
+#
+# Every expected value is worked out from the definition above it, except the
+# digests, which are the published SHA-256 test vectors.
+
+import "harness.tw" as h
+
+fn ushr_is_the_logical_right_shift() {
+  h.test("ushr is the logical right shift")
+  # shr is arithmetic: -1 stays -1 however far it is shifted. ushr reads the
+  # same bit pattern as unsigned, so -1 shifted once is 2^63 - 1.
+  h.check("shr keeps the sign", shr(0 - 1, 1) == 0 - 1)
+  h.check("ushr fills with zeros", ushr(0 - 1, 1) == 9223372036854775807)
+  h.check("ushr of the sign bit alone is 1", ushr(0 - 9223372036854775808, 63) == 1)
+  h.check("ushr agrees with shr on a non-negative operand", ushr(8, 1) == shr(8, 1))
+  # A count of zero is the identity, which is the case the hand-rolled idiom
+  # needs a guard for.
+  h.check("ushr by zero is the identity", ushr(0 - 1, 0) == 0 - 1)
+  # The count is masked to 0..63, the way shl and shr mask theirs.
+  h.check("ushr masks its count", ushr(0 - 1, 65) == ushr(0 - 1, 1))
+}
+
+fn sha256_answers_the_published_vectors() {
+  h.test("sha256 answers the published vectors")
+  h.check("the empty string",
+          sha256("") == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+  h.check("abc",
+          sha256("abc") == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+  # 56 bytes: the padding spills into a second block.
+  h.check("the 56-byte two-block vector",
+          sha256("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq")
+            == "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1")
+  h.check("a digest is 64 characters", len(sha256("anything")) == 64)
+}
+
+fn sha256_bytes_hashes_a_buffer_to_the_same_digest() {
+  h.test("sha256_bytes hashes a buffer to the same digest")
+  let b = bytes_new()
+  bytes_push(b, 97)
+  bytes_push(b, 98)
+  bytes_push(b, 99)
+  h.check("a buffer of abc hashes as the string abc", sha256_bytes(b) == sha256("abc"))
+  h.check("an empty buffer hashes as the empty string", sha256_bytes(bytes_new()) == sha256(""))
+}
+
+fn log1p_and_expm1_keep_what_the_naive_forms_cancel() {
+  h.test("log1p and expm1 keep what the naive forms cancel")
+  # 1 + 1e-16 rounds to exactly 1, so log of it is 0 and the input is gone.
+  #
+  # The surviving value is compared as a ratio and not bit for bit. Bit for bit
+  # it is exactly 1e-16 on the bootstrap, and this suite runs under both
+  # implementations: the self-hosted evaluator rounds every number that passes
+  # through a tensor to about 45 significant bits, so `item(scalar(0.1))` there
+  # is 0x1.9999999999ap-04 where the bootstrap has 0x1.999999999999ap-04. That
+  # is a defect of its own and older than log1p; the bit-exact form of this
+  # claim is in internal/interp/log1p_test.go, which runs on the bootstrap only.
+  h.check("log(1 + 1e-16) has cancelled", item(log(1.0 + 1e-16)) == 0.0)
+  h.check("log1p(1e-16) has not", h.close(item(log1p(1e-16)) / 1e-16, 1.0, 0.000001))
+  h.check("exp(1e-16) - 1 has cancelled", item(exp(1e-16) - 1.0) == 0.0)
+  h.check("expm1(1e-16) has not", h.close(item(expm1(1e-16)) / 1e-16, 1.0, 0.000001))
+  # Away from zero they are the functions they name.
+  h.check("log1p(1) is log(2)", h.near(item(log1p(1.0)), 0.693147180559945))
+  h.check("expm1(1) is e - 1", h.near(item(expm1(1.0)), 1.718281828459045))
+  h.check("log1p is elementwise", h.shaped(log1p(zeros(2, 3)), list(2, 3)))
+}
+
+fn log1p_and_expm1_carry_their_gradients() {
+  h.test("log1p and expm1 carry their gradients")
+  # d/dx log(1+x) = 1/(1+x), so at [0, 1, 3] it is [1, 1/2, 1/4].
+  h.check("log1p differentiates to 1/(1+x)",
+          h.near_all(grad(fn(v) = sum(log1p(v)))([0.0, 1.0, 3.0]), [1.0, 0.5, 0.25]))
+  # d/dx (exp(x) - 1) = exp(x), so at 0 it is 1 and at 1 it is e.
+  h.check("expm1 differentiates to exp(x)",
+          h.near_all(grad(fn(v) = sum(expm1(v)))([0.0, 1.0]), [1.0, 2.718281828459045]))
+  # Second order: log1p'' = -1/(1+x)^2 and expm1'' = exp(x).
+  h.check("log1p has the second derivative -1/(1+x)^2",
+          h.near_all(hessian(fn(v) = sum(log1p(v)))([1.0, 3.0]),
+                     [[-0.25, 0.0], [0.0, -0.0625]]))
+  h.check("expm1 has the second derivative exp(x)",
+          h.near_all(hessian(fn(v) = sum(expm1(v)))([0.0, 1.0]),
+                     [[1.0, 0.0], [0.0, 2.718281828459045]]))
+}
+
+ushr_is_the_logical_right_shift()
+sha256_answers_the_published_vectors()
+sha256_bytes_hashes_a_buffer_to_the_same_digest()
+log1p_and_expm1_keep_what_the_naive_forms_cancel()
+log1p_and_expm1_carry_their_gradients()
+h.report("builtins_test")

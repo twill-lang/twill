@@ -1,0 +1,17 @@
+mode systems
+
+# exit stops the program with a status, and the status is the point: a test
+# harness without it prints its failures and still returns zero, so CI passes on
+# a red suite. Only a comparison that runs both implementations as processes can
+# see this, which is why this case is here and not in the in-process harness.
+#
+# The two writes before it are as much of the case as the status. write_out goes
+# straight to the process's stdout rather than through the interpreter's sink,
+# so what this pins is that the bytes are there, on the right stream, before the
+# process goes away, and that nothing after the exit runs.
+fn main() {
+  write_out("before the exit, on stdout\n")
+  write_err("before the exit, on stderr\n")
+  exit(3)
+  write_out("this line must not be reached\n")
+}
