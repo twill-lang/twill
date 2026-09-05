@@ -1367,13 +1367,37 @@ fn eval_expr(e: ast.Expr, env: Env) -> Res[Value, RuntimeError] {
     EIndex(x) => eval_index(x, env),
     ESlice(x) => eval_slice(x, env),
     ERecord(x) => {
+      let fields: Dict[Str, Value] = dict_new()
+      let tn: Str = ""
+      # `{ ..base, x: 1 }` starts from a copy of the base and then lets the
+      # fields written out replace what they name. The copy is shallow: a field
+      # holding a list hands over the same list, which is what `{ x: base.x }`
+      # written out by hand already does, and making this one case deep would be
+      # a second rule for the same syntax.
+      #
+      # The copy carries the base's struct name, so an update of a `Point` is
+      # still a `Point` for the purpose of a later field assignment's coercion.
+      # A type name on the literal itself wins, and is set below.
+      match x.base {
+        Some(b) => {
+          match eval_expr(b, env)? {
+            VRecord(r) => {
+              tn = r.type_name
+              for name in dict_keys(r.fields) {
+                dict_set(fields, name, dict_must(r.fields, name))
+              }
+            },
+            _ => return Err(runtime_error(x.line,
+              "the base of a record update must be a record")),
+          }
+        },
+        None => unit,
+      }
       # A typed literal reads its declared field types, so a number at an I64
       # field is an Int, the same rule a `let` annotation follows. The name is
       # looked up unqualified: `resolve.Catalog` and `Catalog` name the same
       # declaration.
-      let fields: Dict[Str, Value] = dict_new()
       let declared: Opt[Dict[Str, Str]] = dict_get(STRUCT_FIELDS, bare_type_name(x.type_name))
-      let tn: Str = ""
       match declared {
         Some(_) => tn = bare_type_name(x.type_name),
         None => unit,
