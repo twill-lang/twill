@@ -11,7 +11,7 @@ mode systems
 # a ddof bug through, which is the bug this module is most at risk of.
 
 import "std/stats" as st
-import "systems_harness.tw" as t
+import "std/test" as t
 
 fn av(xs: Arr[F64], v: F64) -> Arr[F64] {
   push(xs, v)
@@ -32,26 +32,24 @@ fn one_to_four() -> Arr[F64] {
 }
 
 fn main() -> I64 {
-  let rp: t.Report = t.new_report()
-
   # ---- central tendency ----------------------------------------------------
 
   # 2 + 4 + 4 + 4 + 5 + 5 + 7 + 9 = 40, over 8, is exactly 5.
-  t.check_close(rp, "the mean of the spread data set is exactly five",
+  t.near("the mean of the spread data set is exactly five",
     st.mean(spread()), 5.0, 0.0)
 
   # A single element is its own mean, and the empty case aborts rather than
   # returning zero, which is why there is no test for it.
-  t.check_close(rp, "the mean of one element is that element",
+  t.near("the mean of one element is that element",
     st.mean(av(arr_new(), 7.5)), 7.5, 0.0)
 
   # An even count averages the middle pair: (2 + 3) / 2.
-  t.check_close(rp, "the median of an even count averages the middle pair",
+  t.near("the median of an even count averages the middle pair",
     st.median(one_to_four()), 2.5, 0.0)
 
   # An odd count returns the middle element itself.
   let odd: Arr[F64] = av(av(av(arr_new(), 3.0), 1.0), 2.0)
-  t.check_close(rp, "the median of an odd count is the middle element after sorting",
+  t.near("the median of an odd count is the middle element after sorting",
     st.median(odd), 2.0, 0.0)
 
   # The median must not depend on the input order, which is the property a
@@ -59,7 +57,7 @@ fn main() -> I64 {
   let shuffled: Arr[F64] = arr_new()
   shuffled = av(av(av(av(shuffled, 9.0), 4.0), 5.0), 2.0)
   shuffled = av(av(av(av(shuffled, 7.0), 4.0), 5.0), 4.0)
-  t.check_close(rp, "the median does not depend on the order of the input",
+  t.near("the median does not depend on the order of the input",
     st.median(shuffled), st.median(spread()), 0.0)
 
   # ---- quantiles -----------------------------------------------------------
@@ -67,27 +65,27 @@ fn main() -> I64 {
   # Type 7 on [1, 2, 3, 4] at q = 0.25: h = (4 - 1) * 0.25 = 0.75, so the answer
   # is x[0] + 0.75 * (x[1] - x[0]) = 1.75. numpy.quantile with the default
   # linear method gives 1.75 on the same input.
-  t.check_close(rp, "the lower quartile interpolates by the type seven rule",
+  t.near("the lower quartile interpolates by the type seven rule",
     st.quantile(one_to_four(), 0.25), 1.75, 0.0000000000001)
 
   # h = 3 * 0.9 = 2.7, so x[2] + 0.7 * (x[3] - x[2]) = 3.7. numpy agrees.
-  t.check_close(rp, "the ninetieth percentile interpolates between the third and fourth values",
+  t.near("the ninetieth percentile interpolates between the third and fourth values",
     st.quantile(one_to_four(), 0.9), 3.7, 0.0000000000001)
 
   # The ends return the observations themselves rather than extrapolating,
   # which is the part of the type 7 rule people are most often surprised by.
-  t.check_close(rp, "the zeroth quantile is the smallest observation",
+  t.near("the zeroth quantile is the smallest observation",
     st.quantile(one_to_four(), 0.0), 1.0, 0.0)
-  t.check_close(rp, "the first quantile is the largest observation",
+  t.near("the first quantile is the largest observation",
     st.quantile(one_to_four(), 1.0), 4.0, 0.0)
 
   # The median and the half quantile are the same function and must agree
   # exactly, not approximately.
-  t.check(rp, "the median equals the half quantile exactly",
+  t.check("the median equals the half quantile exactly",
     st.median(spread()) == st.quantile(spread(), 0.5))
 
   # q75 - q25 on [1, 2, 3, 4] is 3.25 - 1.75.
-  t.check_close(rp, "the interquartile range is the spread of the middle half",
+  t.near("the interquartile range is the spread of the middle half",
     st.iqr(one_to_four()), 1.5, 0.0000000000001)
 
   # ---- spread --------------------------------------------------------------
@@ -96,32 +94,32 @@ fn main() -> I64 {
   # squares sum to 9 + 1 + 1 + 1 + 0 + 0 + 4 + 16 = 32. Over n = 8 that is
   # exactly 4; over n - 1 = 7 it is 32/7 = 4.571428571428571, which is what
   # numpy's var(ddof=1) gives on the same data.
-  t.check_close(rp, "the population variance divides the sum of squares by n",
+  t.near("the population variance divides the sum of squares by n",
     st.var(spread(), 0), 4.0, 0.0000000000001)
-  t.check_close(rp, "the sample variance divides by n minus one",
+  t.near("the sample variance divides by n minus one",
     st.var(spread(), 1), 4.571428571428571, 0.0000000000001)
 
   # The whole point of the ddof argument: the two answers differ, and by the
   # factor n / (n - 1) = 8/7 exactly.
-  t.check_close(rp, "the sample variance exceeds the population variance by n over n minus one",
+  t.near("the sample variance exceeds the population variance by n over n minus one",
     st.var(spread(), 1) / st.var(spread(), 0), 1.1428571428571428, 0.0000000000001)
 
   # sqrt(4) = 2 exactly; sqrt(32/7) = 2.138089935299395 from numpy's
   # std(ddof=1).
-  t.check_close(rp, "the population standard deviation is the root of the population variance",
+  t.near("the population standard deviation is the root of the population variance",
     st.std(spread(), 0), 2.0, 0.0000000000001)
-  t.check_close(rp, "the sample standard deviation is the root of the sample variance",
+  t.near("the sample standard deviation is the root of the sample variance",
     st.std(spread(), 1), 2.138089935299395, 0.0000000000001)
 
   # A constant array has exactly zero spread and no epsilon under the root,
   # unlike the tensor version in std/num.tw. Exact equality is the assertion.
   let flat: Arr[F64] = av(av(av(arr_new(), 3.0), 3.0), 3.0)
-  t.check(rp, "the standard deviation of a constant array is exactly zero",
+  t.check("the standard deviation of a constant array is exactly zero",
     st.std(flat, 0) == 0.0)
 
   # The median of [2, 4, 4, 4, 5, 5, 7, 9] is 4.5, the absolute deviations are
   # [2.5, .5, .5, .5, .5, .5, 2.5, 4.5], and their median is 0.5.
-  t.check_close(rp, "the median absolute deviation resists the outlier at nine",
+  t.near("the median absolute deviation resists the outlier at nine",
     st.mad(spread()), 0.5, 0.0000000000001)
 
   # ---- mode ----------------------------------------------------------------
@@ -130,13 +128,13 @@ fn main() -> I64 {
   let counted: Arr[F64] = arr_new()
   counted = av(av(av(counted, 1.0), 2.0), 2.0)
   counted = av(av(av(counted, 3.0), 3.0), 3.0)
-  t.check_close(rp, "the mode is the most frequent value", st.mode(counted), 3.0, 0.0)
+  t.near("the mode is the most frequent value", st.mode(counted), 3.0, 0.0)
 
   # A tie goes to the smaller value, which is the documented rule rather than
   # an accident of the sort.
   let tied: Arr[F64] = arr_new()
   tied = av(av(av(av(tied, 5.0), 5.0), 1.0), 1.0)
-  t.check_close(rp, "a tie in the mode goes to the smaller value",
+  t.near("a tie in the mode goes to the smaller value",
     st.mode(tied), 1.0, 0.0)
 
   # ---- relationships -------------------------------------------------------
@@ -149,19 +147,19 @@ fn main() -> I64 {
   xs = av(av(av(av(av(xs, 1.0), 2.0), 3.0), 4.0), 5.0)
   let ys: Arr[F64] = arr_new()
   ys = av(av(av(av(av(ys, 2.0), 4.0), 5.0), 4.0), 5.0)
-  t.check_close(rp, "the population covariance divides by n",
+  t.near("the population covariance divides by n",
     st.cov(xs, ys, 0), 1.2, 0.0000000000001)
-  t.check_close(rp, "the sample covariance divides by n minus one",
+  t.near("the sample covariance divides by n minus one",
     st.cov(xs, ys, 1), 1.5, 0.0000000000001)
 
   # cov(x, x) and var(x) are the same computation and must agree exactly.
-  t.check(rp, "the covariance of an array with itself is its variance",
+  t.check("the covariance of an array with itself is its variance",
     st.cov(xs, xs, 1) == st.var(xs, 1))
 
   # numpy's corrcoef on the same pair gives 0.7745966692414834. It is
   # sqrt(3)/2 * 0.894..., not a round number, which is what makes it a real
   # check rather than a coincidence.
-  t.check_close(rp, "the correlation of the sample pair matches the reference value",
+  t.near("the correlation of the sample pair matches the reference value",
     st.corr(xs, ys), 0.7745966692414834, 0.0000000000001)
 
   # Correlation is scale free by construction: multiplying one series by a
@@ -172,12 +170,12 @@ fn main() -> I64 {
     push(scaled, ys[i] * 100.0)
     i = i + 1
   }
-  t.check_close(rp, "correlation does not change when one series is rescaled",
+  t.near("correlation does not change when one series is rescaled",
     st.corr(xs, scaled), st.corr(xs, ys), 0.0000000000001)
 
   # A series correlated with itself is exactly one, up to rounding in the
   # division by the two standard deviations.
-  t.check_close(rp, "a series correlates perfectly with itself",
+  t.near("a series correlates perfectly with itself",
     st.corr(xs, xs), 1.0, 0.0000000000001)
 
   # ---- z-scores ------------------------------------------------------------
@@ -185,13 +183,13 @@ fn main() -> I64 {
   # The smallest value of the spread data is 2, three below the mean of 5, and
   # the population standard deviation is 2, so its z-score is -1.5 exactly.
   let z: Arr[F64] = st.zscore(spread(), 0)
-  t.check_close(rp, "the z-score of the smallest value is minus one and a half",
+  t.near("the z-score of the smallest value is minus one and a half",
     z[0], -1.5, 0.0000000000001)
 
   # A z-scored array has mean zero and unit population variance, which is the
   # definition and therefore the right property to assert.
-  t.check_close(rp, "z-scoring gives a mean of zero", st.mean(z), 0.0, 0.0000000000001)
-  t.check_close(rp, "z-scoring with ddof zero gives unit population variance",
+  t.near("z-scoring gives a mean of zero", st.mean(z), 0.0, 0.0000000000001)
+  t.near("z-scoring with ddof zero gives unit population variance",
     st.var(z, 0), 1.0, 0.0000000000001)
 
   # ---- special functions ---------------------------------------------------
@@ -200,71 +198,71 @@ fn main() -> I64 {
   # rather than 1e-12 because the Chebyshev form in stats.tw is specified to a
   # fractional error of 1.2e-7 and asserting more would be asserting something
   # the implementation never claimed.
-  t.check_close(rp, "erf of one matches the reference to the accuracy the approximation claims",
+  t.near("erf of one matches the reference to the accuracy the approximation claims",
     st.erf(1.0), 0.8427007929497149, 0.000001)
-  t.check_close(rp, "erf of zero is zero", st.erf(0.0), 0.0, 0.0000001)
-  t.check(rp, "erf is odd", t.close(st.erf(-0.7), 0.0 - st.erf(0.7), 0.0000000001))
+  t.near("erf of zero is zero", st.erf(0.0), 0.0, 0.0000001)
+  t.near("erf is odd", st.erf(-0.7), 0.0 - st.erf(0.7), 0.0000000001)
 
   # lgamma(5) = log(4!) = log(24) = 3.178053830347945, and
   # lgamma(0.5) = log(sqrt(pi)) = 0.5723649429247004, both from Python's
   # math.lgamma. The half-integer case exercises the reflection branch, which
   # nothing else here reaches.
-  t.check_close(rp, "the log gamma of five is the log of twenty four",
+  t.near("the log gamma of five is the log of twenty four",
     st.lgamma(5.0), 3.178053830347945, 0.0000000001)
-  t.check_close(rp, "the log gamma of a half is the log of the root of pi",
+  t.near("the log gamma of a half is the log of the root of pi",
     st.lgamma(0.5), 0.5723649429247004, 0.0000000001)
-  t.check_close(rp, "the log gamma of one is zero", st.lgamma(1.0), 0.0, 0.0000000001)
+  t.near("the log gamma of one is zero", st.lgamma(1.0), 0.0, 0.0000000001)
 
   # ---- the normal distribution ---------------------------------------------
 
   let nd: st.Normal = st.normal(0.0, 1.0)
 
   # The standard normal density at zero is 1/sqrt(2 pi) = 0.3989422804014327.
-  t.check_close(rp, "the standard normal density at zero is one over the root of two pi",
+  t.near("the standard normal density at zero is one over the root of two pi",
     st.normal_pdf(nd, 0.0), 0.3989422804014327, 0.0000000000001)
 
   # Symmetric, so the cdf at the mean is exactly a half.
-  t.check_close(rp, "the normal cdf at the mean is a half",
+  t.near("the normal cdf at the mean is a half",
     st.normal_cdf(nd, 0.0), 0.5, 0.0000001)
 
   # 0.5 * erfc(-1.96 / sqrt(2)) = 0.9750021048517796 in Python. This is the
   # number behind the "1.96 sigma is 95%" rule and is worth pinning exactly.
-  t.check_close(rp, "the normal cdf at one point nine six is the familiar ninety seven and a half percent",
+  t.near("the normal cdf at one point nine six is the familiar ninety seven and a half percent",
     st.normal_cdf(nd, 1.96), 0.9750021048517796, 0.0000001)
 
   # The tail is where the erfc formulation earns its place: an implementation
   # written as (1 + erf(z))/2 returns exactly zero here through cancellation.
   # The true value of the standard normal cdf at -10 is about 7.62e-24.
-  t.check(rp, "the far negative tail of the normal cdf does not cancel to zero",
+  t.check("the far negative tail of the normal cdf does not cancel to zero",
     st.normal_cdf(nd, -10.0) > 0.0)
 
   # Shifting and scaling: N(5, 2) at x = 5 is a half, and at x = 7 it is the
   # standard normal at 1.
   let nd2: st.Normal = st.normal(5.0, 2.0)
-  t.check_close(rp, "a shifted normal has its half point at its mean",
+  t.near("a shifted normal has its half point at its mean",
     st.normal_cdf(nd2, 5.0), 0.5, 0.0000001)
-  t.check_close(rp, "one standard deviation above the mean is the same probability at any scale",
+  t.near("one standard deviation above the mean is the same probability at any scale",
     st.normal_cdf(nd2, 7.0), st.normal_cdf(nd, 1.0), 0.0000000001)
 
   # ---- the uniform distribution --------------------------------------------
 
   let ud: st.Uniform = st.uniform(2.0, 6.0)
-  t.check_close(rp, "the uniform density is one over the width",
+  t.near("the uniform density is one over the width",
     st.uniform_pdf(ud, 3.0), 0.25, 0.0)
-  t.check_close(rp, "the uniform density outside the support is zero",
+  t.near("the uniform density outside the support is zero",
     st.uniform_pdf(ud, 1.0), 0.0, 0.0)
-  t.check_close(rp, "the uniform cdf is linear across the support",
+  t.near("the uniform cdf is linear across the support",
     st.uniform_cdf(ud, 3.0), 0.25, 0.0000000000001)
-  t.check_close(rp, "the uniform cdf saturates at one above the support",
+  t.near("the uniform cdf saturates at one above the support",
     st.uniform_cdf(ud, 99.0), 1.0, 0.0)
 
   # ---- Bernoulli -----------------------------------------------------------
 
   let bd: st.Bernoulli = st.bernoulli(0.3)
-  t.check_close(rp, "the bernoulli mass at one is p", st.bernoulli_pmf(bd, 1), 0.3, 0.0)
-  t.check_close(rp, "the bernoulli mass at zero is one minus p",
+  t.near("the bernoulli mass at one is p", st.bernoulli_pmf(bd, 1), 0.3, 0.0)
+  t.near("the bernoulli mass at zero is one minus p",
     st.bernoulli_pmf(bd, 0), 0.7, 0.0000000000001)
-  t.check_close(rp, "the bernoulli mass off the support is zero",
+  t.near("the bernoulli mass off the support is zero",
     st.bernoulli_pmf(bd, 2), 0.0, 0.0)
 
   # ---- binomial ------------------------------------------------------------
@@ -272,26 +270,26 @@ fn main() -> I64 {
   # C(10, 5) / 2^10 = 252 / 1024 = 0.24609375, exact in binary and therefore
   # checkable to the last bit.
   let bn: st.Binomial = st.binomial(10, 0.5)
-  t.check_close(rp, "the binomial mass at the mode of ten fair trials is two five two over one zero two four",
+  t.near("the binomial mass at the mode of ten fair trials is two five two over one zero two four",
     st.binomial_pmf(bn, 5), 0.24609375, 0.0000000000001)
 
   # The masses at 0 and 10 are both 1/1024, by symmetry.
-  t.check_close(rp, "the binomial mass at zero successes is one over one zero two four",
+  t.near("the binomial mass at zero successes is one over one zero two four",
     st.binomial_pmf(bn, 0), 0.0009765625, 0.0000000000001)
-  t.check_close(rp, "the binomial is symmetric at p equal to a half",
+  t.near("the binomial is symmetric at p equal to a half",
     st.binomial_pmf(bn, 3), st.binomial_pmf(bn, 7), 0.0000000000001)
 
   # Summing k = 0..5 of C(10, k)/1024 gives 638/1024 = 0.623046875, exact.
-  t.check_close(rp, "the binomial cdf at five of ten fair trials is six three eight over one zero two four",
+  t.near("the binomial cdf at five of ten fair trials is six three eight over one zero two four",
     st.binomial_cdf(bn, 5), 0.623046875, 0.0000000000001)
 
   # The whole distribution sums to one, which catches an off-by-one in the
   # coefficient that the individual masses might not.
-  t.check_close(rp, "the binomial masses sum to one",
+  t.near("the binomial masses sum to one",
     st.binomial_cdf(bn, 10), 1.0, 0.0000000001)
 
   # The degenerate parameters: all the mass sits at one end.
-  t.check_close(rp, "a binomial with p zero puts all its mass on no successes",
+  t.near("a binomial with p zero puts all its mass on no successes",
     st.binomial_pmf(st.binomial(5, 0.0), 0), 1.0, 0.0)
 
   # ---- Poisson -------------------------------------------------------------
@@ -300,20 +298,20 @@ fn main() -> I64 {
   # and the cdf at 2 is exp(-3) * (1 + 3 + 4.5) = 0.42319008112684353, both
   # from Python's math.exp on the closed forms.
   let po: st.Poisson = st.poisson(3.0)
-  t.check_close(rp, "the poisson mass at two with a mean of three matches the closed form",
+  t.near("the poisson mass at two with a mean of three matches the closed form",
     st.poisson_pmf(po, 2), 0.22404180765538775, 0.0000000000001)
-  t.check_close(rp, "the poisson cdf at two with a mean of three matches the closed form",
+  t.near("the poisson cdf at two with a mean of three matches the closed form",
     st.poisson_cdf(po, 2), 0.42319008112684353, 0.0000000000001)
 
   # The mass at zero is exp(-lam), which is the one value with no factorial in
   # it and therefore the one that isolates the log-space arithmetic.
-  t.check_close(rp, "the poisson mass at zero is the exponential of minus the mean",
+  t.near("the poisson mass at zero is the exponential of minus the mean",
     st.poisson_pmf(po, 0), 0.049787068367863944, 0.0000000000001)
 
   # Far enough out, the cdf reaches one. At lam = 3 the mass above k = 40 is
   # around 1e-30.
-  t.check_close(rp, "the poisson masses sum to one over a long enough range",
+  t.near("the poisson masses sum to one over a long enough range",
     st.poisson_cdf(po, 40), 1.0, 0.0000000001)
 
-  t.report(rp, "stats")
+  t.report("stats")
 }
