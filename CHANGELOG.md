@@ -4,6 +4,78 @@
 
 ### Added
 
+- **`const`, a binding that cannot be assigned to.** It is written wherever a
+  `let` can be, and both checkers refuse an assignment through the name: the
+  binding itself, an element of it, a field of it, and any nesting of those
+  (`REC.d[0] = ...`) alike:
+
+  ```
+  HEX is declared const on line 2, so nothing may be assigned through that
+  name: not the binding, and not an element or field of it. Bind a new name
+  for the changed value, or declare it with let if it is meant to change.
+  ```
+
+  **A `const` is also the only binding of its name in the scope that declares
+  it.** A second `let` of that name there is refused rather than quietly taking
+  the const's place:
+
+  ```
+  HEX is declared const on line 1, so the name cannot be bound a second time
+  in the same scope: a second binding would take its place and everything
+  after it would be assignable again. Rename one of them, or declare line 1
+  with let if the name is meant to change.
+  ```
+
+  That case was a silent revocation and, worse, an order-dependent one:
+  top-level consts are registered before the walk starts, so a `let` above the
+  `const` was refused and a `let` below it was not. Two plain `let`s of one name
+  stay legal, and an inner scope is still a different scope.
+
+  The rule lives in the Go checker and in `src/check.tw`, word for word. The
+  two refusal tests in `internal/interp/selfhost_test.go` take the expected text
+  from `checker.Check` rather than writing it as a literal, so a reworded
+  diagnostic on either side fails the build instead of splitting the two
+  implementations.
+
+  **What is not delivered: a caller in another file can still assign to an
+  imported `const`.** That is `docs/roadmap.md` entry 28's actual complaint --
+  weft's `HEX`, `QUADRANTS`, `DENSITY` and `LEVELS` are lookup tables an
+  importer replaces -- and this change does not answer it. A plain `import`
+  copies the name into the importing scope and the handle is shared, so a
+  second file's `HEX = ...` or `HEX[0] = ...` is still accepted by both
+  checkers and is still what every other importer then reads. What `const`
+  refuses today is a write in the file the binding was declared in, which
+  catches a library breaking its own promise rather than a caller breaking it.
+  Entry 28 stays open.
+
+  A cross-file rule was written and is withdrawn. It rode on the Go checker's
+  import walk, the walk that exists for cross-module enum exhaustiveness, and
+  changing that walk broke it: a file importing nine or more siblings where a
+  later one declared an enum stopped being followed, so a non-exhaustive
+  `match` that `main` refuses was accepted, and whether it was accepted
+  depended on the order the imports were written in. The same change made an
+  aliased-import walk exponential in fan-out. `internal/checker/imports.go` is
+  therefore byte-identical to the file on `main`, and `check()` in
+  `src/check.tw` reads one file as it always did.
+
+  `let` was **not** made read-only at the top level instead, which is the other
+  half of what weft asked for. A read-only `let` was implemented behind a flag
+  and swept over the 545 `.tw` files under `src/`, `std/`, `testdata/` and
+  `examples/` here plus the five satellite repositories entry 28 counts (spool,
+  loom, bobbin, weft, warp): it refused 45 of them, including this repository's
+  own `std/tests/harness.tw` and `src/eval.tw`, the test harness in every one
+  of the five satellites, warp's `examples/train.tw`, fourteen `testdata/cases`
+  fixtures, and twelve numeric-mode programs under `examples/` whose training
+  loop is written at file level, ten of which are mirrored again under
+  `testdata/examples/`. Making `let` read-only would have refused all of them,
+  so the guarantee is asked for rather than imposed.
+
+  One further limit is deliberate and is written down in
+  `docs/language-guide.md` under **`const`**. It is not a deep freeze:
+  `HEX[0] = ...` is refused but `push(HEX, x)` is not, and neither is a
+  function handed the handle, because `Arr` has reference semantics and nothing
+  tracks where a handle goes.
+||||||| fcb32ae
 - **A conformance gate, and what it found when it was first run.** Twill has two
   implementations and the README said they agree. That is true of the lexer, the
   parser, the checker and the formatter. It was never true of the evaluator, and

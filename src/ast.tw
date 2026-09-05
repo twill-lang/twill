@@ -292,6 +292,11 @@ struct Let {
   # Advisory, like a parameter's type_name; a `.` or `[` marks it as a type.
   type_name: Str,
   value: Expr,
+  # True for a `const` binding rather than a `let`. It binds once: nothing may
+  # be assigned through the name afterwards, which is what a file-level lookup
+  # table needs, since a plain import makes that binding shared with every file
+  # that imports it. See docs/roadmap.md entry 28.
+  is_const: Bool,
   line: I64,
 }
 
@@ -560,8 +565,10 @@ fn if_expr(ids: NodeIds, cond: Expr, then_block: Block, else_branch: Else, line:
   IfExpr { id: fresh(ids), cond: cond, then_block: then_block,
            else_branch: else_branch, line: line }
 
-fn let_stmt(ids: NodeIds, name: Str, unit: Opt[UnitAnno], type_name: Str, value: Expr, line: I64) -> Stmt =
-  SLet(Let { id: fresh(ids), name: name, unit: unit, type_name: type_name, value: value, line: line })
+fn let_stmt(ids: NodeIds, name: Str, unit: Opt[UnitAnno], type_name: Str, value: Expr,
+            is_const: Bool, line: I64) -> Stmt =
+  SLet(Let { id: fresh(ids), name: name, unit: unit, type_name: type_name, value: value,
+             is_const: is_const, line: line })
 
 fn fn_decl(ids: NodeIds, name: Str, type_params: Arr[Str], params: Arr[Param], ret: Opt[ShapeAnno],
            ret_unit: Opt[UnitAnno], ret_type: Str, body: Expr, line: I64) -> FnDecl =

@@ -500,11 +500,15 @@ fn unit_from_anno(a: ast.UnitAnno) -> Dict[Str, I64] {
 
 struct CheckEnv {
   vars: Dict[Str, Type],
+  # The subset of vars bound by `const`, each mapped to the line it was bound
+  # on. Kept per scope rather than per name so that a `let` shadowing a `const`
+  # in an inner scope is an ordinary mutable binding.
+  consts: Dict[Str, I64],
   parent: Opt[CheckEnv],
 }
 
 fn new_env(parent: Opt[CheckEnv]) -> CheckEnv =
-  CheckEnv { vars: dict_new(), parent: parent }
+  CheckEnv { vars: dict_new(), consts: dict_new(), parent: parent }
 
 fn env_get(e: CheckEnv, name: Str) -> Opt[Type] {
   let cur: Opt[CheckEnv] = Some(e)
@@ -524,6 +528,24 @@ fn env_get(e: CheckEnv, name: Str) -> Opt[Type] {
 
 fn env_define(e: CheckEnv, name: Str, t: Type) {
   dict_set(e.vars, name, t)
+}
+
+# The line a name's `const` binding was made on, or None if the name resolves to
+# an ordinary binding or to nothing. It stops at the first scope that binds the
+# name, so a `let` of the same name in a nearer scope shadows the const and is
+# mutable.
+fn env_const_line(e: CheckEnv, name: Str) -> Opt[I64] {
+  let cur: Opt[CheckEnv] = Some(e)
+  while true {
+    match cur {
+      Some(env) => {
+        if dict_has(env.vars, name) { return dict_get(env.consts, name) }
+        cur = env.parent
+      },
+      None => return None,
+    }
+  }
+  None
 }
 
 # Assignment rebinds where the name was defined, walking outward, and defines
@@ -835,6 +857,12 @@ fn check(prog: ast.Program) -> Arr[Diagnostic] {
   # As with functions this only asserts the name exists; infer_stmt still types
   # the binding when the walk reaches it, and evaluation order is the evaluator's
   # concern, not the checker's.
+  #
+  # A top-level `const` is registered as one here rather than when the walk
+  # reaches it, because a function declared above the binding may assign to it,
+  # and that assignment is checked when its declaration is reached. warp's
+  # `examples/train.tw` has exactly that shape: `train_step` writes `STEPS`
+  # several lines above the `let STEPS` that binds it.
   for s in prog.body {
     match s {
       SLet(st) => {
@@ -842,10 +870,17 @@ fn check(prog: ast.Program) -> Arr[Diagnostic] {
           Some(_) => unit,
           None => env_define(env, st.name, TUnknown),
         }
+        if st.is_const and not dict_has(env.consts, st.name) {
+          dict_set(env.consts, st.name, st.line)
+        }
       },
       _ => unit,
     }
   }
+
+  # The file's top level is a scope like any other, so a second binding of a
+  # const name here is refused the same way one inside a block is.
+  report_const_rebinds(c, prog.body)
 
   for s in prog.body {
     infer_stmt(c, s, env)
@@ -1933,6 +1968,90 @@ fn systems_builtin_result(name: Str, args: Arr[Type]) -> Opt[Type] {
   None
 }
 
+# report_const_rebinds refuses a second binding of a name that a `const` binds in
+# the same statement list.
+#
+# The rule exists because the alternative is a silent revocation. Constness is
+# held in a per-scope dict, and the first cut of it had a plain `let` of the same
+# name delete the entry, so `const HEX` followed by `let HEX` turned the
+# guarantee off with nothing said. It was order-dependent on top of that: the
+# prelude registers top-level consts before the walk starts, so a `let` above the
+# `const` was refused and a `let` below it was not. Moving a line changed what
+# the checker promised.
+#
+# Order is not consulted here at all: the whole list is scanned for the first
+# `const` binding of each name, and every other binding of those names is
+# reported, whichever side of it they sit on. Two plain `let`s of one name stay
+# legal, because that is an idiom this language allows and this rule is about
+# `const`. An inner scope is not this list, so shadowing is untouched.
+fn report_const_rebinds(c: Checker, body: Arr[ast.Stmt]) {
+  # Indices rather than lines: two statements can share a line, so a line number
+  # cannot tell the const's own binding apart from a second one.
+  let first: Dict[Str, I64] = dict_new()
+  let any: Bool = false
+  let i: I64 = 0
+  while i < len(body) {
+    match body[i] {
+      SLet(st) => {
+        if st.is_const and not dict_has(first, st.name) {
+          dict_set(first, st.name, i)
+          any = true
+        }
+      },
+      _ => unit,
+    }
+    i = i + 1
+  }
+  if not any { return }
+  let j: I64 = 0
+  while j < len(body) {
+    match body[j] {
+      SLet(st) => {
+        match dict_get(first, st.name) {
+          Some(at) => {
+            if at != j {
+              let decl_line: I64 = stmt_line(body[at])
+              report(c, st.line, bytes.concat(st.name,
+                bytes.concat(" is declared const on line ",
+                bytes.concat(str(decl_line),
+                bytes.concat(", so the name cannot be bound a second time in the same scope: a second binding would take its place and everything after it would be assignable again. Rename one of them, or declare line ",
+                bytes.concat(str(decl_line), " with let if the name is meant to change."))))))
+            }
+          },
+          None => unit,
+        }
+      },
+      _ => unit,
+    }
+    j = j + 1
+  }
+}
+
+# The line a statement was written on, for the one caller that has a statement in
+# hand rather than the `let` inside it.
+fn stmt_line(s: ast.Stmt) -> I64 {
+  match s {
+    SLet(st) => st.line,
+    _ => 0,
+  }
+}
+
+# The name an assignment target ultimately reaches: `x` for `x`, for `x.f`, for
+# `x[i]` and for `a.d[i]`. An assignment through a call or any other expression
+# has no base name, and reports nothing.
+fn lvalue_base(target: ast.Expr) -> Opt[Str] {
+  let cur: ast.Expr = target
+  while true {
+    match cur {
+      EIdent(x) => return Some(x.name),
+      EField(x) => cur = x.target,
+      EIndex(x) => cur = x.target,
+      _ => return None,
+    }
+  }
+  None
+}
+
 # ---- statements ------------------------------------------------------------
 
 fn infer_stmt(c: Checker, s: ast.Stmt, env: CheckEnv) {
@@ -1979,6 +2098,17 @@ fn infer_stmt(c: Checker, s: ast.Stmt, env: CheckEnv) {
         None => env_define(env, st.name, rhs),
       }
       }
+      # `const` binds in this scope, whichever of the three branches above did
+      # the binding. A top-level one is already recorded by the prelude; this is
+      # what makes a `const` inside a function work, and what lets an inner `let`
+      # of the same name shadow an outer `const` and stay mutable.
+      #
+      # Nothing here revokes constness. A second binding of the name in this same
+      # scope is refused outright by report_const_rebinds, which is what keeps
+      # the guarantee from depending on statement order.
+      if st.is_const {
+        dict_set(env.consts, st.name, st.line)
+      }
     },
     SFn(st) => {
       env_define(env, st.name, TFn(FnType {
@@ -1992,6 +2122,25 @@ fn infer_stmt(c: Checker, s: ast.Stmt, env: CheckEnv) {
     },
     SAssign(st) => {
       let v: Type = infer_expr(c, st.value, env)
+      # A `const` is bound once, and the name is the whole of the guarantee:
+      # `HEX = other()` swaps the table, and `HEX[0] = "#000"` edits the one
+      # everybody is reading, so both are refused. What cannot be refused here is
+      # a mutation that does not go through the name, `push(HEX, x)` or a
+      # function handed the handle, because `Arr` has reference semantics and
+      # nothing tracks where a handle goes. docs/language-guide.md says so where
+      # `const` is introduced; docs/roadmap.md entry 28.
+      match lvalue_base(st.target) {
+        Some(base) => {
+          match env_const_line(env, base) {
+            Some(at) => report(c, st.line, bytes.concat(base,
+              bytes.concat(" is declared const on line ",
+              bytes.concat(str(at),
+                ", so nothing may be assigned through that name: not the binding, and not an element or field of it. Bind a new name for the changed value, or declare it with let if it is meant to change.")))),
+            None => unit,
+          }
+        },
+        None => unit,
+      }
       match st.target {
         # A bare name rebinds where it was defined, walking outward.
         EIdent(id) => env_assign(env, id.name, v),
@@ -2070,6 +2219,7 @@ fn scope_define_elem(scope: CheckEnv, name: Str, iter: Type) {
 # A block's value is its last expression statement. A declaration or a loop
 # leaves it Unit, which is why `fn f() { let x = 1 }` returns unit rather than 1.
 fn infer_block(c: Checker, b: ast.Block, env: CheckEnv) -> Type {
+  report_const_rebinds(c, b.body)
   let last: Type = TUnit
   for s in b.body {
     match s {

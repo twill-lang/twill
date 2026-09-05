@@ -7,7 +7,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/twill-lang/twill/internal/checker"
 	"github.com/twill-lang/twill/internal/interp"
+	"github.com/twill-lang/twill/internal/parser"
 	"github.com/twill-lang/twill/internal/value"
 )
 
@@ -1154,5 +1156,89 @@ func TestSelfHostedCheckDTypeWidening(t *testing.T) {
 	}
 	if !strings.Contains(out, "shape error:") {
 		t.Errorf("a type error should print as a shape error; got %q", out)
+	}
+}
+
+// `const` across the seam. The rule that refuses an assignment to one lives in
+// both checkers, and the differential harness compares their messages byte for
+// byte, so the Go checker's own text is what the self-hosted one has to print.
+// Taking the expected message from checker.Check rather than writing it as a
+// literal is the point: a reworded diagnostic on either side fails this test
+// instead of quietly splitting the two implementations.
+func TestSelfHostedRefusesAssigningAConst(t *testing.T) {
+	const src = `mode systems
+const HEX: Arr[Str] = mk()
+fn mk() -> Arr[Str] {
+  let a: Arr[Str] = arr_new()
+  push(a, "#000")
+  a
+}
+fn rethemed() {
+  HEX = mk()
+}
+`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	diags := checker.Check(prog)
+	if len(diags) != 1 {
+		t.Fatalf("the Go checker reported %d diagnostics, want 1: %v", len(diags), diags)
+	}
+	code, out := runSelfHostedCheckOut(t, src)
+	if code != 1 {
+		t.Errorf("self-hosted check exited %d, want 1", code)
+	}
+	if !strings.Contains(out, diags[0].Msg) {
+		t.Errorf("the two checkers disagree.\n  go:   %s\n  self: %s", diags[0].Msg, out)
+	}
+}
+
+// The other half: a `const` nothing assigns to is a clean file on both sides,
+// and it evaluates the same. `const` is a binding at run time and nothing more,
+// so the two evaluators have nothing to disagree about, which is worth pinning
+// because the self-hosted evaluator reads the same AST node as a `let`.
+func TestSelfHostedRunsAConstLikeTheBootstrap(t *testing.T) {
+	if code := runSelfHostedCheck(t, "mode systems\nconst K: I64 = 41\nfn f() -> I64 = K + 1\n"); code != 0 {
+		t.Errorf("check of a const nobody assigns to exited %d, want 0", code)
+	}
+	// No `main` here on purpose: the two CLIs disagree about whether they call
+	// one (docs/BUGS.md, Open), and this is a test about `const`.
+	goOut, selfOut := runBothWays(t, "mode systems\nconst GREETING: Str = \"hello\"\nfn shout() -> Str = GREETING\nprint(shout())\n")
+	if goOut != selfOut {
+		t.Fatalf("const output diverged:\n  go:   %q\n  self: %q", goOut, selfOut)
+	}
+	if !strings.Contains(goOut, "hello") {
+		t.Fatalf("the const was not readable at run time: %q", goOut)
+	}
+}
+
+// The rebinding rule across the seam. `const HEX` followed by `let HEX` in the
+// same scope revoked constness with nothing said, and which way round the two
+// lines sat decided whether the checker noticed, so both checkers now refuse
+// the second binding. The expected text comes from checker.Check rather than a
+// literal for the same reason as the test above: the two must not drift.
+func TestSelfHostedRefusesRebindingAConst(t *testing.T) {
+	const src = `mode systems
+const HEX: I64 = 1
+let HEX: I64 = 2
+`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	diags := checker.Check(prog)
+	if len(diags) != 1 {
+		t.Fatalf("the Go checker reported %d diagnostics, want 1: %v", len(diags), diags)
+	}
+	if !strings.Contains(diags[0].Msg, "cannot be bound a second time") {
+		t.Fatalf("the Go checker reported something else: %s", diags[0].Msg)
+	}
+	code, out := runSelfHostedCheckOut(t, src)
+	if code != 1 {
+		t.Errorf("self-hosted check exited %d, want 1", code)
+	}
+	if !strings.Contains(out, diags[0].Msg) {
+		t.Errorf("the two checkers disagree.\n  go:   %s\n  self: %s", diags[0].Msg, out)
 	}
 }

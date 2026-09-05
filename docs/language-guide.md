@@ -524,6 +524,70 @@ x = x + 1      # reassign an existing binding (error if not yet bound)
 `let` always introduces a new variable. Plain assignment updates the nearest
 existing binding, which is what makes training loops work.
 
+### `const`
+
+`const` binds the way `let` does and then refuses an assignment through the
+name, the binding itself and an element or field of it alike:
+
+```rust
+const HEX = ["#000", "#fff"]
+HEX = other()      # refused
+HEX[0] = "#eee"    # refused
+```
+
+It is written wherever a `let` can be, and the reason it exists is the top
+level. A plain `import` drops a file's top-level definitions into the importing
+scope, and they stay **the one binding**, so a lookup table a library declares
+with `let` can be replaced by anything that imports it, and every other importer
+then reads the replacement. Declaring the table `const` is how a theme file says
+it did not mean that to happen.
+
+A `const` is also the only binding of its name in the scope that declares it. A
+second `let` of the same name there is refused rather than silently taking the
+const's place:
+
+```rust
+const HEX = ["#000"]
+let HEX = other()   # refused
+```
+
+That is a rule about one scope, not about the name. A `let` in a nearer scope is
+a different binding, and it is mutable:
+
+```rust
+const K: I64 = 1
+fn f() -> I64 {
+  let K: I64 = 2   # a new binding, not the const
+  K = 3            # fine
+  K
+}
+```
+
+Two things `const` deliberately does not do.
+
+**It does not cross a file boundary yet.** The checker reads one file, so it
+refuses a write to `HEX` in the file that declares it and accepts the same write
+in a file that imports it:
+
+```rust
+import "theme.tw"
+HEX = other()       # accepted today, though theme.tw declared HEX const
+```
+
+That is the case `const` is eventually for, and it is not done. `docs/roadmap.md`
+entry 28 tracks it.
+
+**It is not a deep freeze.** It guards what is written through the name, so
+`HEX[0] = ...` is refused, but `push(HEX, x)` is not, and neither is a function
+handed the handle: `Arr`, `Dict`, `struct` and `Bytes` have reference semantics
+(see **`struct`, and what a parameter is**) and nothing tracks where a handle
+goes. `const` says this name will not be pointed somewhere else and will not be
+edited here.
+
+`let` was left mutable at the top level on purpose. Module-level counters are
+written that way across the ecosystem, including by this repository's own
+`std/tests/harness.tw`, so the guarantee is asked for rather than imposed.
+
 ## Functions
 
 ```rust
