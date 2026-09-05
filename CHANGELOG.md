@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-09-05
+
 ### Added
 
 - **`const`, a binding that cannot be assigned to.** It is written wherever a
