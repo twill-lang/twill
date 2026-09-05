@@ -74,6 +74,7 @@ func newChecker(prog *ast.Program) *checker {
 	c.activeParams = map[string]bool{}
 	c.importedConsts = map[string]importedConst{}
 	c.aliasConsts = map[string]map[string]importedConst{}
+	c.parsedImports = map[string]*ast.Program{}
 	return c
 }
 
@@ -306,6 +307,9 @@ type checker struct {
 	// point that may read files. See imports.go.
 	importedConsts map[string]importedConst
 	aliasConsts    map[string]map[string]importedConst
+	// parsedImports memoises the walk's parses by resolved path, with a nil
+	// entry for a file that did not parse.
+	parsedImports map[string]*ast.Program
 
 	// typeParams is the `[T, U]` a struct or enum declares, by declaration
 	// name. activeParams is the set in scope right now -- while a declaration's

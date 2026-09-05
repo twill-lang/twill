@@ -1,6 +1,7 @@
 package interp_test
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -56,6 +57,44 @@ func runSelfHostedCheckOut(t *testing.T, source string) (int, string) {
 	w.Close()
 	os.Stderr = saved
 	return code, <-done
+}
+
+// selfHostedCheckPath runs the self-hosted CLI's `check` on a file that is
+// already on disk -- a program whose imports matter cannot be handed over as a
+// string -- and returns its exit code and what it wrote. The diagnostics go
+// through write_err to the real os.Stderr, bypassing the interpreter's sink, so
+// they are captured at the OS level.
+func selfHostedCheckPath(t *testing.T, path string) (int, string) {
+	t.Helper()
+	saved := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = w
+	done := make(chan string, 1)
+	go func() {
+		var b strings.Builder
+		io.Copy(&b, r)
+		done <- b.String()
+	}()
+	ip := interp.New(func(string) {})
+	result, ranMain, runErr := ip.RunFileMain(filepath.Join("..", "..", "src", "main.tw"),
+		[]string{"twill", "check", path})
+	w.Close()
+	os.Stderr = saved
+	out := <-done
+	if runErr != nil {
+		t.Fatalf("self-hosted CLI errored: %v", runErr)
+	}
+	if !ranMain {
+		t.Fatal("self-hosted main did not run")
+	}
+	n, ok := value.AsNumber(result)
+	if !ok {
+		t.Fatalf("self-hosted main returned a non-number: %v", result)
+	}
+	return int(n), out
 }
 
 func runSelfHostedCheck(t *testing.T, source string) int {
@@ -1282,34 +1321,193 @@ HEX = arr_new()
 		t.Fatalf("the Go checker reported %d diagnostics, want 1: %v", len(diags), diags)
 	}
 
-	saved := os.Stderr
-	r, w, pipeErr := os.Pipe()
-	if pipeErr != nil {
-		t.Fatal(pipeErr)
-	}
-	os.Stderr = w
-	done := make(chan string, 1)
-	go func() {
-		var b strings.Builder
-		io.Copy(&b, r)
-		done <- b.String()
-	}()
-	ip := interp.New(func(string) {})
-	result, ranMain, runErr := ip.RunFileMain(filepath.Join("..", "..", "src", "main.tw"),
-		[]string{"twill", "check", appPath})
-	w.Close()
-	os.Stderr = saved
-	out := <-done
-	if runErr != nil {
-		t.Fatalf("self-hosted CLI errored: %v", runErr)
-	}
-	if !ranMain {
-		t.Fatal("self-hosted main did not run")
-	}
-	if n, ok := value.AsNumber(result); !ok || int(n) != 1 {
-		t.Errorf("self-hosted check returned %v, want exit 1", result)
+	code, out := selfHostedCheckPath(t, appPath)
+	if code != 1 {
+		t.Errorf("self-hosted check exited %d, want 1", code)
 	}
 	if !strings.Contains(out, diags[0].Msg) {
 		t.Errorf("the two checkers disagree.\n  go:   %s\n  self: %s", diags[0].Msg, out)
 	}
+}
+
+// How deep the walk goes, on both checkers, and the reason this test is a chain
+// built by hand rather than a file from the corpus.
+//
+// The bound is a file count and the two implementations held two different
+// ones: the Go walk followed nine files, `src/check.tw` stopped at eight, and a
+// comment there said the two agreed. Nine files -- app.tw through eight modules
+// into a theme.tw declaring `const HEX` -- was refused by one checker and called
+// clean by the other. The differential sweep over the ecosystem could not see
+// it: nothing out there imports nine deep. So the depths either side of the
+// bound are pinned here, where they can be built.
+func writeChain(t *testing.T, dir string, files int) string {
+	t.Helper()
+	write := func(name, src string) {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("theme.tw", "mode systems\nconst HEX: I64 = 1\n")
+	prev := "theme.tw"
+	for i := files - 1; i >= 1; i-- {
+		name := fmt.Sprintf("m%d.tw", i)
+		write(name, "mode systems\nimport \""+prev+"\"\n")
+		prev = name
+	}
+	app := filepath.Join(dir, "app.tw")
+	if err := os.WriteFile(app, []byte("mode systems\nimport \""+prev+"\"\nHEX = 2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return app
+}
+
+// goVerdict is what checker.CheckFile says about a file on disk. Its first
+// message is what the self-hosted checker's output is compared against, rather
+// than a literal, so a reworded diagnostic on either side fails the test.
+func goVerdict(t *testing.T, path string) []checker.Diagnostic {
+	t.Helper()
+	src, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prog, err := parser.Parse(string(src))
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	return checker.CheckFile(prog, path)
+}
+
+func TestBothCheckersFollowNineImportedFiles(t *testing.T) {
+	skipUnderShort(t)
+	app := writeChain(t, t.TempDir(), 9)
+	diags := goVerdict(t, app)
+	if len(diags) != 1 {
+		t.Fatalf("the Go checker reported %d diagnostics nine files deep, want 1: %v", len(diags), diags)
+	}
+	code, out := selfHostedCheckPath(t, app)
+	if code != 1 {
+		t.Errorf("self-hosted check exited %d nine files deep, want 1", code)
+	}
+	if !strings.Contains(out, diags[0].Msg) {
+		t.Errorf("the two checkers disagree nine files deep.\n  go:   %s\n  self: %s", diags[0].Msg, out)
+	}
+}
+
+// And they stop in the same place. Ten files is past the bound on both sides,
+// so the const is not found and neither checker says anything: agreeing that a
+// program is clean is as much a parity claim as agreeing that it is not.
+func TestBothCheckersStopPastNineImportedFiles(t *testing.T) {
+	skipUnderShort(t)
+	app := writeChain(t, t.TempDir(), 10)
+	if diags := goVerdict(t, app); len(diags) != 0 {
+		t.Fatalf("the Go checker reported %d diagnostics past the bound, want none: %v", len(diags), diags)
+	}
+	code, out := selfHostedCheckPath(t, app)
+	if code != 0 {
+		t.Errorf("self-hosted check exited %d past the bound, want 0: %s", code, out)
+	}
+}
+
+// The other divergence the two walks had, in the other direction: a file
+// imported both under an alias and plainly. The self-hosted walk does not
+// follow an aliased import at all and collected the const through the plain
+// one; the Go walk followed the aliased import first, threw its consts away,
+// and marked the file visited in the guard the plain branch shared, so it
+// collected nothing. The Go walk now gives the aliased branch its own copy of
+// the guard, and both refuse the write.
+func TestBothCheckersSeeAConstImportedBothWays(t *testing.T) {
+	skipUnderShort(t)
+	dir := t.TempDir()
+	for name, src := range map[string]string{
+		"theme.tw": "mode systems\nconst HEX: I64 = 1\n",
+		"mid.tw":   "mode systems\nimport \"theme.tw\" as t\nimport \"theme.tw\"\n",
+		"app.tw":   "mode systems\nimport \"mid.tw\"\nHEX = 2\n",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	app := filepath.Join(dir, "app.tw")
+	diags := goVerdict(t, app)
+	if len(diags) != 1 {
+		t.Fatalf("the Go checker reported %d diagnostics, want 1: %v", len(diags), diags)
+	}
+	code, out := selfHostedCheckPath(t, app)
+	if code != 1 {
+		t.Errorf("self-hosted check exited %d, want 1", code)
+	}
+	if !strings.Contains(out, diags[0].Msg) {
+		t.Errorf("the two checkers disagree.\n  go:   %s\n  self: %s", diags[0].Msg, out)
+	}
+}
+
+// Every shape the cross-file rule judges, on both checkers, in one table.
+//
+// The seven refusals and five acceptances are the whole set the rule has an
+// opinion about: the binding, an element of it and a field of it, each written
+// plainly and under an alias, plus the top-level rebinding; and, on the other
+// side, an imported `let`, a parameter, a local `let`, a read, and a field of a
+// local record that happens to share the name. The field writes are here
+// because they were the shape that went missing when the self-hosted walk was
+// made lazy, and the exit codes are compared rather than asserted, so a rule
+// that changes on one side and not the other fails here.
+func TestBothCheckersAgreeOnEveryImportedConstShape(t *testing.T) {
+	skipUnderShort(t)
+	dir := t.TempDir()
+	theme := `mode systems
+struct Box { f: I64 }
+const HEX: Arr[Str] = mk()
+const REC: Box = Box { f: 1 }
+let SIZE: I64 = 3
+fn mk() -> Arr[Str] {
+  let a: Arr[Str] = arr_new()
+  push(a, "#000")
+  a
+}
+`
+	if err := os.WriteFile(filepath.Join(dir, "theme.tw"), []byte(theme), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name   string
+		app    string
+		refuse bool
+	}{
+		{"assignment", "import \"theme.tw\"\nHEX = arr_new()\n", true},
+		{"element", "import \"theme.tw\"\nHEX[0] = \"#fff\"\n", true},
+		{"field", "import \"theme.tw\"\nREC.f = 2\n", true},
+		{"alias assignment", "import \"theme.tw\" as t\nt.HEX = arr_new()\n", true},
+		{"alias element", "import \"theme.tw\" as t\nt.HEX[0] = \"#fff\"\n", true},
+		{"alias field", "import \"theme.tw\" as t\nt.REC.f = 2\n", true},
+		{"rebinding", "import \"theme.tw\"\nlet HEX: Arr[Str] = arr_new()\n", true},
+		{"an imported let", "import \"theme.tw\"\nSIZE = 4\n", false},
+		{"a local let", "import \"theme.tw\"\nfn f() {\n  let HEX: I64 = 1\n  HEX = 2\n}\n", false},
+		{"a parameter", "import \"theme.tw\"\nfn f(HEX: I64) -> I64 {\n  HEX = 2\n  HEX\n}\n", false},
+		{"a read", "import \"theme.tw\"\nfn f() -> Str = HEX[0]\n", false},
+		{"a local record's field", "import \"theme.tw\" as t\nstruct B { HEX: I64 }\nfn f() {\n  let b: B = B { HEX: 1 }\n  b.HEX = 2\n}\n", false},
+	}
+	for i, tc := range cases {
+		app := filepath.Join(dir, fmt.Sprintf("app%d.tw", i))
+		if err := os.WriteFile(app, []byte("mode systems\n"+tc.app), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		diags := goVerdict(t, app)
+		if got := len(diags) > 0; got != tc.refuse {
+			t.Errorf("the Go checker %s %s: %v", verb(got), tc.name, diags)
+		}
+		code, out := selfHostedCheckPath(t, app)
+		if got := code != 0; got != tc.refuse {
+			t.Errorf("the self-hosted checker %s %s: %s", verb(got), tc.name, out)
+		}
+		if len(diags) > 0 && !strings.Contains(out, diags[0].Msg) {
+			t.Errorf("the two checkers disagree on %s.\n  go:   %s\n  self: %s", tc.name, diags[0].Msg, out)
+		}
+	}
+}
+
+func verb(refused bool) string {
+	if refused {
+		return "refused"
+	}
+	return "accepted"
 }

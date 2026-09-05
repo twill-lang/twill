@@ -57,10 +57,17 @@ func CheckFile(prog *ast.Program, path string) []Diagnostic {
 	return dedupe(c.diags)
 }
 
-// maxImportDepth bounds how far the walk follows a chain of imports. A
-// cycle is already stopped by the seen set; this stops a pathological depth
-// from turning a check into a directory traversal.
-const maxImportDepth = 8
+// maxImportFiles bounds how far the walk follows a chain of imports. A cycle is
+// already stopped by the seen set; this stops a pathological depth from turning
+// a check into a directory traversal. It counts files rather than levels, and
+// `src/check.tw` counts the same nine with the same comparison: the two walks
+// have to stop in the same place or a program exists that one checker refuses
+// and the other calls clean. One did -- a chain of nine files, which the Go
+// walk followed and the self-hosted walk stopped one short of -- and the
+// corpus sweep could not see it, because nothing in the ecosystem imports that
+// deep. The name is what it counts; it was `maxImportDepth` against `>`, which
+// followed nine files while saying eight.
+const maxImportFiles = 9
 
 // importedConst is a `const` this file did not declare: the import path the
 // declaring file was named by, as written, and the line inside it. The path is
@@ -103,9 +110,9 @@ func (c *checker) loadImports(prog *ast.Program, path string, seen map[string]bo
 		// A cycle guard per top-level import rather than one for the whole
 		// walk. Sharing it made which map a const landed in depend on which
 		// import mentioned the file first, and a name's spelling in this file
-		// is not something a sibling import gets to decide. The depth cap
-		// bounds each branch on its own, so this costs a re-parse of a file two
-		// imports both reach and nothing else.
+		// is not something a sibling import gets to decide. The file cap bounds
+		// each branch on its own, and parseImport is what keeps a file two
+		// branches both reach from being parsed twice.
 		branch := map[string]bool{}
 		for k := range seen {
 			branch[k] = true
@@ -119,7 +126,7 @@ func (c *checker) loadImports(prog *ast.Program, path string, seen map[string]bo
 // same map. A namespaced import inside an imported file is not followed: its
 // names arrive under an alias that means nothing in this file.
 func (c *checker) collectImport(importPath, from string, into map[string]importedConst, seen map[string]bool) {
-	if len(seen) > maxImportDepth {
+	if len(seen) >= maxImportFiles {
 		return
 	}
 	src, key, found := readImport(importPath, from)
@@ -127,8 +134,8 @@ func (c *checker) collectImport(importPath, from string, into map[string]importe
 		return
 	}
 	seen[key] = true
-	imported, err := parser.Parse(src)
-	if err != nil {
+	imported, ok := c.parseImport(key, src)
+	if !ok {
 		return // Its syntax errors are its own file's business.
 	}
 	for _, s := range imported.Body {
@@ -157,12 +164,44 @@ func (c *checker) collectImport(importPath, from string, into map[string]importe
 		// are not this file's to name: they would be written `mid.theme.HEX`
 		// here, which no rule below reads, so they go into a map that is
 		// dropped.
-		next := into
+		next, branch := into, seen
 		if imp.Alias != "" {
 			next = map[string]importedConst{}
+			// And it gets a copy of the seen set, for the same reason the top
+			// level does. Sharing it meant a file reached first under an alias
+			// was marked visited with its consts thrown away, so a later plain
+			// import of that same file collected nothing: `mid.tw` importing
+			// `theme.tw` both ways left `HEX = ...` in the importer accepted
+			// here and refused by the self-hosted checker, which does not
+			// follow an aliased import at all. A copy still stops a cycle,
+			// because it carries every file on the way in, including this one.
+			branch = map[string]bool{}
+			for k := range seen {
+				branch[k] = true
+			}
 		}
-		c.collectImport(imp.Path, key, next, seen)
+		c.collectImport(imp.Path, key, next, branch)
 	}
+}
+
+// parseImport parses an imported file once per check. Two branches of the walk
+// reach the same file often -- every top-level import gets its own cycle guard,
+// and an aliased import now gets its own copy of one -- and without the memo
+// each arrival re-parses. That is free enough here to have gone unnoticed and
+// is not free in the self-hosted checker, where the same walk runs interpreted;
+// both memoise, so the two stay the same walk. A file that does not parse is
+// remembered as not parsing, so a broken import is read once too.
+func (c *checker) parseImport(key, src string) (*ast.Program, bool) {
+	if prog, cached := c.parsedImports[key]; cached {
+		return prog, prog != nil
+	}
+	prog, err := parser.Parse(src)
+	if err != nil {
+		c.parsedImports[key] = nil
+		return nil, false
+	}
+	c.parsedImports[key] = prog
+	return prog, true
 }
 
 // registerEnum records an enum's cases, whether it was declared in this file or

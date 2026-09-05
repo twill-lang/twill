@@ -576,7 +576,7 @@ fn f() -> I64 {
 }
 ```
 
-Two things `const` deliberately does not do.
+Three things `const` deliberately does not do.
 
 It is not a deep freeze. It guards what is written through the name, so
 `HEX[0] = ...` is refused, but `push(HEX, x)` is not, and neither is a function
@@ -589,6 +589,13 @@ It does not reach through an alias of an alias. `mid.theme.HEX = ...`, where the
 declaring file was reached through a namespaced import inside a namespaced
 import, is not refused: that name is two aliases deep and the checker does not
 follow it.
+
+And it does not follow a chain of imports forever. The walk reads at most nine
+files down any one branch, so a `const` that is only reachable through ten is
+not found and the write is not refused. The cap is what keeps a check from
+turning into a directory traversal, and it is the same nine in both checkers:
+they held nine and eight for a while, which meant a program existed that one
+refused and the other called clean.
 
 `let` was left mutable at the top level on purpose. Module-level counters are
 written that way across the ecosystem, including by this repository's own

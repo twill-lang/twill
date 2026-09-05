@@ -797,6 +797,13 @@ binding half.
   collects consts only, so a `match` on an enum declared in another module is
   unjudged there while the Go checker judges it. That gap is older than this
   entry and is not closed by it.
+- **The walk stops after nine files.** A `const` reachable only through a chain
+  of ten imports is not found, and the write is not refused. The cap is what
+  keeps a check from becoming a directory traversal; the number is the same on
+  both checkers, which it was not at first: they held nine and eight, so a chain
+  of nine was refused by one and called clean by the other. Nothing in the
+  ecosystem imports that deep, which is why the differential sweep could not
+  find it and a test had to build it.
 
 So a library can now say what it means, and a caller that does the wrong thing
 is refused whether it does it in the library's file or its own.

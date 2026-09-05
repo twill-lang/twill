@@ -42,6 +42,47 @@
   covered: `HEX = ...` after a plain import, and `theme.HEX = ...` under an
   alias. Two aliases deep (`mid.theme.HEX = ...`) is not.
 
+  **The two walks stop in the same place, which took two corrections to be
+  true.** The bound is nine files down any one branch, and the checkers held
+  nine and eight while a comment in `src/check.tw` said they agreed: a chain of
+  nine -- `app.tw` through eight modules into a `theme.tw` declaring `const
+  HEX` -- was refused by one and called clean by the other. In the other
+  direction, a file imported both under an alias and plainly was collected by
+  the self-hosted walk and missed by the Go one, which followed the aliased
+  import first, threw its consts away, and left the file marked visited for the
+  plain branch that shared its cycle guard. Neither is reachable from the
+  ecosystem, so neither the differential sweep nor a test found them; both are
+  now built by hand in `internal/checker/constimport_test.go` and, across the
+  two implementations, in `internal/interp/selfhost_test.go`. The nine-file cap
+  is in `docs/language-guide.md` under **`const`**, because a chain of ten is a
+  write the rule does not refuse.
+
+  **The self-hosted walk runs on demand**, which is not a nicety: run eagerly it
+  cost the compiler's own entry points a factor of twelve to sixteen. Parsing an
+  imported
+  file there is interpreted twill parsing twill, and a check of `src/main.tw`
+  pulls in the whole front end. Three runs each, user CPU, self-hosted `check`
+  of the file named:
+
+  ```
+                    main   eager walk   on demand
+  src/main.tw       0.53s       6.16s       0.56s
+  src/cli/main.tw   0.40s       6.40s       0.44s
+  ```
+
+  Nothing in either file could have been affected by the answer: both import
+  only under an alias and neither assigns through one, so 14,415 lines of twill
+  were parsed to fill maps nothing read. The maps are now filled at the three
+  places that read them, and each fill is narrow -- a plain import's names when
+  a top-level binding or a bare-name assignment wants them, one alias's names
+  when an assignment is written through that alias -- and the parses are
+  memoised across the branches of one check, which is worth 13.0s to 2.3s on
+  six plain imports of one 6000-line module. Laziness cannot
+  change a verdict: what the walk collects is a function of the file set, and
+  every question is asked after the whole file has been read. The Go checker
+  fills both maps eagerly, and the differential tests are what say the two
+  still agree.
+
   **A `const` is the only binding of its name in the scope that declares it.** A
   second `let` of that name there is refused rather than quietly taking the
   const's place:
@@ -68,14 +109,16 @@
   training loop is written at file level. Making `let` read-only would have
   refused all of them, so the guarantee is asked for rather than imposed.
 
-  Two limits are deliberate and are written down in `docs/language-guide.md`
+  Three limits are deliberate and are written down in `docs/language-guide.md`
   under **`const`**. It is not a deep freeze: `HEX[0] = ...` is refused but
   `push(HEX, x)` is not, and neither is a function handed the handle, because
-  `Arr` has reference semantics and nothing tracks where a handle goes. And it
-  does not reach through an alias of an alias: `mid.theme.HEX = ...` is not
-  refused, because that name is two aliases deep and the walk collects names
-  rather than modelling a namespace. Entry 28's aliasing half is still open; its
-  binding half, which is what weft reported, is closed.
+  `Arr` has reference semantics and nothing tracks where a handle goes. It does
+  not reach through an alias of an alias: `mid.theme.HEX = ...` is not refused,
+  because that name is two aliases deep and the walk collects names rather than
+  modelling a namespace. And the walk stops after nine files, so a `const`
+  reachable only through a chain of ten imports is not found. Entry 28's
+  aliasing half is still open; its binding half, which is what weft reported, is
+  closed.
 
 - **`black_box(x)`, a compiler barrier, and the correction that it was already
   needed.** `docs/roadmap.md` entry 30 is bobbin's, and it was filed with the
