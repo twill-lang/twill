@@ -1,0 +1,5 @@
+mode systems
+
+fn main() {
+  print(str(len(true)))
+}
