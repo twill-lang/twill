@@ -76,7 +76,7 @@
         },
         {
           "name": "keyword.operator.bitwise.twill",
-          "match": "\\b(shl|shr|xor|bnot)\\b"
+          "match": "\\b(shl|shr|ushr|xor|bnot)\\b"
         }
       ]
     },
@@ -111,7 +111,7 @@
     },
     "builtins": {
       "name": "support.function.builtin.twill",
-      "match": "\\b(print|relu|sigmoid|tanh|exp|log|sin|cos|sqrt|square|abs|pow|clip|sum|prod|mean|median|max|min|argmax|argmin|argsort|softmax|logsumexp|sort|topk|maximum|minimum|where|greater|less|greater_equal|less_equal|equal|matmul|dot|einsum|transpose|reshape|broadcast_to|concat|conv2d|maxpool2d|gather|cumsum|cumprod|cummax|cummin|flip|roll|diff|tensor|scalar|zeros|ones|fill|randn|rand|eye|seed|permutation|shape|dtype|len|item|int|floor|ceil|round|range|list|str|map|zip|fold|append|enumerate|map_leaves|zip_leaves|save|load|read_csv|read_frame|write_frame|columns|field|with_field|gbm_fit|gbm_predict)\\b"
+      "match": "\\b(print|relu|sigmoid|tanh|exp|log|log1p|expm1|sin|cos|sqrt|square|abs|pow|clip|sum|prod|mean|median|max|min|argmax|argmin|argsort|softmax|logsumexp|sort|topk|maximum|minimum|where|greater|less|greater_equal|less_equal|equal|matmul|dot|einsum|transpose|reshape|broadcast_to|concat|conv2d|maxpool2d|gather|cumsum|cumprod|cummax|cummin|flip|roll|diff|tensor|scalar|zeros|ones|fill|randn|rand|eye|seed|permutation|shape|dtype|len|item|int|floor|ceil|round|range|list|str|map|zip|fold|append|enumerate|map_leaves|zip_leaves|save|load|read_csv|read_frame|write_frame|columns|field|with_field|gbm_fit|gbm_predict)\\b"
     },
     "numbers": {
       "patterns": [

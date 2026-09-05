@@ -25,6 +25,7 @@ interpreter actually implements. They import `harness.tw` as a file.
 | Suite | Module under test |
 | --- | --- |
 | `batch_test.tw` | `std/batch` |
+| `builtins_test.tw` | the builtins with no module in front of them |
 | `frame_test.tw` | `std/frame` |
 | `loss_test.tw` | `std/loss` |
 | `metrics_test.tw` | `std/metrics` |

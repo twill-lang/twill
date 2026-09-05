@@ -597,6 +597,21 @@ first.
 
 ## Open
 
+**The self-hosted evaluator still refuses 99 of the 255 builtin names.** Entry
+12 above ported 31 of them and closed divergences 1 and 2 of the three recorded
+here. What is left is the filesystem, the clock, the process, the RNG, the
+`f64_*` scalar intrinsics, the GPU stubs and the memory counters, each of which
+still ends at "named in the builtin table but has no implementation". The count
+is measurable rather than estimated: run each remaining name through
+`src/main.tw run` and read the first stderr line, which is what
+`make conformance` does for every name at once. Measured that way on
+2026-09-04 it was 248 names, 151 dispatched, 97 refused. Re-measured on
+2026-09-05 after `ushr`, `sha256`, `sha256_bytes`, `log1p`, `expm1`,
+`f64_log1p` and `f64_expm1` landed: 255 names in `src/builtins.tw`, 155
+dispatched and answering, 1 dispatched and broken (`clip`), 99 refused. Five of
+the seven new names went into both implementations; the two that did not,
+`f64_log1p` and `f64_expm1`, joined `f64_log` and `f64_exp`, which the
+self-hosted evaluator did not dispatch either.
 **The self-hosted evaluator still refuses 57 of the 248 builtin names.** Entry
 12 ported 31 of them and closed divergences 1 and 2 of the three recorded here;
 entry 13 ported 40 more. What is left is the RNG, the `f64_*` scalar
