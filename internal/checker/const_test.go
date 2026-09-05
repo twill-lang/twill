@@ -14,12 +14,19 @@ import (
 // cannot keep the promise it makes about which colour means what.
 // docs/roadmap.md entry 28.
 //
-// `let` could not be made read-only instead. A sweep of 643 `.tw` files found
-// module-level mutable state in the standard library's own test harness
-// (`std/tests/harness.tw` counts passes and failures in a top-level binding
-// written from inside `check`), in warp's `examples/train.tw`, and in fourteen
-// numeric-mode examples whose training loop is written at file level. So the
-// guarantee has to be asked for.
+// `let` could not be made read-only instead. A read-only `let` was implemented
+// behind a flag and swept over the ecosystem, and it refused the standard
+// library's own test harness (`std/tests/harness.tw` counts passes and failures
+// in a top-level binding written from inside `check`), the test harness of
+// every satellite repository, warp's `examples/train.tw`, and the numeric-mode
+// examples whose training loop is written at file level. So the guarantee has
+// to be asked for.
+//
+// The corpus and the counts are in CHANGELOG.md under `const`, and they are
+// there rather than here on purpose: this comment carried its own copy of them,
+// the sweep was re-run and corrected in the changelog, and the copy went stale
+// and said 643 files where the sweep read 563. A number worth quoting is worth
+// having one home.
 
 func TestAssigningAConstIsRefused(t *testing.T) {
 	wantOne(t, "mode systems\nconst K: I64 = 1\nfn f() {\n  K = 2\n}\n", "declared const on line 2")
