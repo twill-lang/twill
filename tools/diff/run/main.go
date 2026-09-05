@@ -493,13 +493,21 @@ type report struct {
 	mu       sync.Mutex
 	counts   map[string]int
 	findings []finding
-	// allowed holds the fixtures whose findings are already understood. A
-	// finding against one of them is reported and does not fail the run; a
-	// finding against anything else does. The list is the whole point of
-	// running this in CI at all: without it the harness has been red since
-	// before anyone wired it up, and a permanently red check is a check nobody
-	// reads.
-	allowed map[string]bool
+	// allowed maps a fixture path to the one kind of finding already understood
+	// against it. A finding of that kind is reported and does not fail the run;
+	// anything else does, including a different kind of finding against the
+	// same fixture. The list is the whole point of running this in CI at all:
+	// without it the harness has been red since before anyone wired it up, and
+	// a permanently red check is a check nobody reads.
+	//
+	// The key is the kind and not the content of the difference, and that is a
+	// measured choice rather than a lazy one. Nine of the twenty-nine fixtures
+	// that mismatch on both arm64 and amd64 mismatch differently: the same tree
+	// built for amd64 puts examples/gbm.tw's first difference on line 15 rather
+	// than line 5. Keying on content would make this list per-CPU. Keying on
+	// kind still catches the change that matters most, which is a fixture that
+	// stops running at all rather than one whose golden is still stale.
+	allowed map[string]string
 }
 
 func (r *report) count(kind string) {
@@ -524,9 +532,15 @@ func (r *report) divergences() int {
 	n := 0
 	for _, f := range r.findings {
 		switch f.kind {
-		case "nondeterministic", "skipped", "missing golden":
+		case "nondeterministic", "skipped":
+			// Information, not failure: the fixture said something different
+			// twice in a row, or the harness had no way to run it.
 		default:
-			if r.allowed[f.where] {
+			// A missing golden used to be excused here too, which meant a
+			// fixture with no recorded output, and a golden someone deleted,
+			// both passed a check whose whole job is comparing against
+			// recorded output. It counts.
+			if r.allowed[f.where] == allowKind(f.kind) {
 				continue
 			}
 			n++
@@ -535,22 +549,36 @@ func (r *report) divergences() int {
 	return n
 }
 
-// readAllow reads a list of fixture paths, one per line, `#` starting a
-// comment. A line excuses every finding against that fixture, because a stale
-// golden is stale for the whole file and listing the kind as well would only
-// invite the list to be edited rather than shortened.
-func readAllow(path string) (map[string]bool, error) {
+// allowKind is the spelling a finding kind has on the allow-list: one word, so
+// a line stays two fields.
+func allowKind(kind string) string { return strings.ReplaceAll(kind, " ", "-") }
+
+// readAllow reads `<fixture> <kind>` pairs, `#` starting a comment. A path on
+// its own is refused rather than read as a wildcard: that was the old format,
+// and taking it to mean "excuse this fixture whatever happens to it" is the
+// hole this format exists to close.
+func readAllow(path string) (map[string]string, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	out := map[string]bool{}
-	for _, line := range strings.Split(string(b), "\n") {
-		if i := strings.IndexByte(line, '#'); i >= 0 {
-			line = line[:i]
+	out := map[string]string{}
+	for i, line := range strings.Split(string(b), "\n") {
+		if j := strings.IndexByte(line, '#'); j >= 0 {
+			line = line[:j]
 		}
-		if name := strings.TrimSpace(line); name != "" {
-			out[filepath.FromSlash(name)] = true
+		fields := strings.Fields(line)
+		switch len(fields) {
+		case 0:
+			continue
+		case 2:
+			key := filepath.FromSlash(fields[0])
+			if _, dup := out[key]; dup {
+				return nil, fmt.Errorf("%s:%d: %s is listed twice", path, i+1, fields[0])
+			}
+			out[key] = fields[1]
+		default:
+			return nil, fmt.Errorf("%s:%d: want `<fixture> <kind>`, got %q", path, i+1, strings.TrimSpace(line))
 		}
 	}
 	return out, nil
@@ -570,8 +598,11 @@ func (r *report) print() {
 	for _, f := range r.findings {
 		found[f.where] = true
 		label := f.kind
-		if r.allowed[f.where] {
+		switch want, listed := r.allowed[f.where]; {
+		case listed && want == allowKind(f.kind):
 			label = "known " + f.kind
+		case listed:
+			label = fmt.Sprintf("%s (the allow-list says %s)", f.kind, want)
 		}
 		fmt.Printf("\n=== %s: %s\n%s\n", label, f.where, f.detail)
 	}

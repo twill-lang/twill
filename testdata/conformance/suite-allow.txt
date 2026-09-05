@@ -3,33 +3,50 @@
 #
 # `make conformance-check` runs every std/tests/*_test.tw twice, once on the Go
 # bootstrap and once on src/main.tw, and compares the exit code, stdout and
-# stderr exactly. A suite that disagrees and is not named here fails the build.
-# So does a name here that agrees, and a name here that is not a suite.
+# stderr exactly.
+#
+# Each line is `<suite> <signature>`. The signature identifies the divergence,
+# not the suite, so a line excuses one finding rather than the file it happens
+# in: if io_test.tw stops dying on arr_new and starts printing a wrong number
+# instead, the signature no longer matches and the build says so. Four things
+# fail here, and only the first is a new file:
+#
+#   * a suite that diverges and is not on this list;
+#   * a suite on this list whose divergence is not the one recorded;
+#   * a suite on this list that now agrees;
+#   * a name on this list that is not a suite.
 #
 # The list may only shrink. Adding a line is not a way to get a build green: it
 # is a claim that a divergence has been looked at and understood, and it belongs
-# in a pull request that says what it found.
+# in a pull request that says what it found. `conformance suites -list` prints
+# the lines a run would accept; the reason above each one has to be written by
+# whoever adds it.
 #
-# Measured on this branch: 17 suites, 5 agree, 12 do not.
+# The signature is computed from the exit codes and the first line of each
+# stream that moved, with source line numbers masked and control bytes escaped,
+# so editing src/eval.tw above the line it faults on does not move it. A run
+# that hit the time budget is keyed on that alone, because how far it got before
+# the clock stopped it is a property of the machine.
 
 # --- The evaluator has no implementation for the builtin ---------------------
-# Five systems-mode suites die on the first line of their harness, because
-# std/tests/systems_harness.tw calls arr_new. 128 of the 247 names in the
-# shared builtin table are in this state; docs/conformance.md lists them.
+# Six systems-mode suites die on the first line of their harness, because
+# std/tests/systems_harness.tw calls arr_new; sample_test.tw gets further and
+# dies on rng_open. docs/conformance.md lists every name in this state.
 #   io_test.tw:50      builtin "arr_new" ... has no implementation
 #   json_test.tw:256   builtin "arr_new" ... has no implementation
 #   linalg_test.tw:50  builtin "arr_new" ... has no implementation
 #   random_test.tw:50  builtin "arr_new" ... has no implementation
 #   stats_test.tw:50   builtin "arr_new" ... has no implementation
 #   text_test.tw:50    builtin "arr_new" ... has no implementation
+io_test.tw               66f3c666c2d4
+json_test.tw             7f638d19d14f
+linalg_test.tw           1e763102167f
+random_test.tw           9605f32ccc11
+stats_test.tw            c72577437d6f
+text_test.tw             8cf53ff3402b
+
 #   sample_test.tw:85  builtin "rng_open" ... has no implementation
-io_test.tw
-json_test.tw
-linalg_test.tw
-random_test.tw
-sample_test.tw
-stats_test.tw
-text_test.tw
+sample_test.tw           580ff949593f
 
 # --- The evaluator dispatches the builtin and then falls over ----------------
 # `clip` is dispatched by src/eval.tw and hands a bare tensor to `lift`, which
@@ -37,9 +54,11 @@ text_test.tw
 #   runtime error: no match arm for {shape: [], data: ..., dtype: 6}
 # The message names main.tw and the line is eval.tw's, which is a second bug in
 # the same report: the self-hosted runtime attributes a module's line to the
-# entry file.
-nn_test.tw
-optim_test.tw
+# entry file. The two signatures differ because the value quoted in the message
+# does: nn_test.tw reaches clip with a scalar, optim_test.tw with a rank-1
+# tensor.
+nn_test.tw               047ff7c80fd0
+optim_test.tw            dd04fd5f0d78
 
 # --- The evaluator returns a different number --------------------------------
 # The most serious kind, because nothing errors. gradcheck_test.tw passes 19 of
@@ -49,13 +68,14 @@ optim_test.tw
 #     self-hosted: worst element off by 5.1e-8
 # Both print as the same six significant figures, so only an exact comparison
 # finds it. That is why this gate has no tolerance.
-gradcheck_test.tw
+gradcheck_test.tw        9214b09c03e6
 
 # --- The evaluator does not finish -------------------------------------------
-# Both of these complete on the bootstrap in under half a second and do not
-# finish self-hosted inside the five-minute budget, so they are recorded as
-# divergences rather than as slow passes. llama_test.tw is over a thousand
-# times slower. They also print a prefix of the right output before the budget
-# runs out, so what is known is that they are too slow, not that they are wrong.
-llama_test.tw
-transformer_test.tw
+# Both of these complete on the bootstrap in under a second and do not finish
+# self-hosted inside the budget, so they are recorded as divergences rather than
+# as slow passes. They print a prefix of the right output before the budget runs
+# out, so what is known is that they are too slow, not that they are wrong.
+# Their signatures are equal because that is the whole of what is known about
+# either: the self-hosted side ran out of time.
+llama_test.tw            bbb122c08aee
+transformer_test.tw      bbb122c08aee
