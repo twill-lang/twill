@@ -10,8 +10,8 @@ built into the language rather than a library.
   escapes), numbers (decimal, hex, scientific), operators (including `@`, `->`,
   `=>`, postfix `?`), and the `mode` declaration.
 - **Keyword and type awareness**: control flow (`if`/`else`/`while`/`for`/`match`/
-  `break`/`continue`/`return`), declarations (`let`/`fn`/`enum`/`struct`/`type`/
-  `unit`), imports, logical and bitwise operators, and the built-in types
+  `break`/`continue`/`return`), declarations (`let`/`const`/`fn`/`enum`/`struct`/
+  `type`/`unit`), imports, logical and bitwise operators, and the built-in types
   (`I64`, `F64`, `Bool`, `Str`, `Arr`, `Dict`, `Opt`, `Res`, `Tensor`, …) and
   dtype names (`f32`, `bf16`, `f16`, …).
 - **Built-in and autodiff functions** highlighted distinctly: `grad`, `grads`,

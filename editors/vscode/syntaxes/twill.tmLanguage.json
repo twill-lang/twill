@@ -68,7 +68,7 @@
         },
         {
           "name": "storage.type.twill",
-          "match": "\\b(let|fn|enum|struct|type|unit)\\b"
+          "match": "\\b(let|const|fn|enum|struct|type|unit)\\b"
         },
         {
           "name": "keyword.operator.logical.twill",

@@ -61,7 +61,7 @@ in the sources" at the end.
 | 25 | A way to fail that cannot be ignored | 1 | twill |
 | 26 | Allocation and memory counters | 1 | bobbin |
 | 27 | Ranged reads | 1 | warp |
-| 28 | Immutable top-level bindings | 1 | weft |
+| 28 | Immutable top-level bindings **(partly: `const`; cross-file open)** | 1 | weft |
 | 29 | Optional and named arguments, or record update | 1 | weft |
 | 30 | A compiler barrier **(delivered)** | 1 | bobbin |
 | 31 | `Dict` keyed by something other than `Str` | 1 | twill |
@@ -734,14 +734,73 @@ profiler can do.
 and every other part of `stream.tw` is written against it. The smallest possible
 addition that makes out-of-core data possible: no file handles, no seeking API.
 
-**28. Immutable top-level bindings** (weft entry 9). `src/canvas.tw`
-`QUADRANTS`, `src/theme.tw` `DENSITY`, `src/sparkline.tw` `LEVELS`,
-`src/svg.tw` `HEX` are lookup tables that any importer can reassign, because
-`Arr` has reference semantics and `let` binds a handle. A library whose palette
-can be reassigned by a caller has no way to keep the promise its theme file
-makes about which colour means what. This is the mirror of twill NEEDS-86, which
-asks whether a file-level `let` initialised by a call runs once, from the same
-uncertainty about what a file-level binding is.
+**28. Immutable top-level bindings** (weft entry 9). **Partly delivered:
+`const` binds, and is not yet enforced across a file boundary.**
+`src/canvas.tw` `QUADRANTS`, `src/theme.tw` `DENSITY`, `src/sparkline.tw`
+`LEVELS`, `src/svg.tw` `HEX` are lookup tables that any importer can reassign,
+because `Arr` has reference semantics and `let` binds a handle. A library whose
+palette can be reassigned by a caller has no way to keep the promise its theme
+file makes about which colour means what. This is the mirror of twill NEEDS-86,
+which asks whether a file-level `let` initialised by a call runs once, from the
+same uncertainty about what a file-level binding is.
+
+weft asked for either a `const` or a read-only top-level `let`, and the choice
+between them was the design question this entry was parked on. It is answered by
+measurement rather than taste: a read-only `let` was implemented behind a flag
+and swept over the 545 `.tw` files under `src/`, `std/`, `testdata/` and
+`examples/` here plus the five satellites this entry counts (spool, loom,
+bobbin, weft, warp), and it refused 45 of them. Among the refusals are this
+repository's own `std/tests/harness.tw` (the pass and fail counters, written
+from inside `check`), the same harness in every one of the five satellites,
+warp's `examples/train.tw`, this repository's own `src/eval.tw`, fourteen
+`testdata/cases` fixtures, and twelve numeric-mode programs under `examples/`
+whose training loop is written at file level: `attention.tw`, `classifier.tw`,
+`cnn.tw`, `gpt.tw`, `hessian.tw`, `linreg.tw`, `llama.tw`, `minibatch.tw`,
+`mlp.tw`, `nn_xor.tw`, `records.tw` and `signal_opt.tw`, ten of which are
+mirrored again under `testdata/examples/`. Top-level mutation is an idiom here,
+not an accident, so the guarantee has to be asked for. `const` is that keyword:
+it binds wherever `let` does, and in the file that declares it both checkers
+refuse an assignment through the name -- the binding itself, an element of it, a
+field of it, and any nesting of those. A second binding of a const name in the
+same scope is refused too, so the guarantee cannot be revoked with nothing said.
+
+**A caller in another file can still assign to an imported `const`, and that is
+this entry's actual complaint.** It is not delivered. A plain `import` copies the
+name into the importing scope and the handle is shared, so a second file's
+`HEX = ...` and `HEX[0] = ...` are both still accepted by both checkers, and
+both are still what every other importer then reads. What `const` catches today
+is a library breaking its own promise inside its own file, which is not what weft
+reported.
+
+A cross-file rule was written and withdrawn rather than shipped. It rode on the
+Go checker's import walk -- the walk that exists so a `match` on an enum
+declared in another module can be judged exhaustive -- and changing that walk
+broke it. A file importing nine or more siblings where a later one declared an
+enum stopped being followed, so a non-exhaustive `match` that `main` refuses was
+accepted, and whether it was accepted depended on the order the sibling imports
+were written in. The same change gave every nested aliased import its own copy
+of the cycle guard, which made the walk exponential in aliased fan-out. Neither
+was reachable from the ecosystem -- no `.tw` file in the swept corpus makes more
+than two plain imports -- so neither the differential sweep nor any test found
+them. `internal/checker/imports.go` is now
+byte-identical to the file on `main`, and `check()` in `src/check.tw` reads one
+file as it always did.
+
+Closing this entry properly means a cross-file rule that does not ride on the
+enum walk. Three things are open, and they are separate problems:
+
+- **The binding across a file boundary**, which is the report. It needs the
+  checker to know an imported file's top-level `const` names, without changing
+  how the enum walk visits files, and it needs the self-hosted checker to learn
+  the same thing: `src/check.tw` reads one file and no imported ones at all.
+- **`const` is not a deep freeze.** It guards what is written through the name,
+  so `HEX[0] = ...` is refused, but `push(HEX, x)` is not, and neither is a
+  function handed the handle. Closing that needs a frozen aggregate, or an
+  effects rule about where a handle may go, and neither is a checker rule about
+  one binding.
+- **The self-hosted checker still reads no imported enums.** A `match` on an
+  enum declared in another module is unjudged there while the Go checker judges
+  it. That gap is older than this entry and is not closed by it.
 
 **29. Optional and named arguments, or record update** (weft entry 10). A chart
 has a dozen settings and almost every caller changes two. The constructor takes
@@ -905,7 +964,8 @@ the best value in this stage.
 ### Stage 5: the design questions
 
 Entries 17, 24, 25, 28, 29, and 31. The tensor across the seam. Generators. A
-way to fail. `const`. Named arguments. `Dict` keyed by identity.
+way to fail. `const` (the keyword landed; entry 28's cross-file half is still
+open). Named arguments. `Dict` keyed by identity.
 
 These are last because each needs a decision rather than an implementation, and
 because none of them stops a codebase running. Entry 17 is the largest of them

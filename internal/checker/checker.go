@@ -215,13 +215,27 @@ func (c *checker) prelude(prog *ast.Program) *checkEnv {
 	// table is used this way). As with functions this only asserts the name
 	// exists; inferStmt still types the binding when the walk reaches it, and
 	// evaluation order is the evaluator's concern, not the checker's.
+	//
+	// A top-level `const` is registered as one here rather than when the walk
+	// reaches it, because a function declared above the binding may assign to
+	// it, and that assignment is checked when its declaration is reached. warp's
+	// `examples/train.tw` has exactly that shape: `train_step` writes `STEPS`
+	// several lines above the `let STEPS` that binds it.
 	for _, s := range prog.Body {
 		if lt, ok := s.(*ast.Let); ok {
 			if _, seen := env.get(lt.Name); !seen {
 				env.define(lt.Name, tUnknown{})
 			}
+			if lt.Const {
+				if _, already := env.consts[lt.Name]; !already {
+					env.consts[lt.Name] = lt.Line
+				}
+			}
 		}
 	}
+	// The file's top level is a scope like any other, so a second binding of a
+	// const name here is refused the same way one inside a block is.
+	c.reportConstRebinds(prog.Body)
 	return env
 }
 
@@ -617,12 +631,16 @@ func dimsString(t tTensor) string {
 // --- environment -----------------------------------------------------------
 
 type checkEnv struct {
-	vars   map[string]Type
+	vars map[string]Type
+	// consts is the subset of vars bound by `const`, each with the line it was
+	// bound on. Kept per scope rather than per name so that a `let` shadowing a
+	// `const` in an inner scope is an ordinary mutable binding.
+	consts map[string]int
 	parent *checkEnv
 }
 
 func newEnv(parent *checkEnv) *checkEnv {
-	return &checkEnv{vars: map[string]Type{}, parent: parent}
+	return &checkEnv{vars: map[string]Type{}, consts: map[string]int{}, parent: parent}
 }
 
 func (e *checkEnv) get(name string) (Type, bool) {
@@ -635,6 +653,19 @@ func (e *checkEnv) get(name string) (Type, bool) {
 }
 
 func (e *checkEnv) define(name string, t Type) { e.vars[name] = t }
+
+// constLine reports whether a name resolves to a `const` binding, and the line
+// it was bound on. It stops at the first scope that binds the name, so a `let`
+// of the same name in a nearer scope shadows the const and is mutable.
+func (e *checkEnv) constLine(name string) (int, bool) {
+	for env := e; env != nil; env = env.parent {
+		if _, ok := env.vars[name]; ok {
+			line, isConst := env.consts[name]
+			return line, isConst
+		}
+	}
+	return 0, false
+}
 
 func (e *checkEnv) assign(name string, t Type) {
 	for env := e; env != nil; env = env.parent {
@@ -677,6 +708,17 @@ func (c *checker) inferStmt(s ast.Stmt, env *checkEnv) {
 		} else {
 			env.define(st.Name, rhs)
 		}
+		// `const` binds in this scope, whichever of the three branches above did
+		// the binding. A top-level one is already recorded by the prelude; this
+		// is what makes a `const` inside a function work, and what lets an inner
+		// `let` of the same name shadow an outer `const` and stay mutable.
+		//
+		// Nothing here revokes constness. A second binding of the name in this
+		// same scope is refused outright by reportConstRebinds, which is what
+		// keeps the guarantee from depending on statement order.
+		if st.Const {
+			env.consts[st.Name] = st.Line
+		}
 	case *ast.FnDecl:
 		env.define(st.Name, tFn{node: st, params: st.Params, ret: st.Ret, retUnit: st.RetUnit, retType: st.RetType, body: st.Body, env: env})
 		// Check the body once at definition using the parameter annotations, so
@@ -685,6 +727,18 @@ func (c *checker) inferStmt(s ast.Stmt, env *checkEnv) {
 		c.checkFnDef(st, env)
 	case *ast.Assign:
 		v := c.inferExpr(st.Value, env)
+		// A `const` is bound once, and the name is the whole of the guarantee:
+		// `HEX = other()` swaps the table, and `HEX[0] = "#000"` edits the one
+		// everybody is reading, so both are refused. What cannot be refused here
+		// is a mutation that does not go through the name, `push(HEX, x)` or a
+		// function handed the handle, because `Arr` has reference semantics and
+		// nothing tracks where a handle goes. docs/language-guide.md says so
+		// where `const` is introduced; docs/roadmap.md entry 28.
+		if base, ok := lvalueBase(st.Target); ok {
+			if at, isConst := env.constLine(base.Name); isConst {
+				c.report(st.Line, "%s is declared const on line %d, so nothing may be assigned through that name: not the binding, and not an element or field of it. Bind a new name for the changed value, or declare it with let if it is meant to change.", base.Name, at)
+			}
+		}
 		if id, ok := st.Target.(*ast.Ident); ok {
 			env.assign(id.Name, v)
 		} else {
@@ -744,6 +798,7 @@ func (c *checker) inferStmt(s ast.Stmt, env *checkEnv) {
 }
 
 func (c *checker) inferBlock(b *ast.Block, env *checkEnv) Type {
+	c.reportConstRebinds(b.Body)
 	var last Type = tUnit{}
 	for _, s := range b.Body {
 		if es, ok := s.(*ast.ExprStmt); ok {
@@ -754,6 +809,68 @@ func (c *checker) inferBlock(b *ast.Block, env *checkEnv) Type {
 		}
 	}
 	return last
+}
+
+// reportConstRebinds refuses a second binding of a name that a `const` binds in
+// the same statement list.
+//
+// The rule exists because the alternative is a silent revocation. Constness is
+// held in a per-scope map, and the first cut of it had a plain `let` of the same
+// name delete the entry, so `const HEX` followed by `let HEX` turned the
+// guarantee off with nothing said. It was order-dependent on top of that: the
+// prelude registers top-level consts before the walk starts, so a `let` above
+// the `const` was refused and a `let` below it was not. Moving a line changed
+// what the checker promised.
+//
+// Order is not consulted here at all: the whole list is scanned for the first
+// `const` binding of each name, and every other binding of those names is
+// reported, whichever side of it they sit on. Two plain `let`s of one name stay
+// legal, because that is an idiom this language allows and this rule is about
+// `const`. An inner scope is not this list, so shadowing is untouched.
+func (c *checker) reportConstRebinds(body []ast.Stmt) {
+	// Indices rather than lines: two statements can share a line, so a line
+	// number cannot tell the const's own binding apart from a second one.
+	first := map[string]int{}
+	for i, s := range body {
+		if lt, ok := s.(*ast.Let); ok && lt.Const {
+			if _, already := first[lt.Name]; !already {
+				first[lt.Name] = i
+			}
+		}
+	}
+	if len(first) == 0 {
+		return
+	}
+	for i, s := range body {
+		lt, ok := s.(*ast.Let)
+		if !ok {
+			continue
+		}
+		at, isConst := first[lt.Name]
+		if !isConst || at == i {
+			continue
+		}
+		decl := body[at].(*ast.Let)
+		c.report(lt.Line, "%s is declared const on line %d, so the name cannot be bound a second time in the same scope: a second binding would take its place and everything after it would be assignable again. Rename one of them, or declare line %d with let if the name is meant to change.", lt.Name, decl.Line, decl.Line)
+	}
+}
+
+// lvalueBase is the name an assignment target ultimately reaches: `x` for `x`,
+// for `x.f`, for `x[i]` and for `a.d[i]`. An assignment through a call or any
+// other expression has no base name, and reports nothing.
+func lvalueBase(target ast.Expr) (*ast.Ident, bool) {
+	for {
+		switch t := target.(type) {
+		case *ast.Ident:
+			return t, true
+		case *ast.Field:
+			target = t.Target
+		case *ast.Index:
+			target = t.Target
+		default:
+			return nil, false
+		}
+	}
 }
 
 // elemType returns the element type produced by iterating a value.

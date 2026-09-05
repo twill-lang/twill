@@ -281,7 +281,9 @@ fn stmt(p: Printer, s: ast.Stmt, indent: I64) {
           name = bytes.concat(name, bytes.concat(": ", st.type_name))
         },
       }
-      line_c(p, indent, bytes.concat("let ", bytes.concat(name,
+      let kw: Str = "let "
+      if st.is_const { kw = "const " }
+      line_c(p, indent, bytes.concat(kw, bytes.concat(name,
         bytes.concat(" = ", expr(p, st.value)))), st.line)
     },
     SAssign(st) => line_c(p, indent,
