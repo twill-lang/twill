@@ -526,8 +526,8 @@ existing binding, which is what makes training loops work.
 
 ### `const`
 
-`const` binds the way `let` does and then refuses every assignment through the
-name:
+`const` binds the way `let` does and then refuses an assignment through the
+name, the binding itself and an element or field of it alike:
 
 ```rust
 const HEX = ["#000", "#fff"]
