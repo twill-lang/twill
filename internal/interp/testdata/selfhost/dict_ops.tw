@@ -1,0 +1,26 @@
+mode systems
+
+# The Dict family. A dictionary keeps its keys in insertion order, so printing
+# or iterating one gives the same result on every run.
+fn main() {
+  let d: Dict[Str, I64] = dict_new()
+  dict_set(d, "b", 2)
+  dict_set(d, "a", 1)
+  dict_set(d, "b", 3)
+  print(str(d))
+  print(str(dict_keys(d)))
+  print(str(len(d)))
+  print(str(dict_get(d, "a")))
+  print(str(dict_get(d, "z")))
+  print(str(dict_has(d, "a")))
+  print(str(dict_has(d, "z")))
+  print(str(dict_must(d, "b")))
+  print(str(dict_or(d, "a", 99)))
+  print(str(dict_or(d, "z", 99)))
+  dict_del(d, "a")
+  print(str(d))
+  # Deleting a key that is not there is not an error.
+  dict_del(d, "z")
+  print(str(dict_keys(d)))
+  print(str(len(dict_new())))
+}

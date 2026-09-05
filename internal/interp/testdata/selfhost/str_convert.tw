@@ -1,0 +1,20 @@
+mode systems
+
+# Text to number and back. Each of these delegates to the host on the
+# bootstrap, because the pure-twill versions need exact 64-bit integers a
+# float64 runtime cannot supply.
+fn main() {
+  print(str(i64_of_str("42")))
+  print(str(i64_of_str("  -7  ")))
+  print(str(i64_of_str("nope")))
+  print(str(i64_of_str("9007199254740993")))
+  print(str(str_to_f64("1.5")))
+  print(str(str_to_f64("1_000.5")))
+  print(str(str_to_f64("nope")))
+  print(f64_to_str(1.5))
+  print(f64_to_str(0.1))
+  print(num_to_text(3.0))
+  print(num_to_text(2.5))
+  print(f64_hex(1.0))
+  print(f64_hex(0.1))
+}

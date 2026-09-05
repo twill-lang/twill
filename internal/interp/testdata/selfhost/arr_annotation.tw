@@ -1,0 +1,22 @@
+mode systems
+
+# docs/BUGS.md open divergence 1: a numeric list literal under an `Arr`
+# annotation. The bootstrap's containerForAnnotation reads the annotation and
+# hands back a list; the self-hosted evaluator only converted the *empty*
+# literal, so `[3, 1, 2]` stayed a tensor and every list operation on it took
+# the tensor path instead.
+fn main() {
+  let a: Arr[I64] = [3, 1, 2]
+  print(str(a))
+  print(str(len(a)))
+  print(str(a[0]))
+  push(a, 4)
+  print(str(a))
+  # An empty literal at the same annotation was already converted; it stays.
+  let e: Arr[Str] = []
+  print(str(e))
+  # A rank-2 literal is left alone rather than silently flattened, which is the
+  # rule the bootstrap states and the reason the conversion is rank-limited.
+  let m: Arr[F64] = [[1.0, 2.0], [3.0, 4.0]]
+  print(str(m))
+}
