@@ -127,9 +127,11 @@ func names(rows []row) []string {
 	return out
 }
 
-// cell makes a string safe to put in a markdown table cell.
+// cell makes a string safe to put in a markdown table cell: no pipe to end the
+// cell early, and no control byte to turn the whole generated document into
+// something git treats as binary.
 func cell(s string) string {
-	s = strings.ReplaceAll(s, "|", "\\|")
+	s = strings.ReplaceAll(printable(s), "|", "\\|")
 	if len(s) > 120 {
 		s = s[:120] + "..."
 	}

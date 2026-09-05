@@ -15,8 +15,11 @@ import (
 
 // The self-hosted evaluator's own words for a name it was asked to dispatch and
 // could not. src/eval.tw ends its dispatch chain with this message rather than
-// returning unit, which is what makes the gap measurable from outside.
-const selfMissing = "is named in the builtin table but has no implementation"
+// returning unit, which is what makes the gap measurable from outside. The name
+// is captured, not just matched: probing `foo` can make the evaluator reach for
+// some other unimplemented builtin on its own account, and reading that as an
+// answer about `foo` would be a wrong row nobody could see was wrong.
+var selfMissing = regexp.MustCompile(`builtin "([^"]+)" is named in the builtin table but has no implementation`)
 
 // The Go bootstrap has no such fallback: a name it does not register is simply
 // not bound, and evaluating it is an undefined variable.
@@ -163,7 +166,7 @@ func probe(bin, dir, name string, timeout time.Duration) row {
 		self := selfHosted(bin, dir, file, timeout, "--no-check")
 		boot := bootstrap(bin, dir, file, timeout, "--no-check")
 		if r.self == unknown {
-			r.self, r.selfEvidence = classifySelf(self, file)
+			r.self, r.selfEvidence = classifySelf(self, name, file)
 		}
 		if r.boot == unknown {
 			r.boot, r.bootEvidence = classifyBoot(boot, name, file)
@@ -176,47 +179,73 @@ func probe(bin, dir, name string, timeout time.Duration) row {
 	return r
 }
 
-func classifySelf(o outcome, file string) (support, string) {
-	line := firstLine(o.out())
-	switch {
-	case o.timedOut:
+func classifySelf(o outcome, name, file string) (support, string) {
+	if o.timedOut {
 		return unknown, "probe timed out"
-	case strings.Contains(o.out(), selfMissing):
+	}
+	if named(selfMissing, o.out(), name) {
 		return missing, "eval reached its no-implementation fallback"
+	}
+	if o.code == 0 {
+		return present, "ran"
+	}
+	line := diagnostic(o)
+	switch {
+	case line == "":
+		return unknown, fmt.Sprintf("exit %d with no diagnostic", o.code)
 	case arityComplaint.MatchString(line):
 		return unknown, line
 	case !attributable(line, file):
 		// The failure is inside src/*.tw rather than in the probe, so the probe
 		// says nothing about the name. Retry with more arguments.
 		return unknown, line
-	case o.code == 0:
-		return present, "ran"
 	default:
 		return present, line
 	}
 }
 
 func classifyBoot(o outcome, name, file string) (support, string) {
-	line := firstLine(o.out())
-	switch {
-	case o.timedOut:
+	if o.timedOut {
 		return unknown, "probe timed out"
-	case matchesUndefined(o.out(), name):
+	}
+	if named(bootMissing, o.out(), name) {
 		return missing, "the name is not bound in the Go interpreter"
+	}
+	if o.code == 0 {
+		return present, "ran"
+	}
+	line := diagnostic(o)
+	switch {
+	case line == "":
+		return unknown, fmt.Sprintf("exit %d with no diagnostic", o.code)
 	case arityComplaint.MatchString(line):
 		return unknown, line
 	case !attributable(line, file):
 		return unknown, line
-	case o.code == 0:
-		return present, "ran"
 	default:
 		return present, line
 	}
 }
 
-func matchesUndefined(out, name string) bool {
-	m := bootMissing.FindStringSubmatch(out)
+// named reports whether re matched and the name it captured is the name being
+// probed. Both "missing" verdicts go through it, so neither implementation can
+// be recorded as missing a builtin on the strength of a message about a
+// different one.
+func named(re *regexp.Regexp, out, name string) bool {
+	m := re.FindStringSubmatch(out)
 	return m != nil && m[1] == name
+}
+
+// diagnostic is the line a verdict is read from. Both implementations write
+// their diagnostics to stderr and the program's own output to stdout, so a
+// probe that prints before it fails -- and several do -- has the printed value
+// as the first line of the two streams together. Reading that as the verdict
+// classified a working builtin as inconclusive.
+func diagnostic(o outcome) string {
+	if o.stderr != "" {
+		return firstLine(o.stderr)
+	}
+	return firstLine(o.stdout)
 }
 
 // attributable reports whether a diagnostic came from the probe file. A line

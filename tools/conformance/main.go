@@ -167,6 +167,18 @@ func selfHosted(bin, dir, file string, timeout time.Duration, extra ...string) o
 // firstDifference reports the first line where two outputs part company, which
 // is the only part of a diff anyone reads.
 func firstDifference(aLabel, a, bLabel, b string) string {
+	n, x, y := firstDifferentLine(a, b)
+	if n == 0 {
+		return "they differ only in trailing content"
+	}
+	return fmt.Sprintf("line %d\n    %s: %s\n    %s: %s", n, aLabel, trim(x), bLabel, trim(y))
+}
+
+// firstDifferentLine returns the 1-based number of the first line on which two
+// outputs differ and the two lines themselves, or 0 if every line matches. It
+// is shared with the divergence signature so that what a report shows a reader
+// and what the allow-list is keyed on cannot drift apart.
+func firstDifferentLine(a, b string) (int, string, string) {
 	al := strings.Split(a, "\n")
 	bl := strings.Split(b, "\n")
 	for i := 0; i < len(al) || i < len(bl); i++ {
@@ -178,18 +190,49 @@ func firstDifference(aLabel, a, bLabel, b string) string {
 			y = bl[i]
 		}
 		if x != y {
-			return fmt.Sprintf("line %d\n    %s: %s\n    %s: %s", i+1, aLabel, trim(x), bLabel, trim(y))
+			return i + 1, x, y
 		}
 	}
-	return "they differ only in trailing content"
+	return 0, "", ""
 }
 
 func trim(s string) string {
-	s = strings.TrimRight(s, "\r")
+	s = printable(strings.TrimRight(s, "\r"))
 	if len(s) > 160 {
 		return s[:160] + "..."
 	}
 	return s
+}
+
+// printable rewrites the bytes that must not reach a text file.
+//
+// A diagnostic can quote a value, and a twill tensor holds its elements as raw
+// bytes, so `no match arm for {shape: [], data: ..., dtype: 6}` carries eight
+// NUL bytes in the middle of it. Copied into docs/conformance.md that made the
+// generated document binary: git stopped diffing it, a reviewer could not read
+// the change, and the one place the gate's evidence lives was the one file
+// nobody could see. Every byte outside printable ASCII becomes \xNN here, which
+// keeps the evidence and keeps the file text.
+func printable(s string) string {
+	clean := true
+	for i := 0; i < len(s); i++ {
+		if s[i] < 0x20 || s[i] == 0x7f {
+			clean = false
+			break
+		}
+	}
+	if clean {
+		return s
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if c := s[i]; c < 0x20 || c == 0x7f {
+			fmt.Fprintf(&b, "\\x%02x", c)
+		} else {
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
 }
 
 func die(err error) {
