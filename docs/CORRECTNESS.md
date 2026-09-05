@@ -327,8 +327,8 @@ ones, and it has been in the suite since before this document.
 | Checker catches decidable errors | `TestCheckerCatchesWhatItCanSee` | 2,646/2,646 |
 | `grad` is a shape barrier (a known open gap) | `TestGradIsAShapeBarrier` | direct case caught, grad case not |
 | Examples check clean and run | `TestExamplesRunClean` | all |
-| The self-hosted front end matches the bootstrap | both binaries over every `.tw` file, by hand, 2026-09-04 | `check` 386/386; `fmt` 386/386 modulo blank lines |
-| The self-hosted evaluator matches the bootstrap | the same run | **no**, 128 of 247 builtins unimplemented; see below |
+| The self-hosted front end matches the bootstrap | both binaries over all 476 tracked `.tw` files, by hand, 2026-09-04 | `check` 476/476; `fmt` 476/476 modulo blank lines |
+| The self-hosted evaluator matches the bootstrap | the same run | **no**, 128 of 248 builtins unimplemented; see below |
 | Results are bit-identical across architectures | measured by hand, arm64 against amd64 | **no** — `math.Exp` differs by an ULP; see section 4 |
 
 ### The self-hosted row, in full
@@ -342,18 +342,29 @@ implementation | the differential harness, `tools/diff/` | 443 files on
 forward numerics, was being supported by counts from `check` and `fmt`, which
 are front-end stages and say nothing about numerics.
 
-What is true, measured 2026-09-04 by running `./twill <cmd> f` against
-`./twill run src/main.tw <cmd> f` over all 386 `.tw` files in `testdata/cases`,
-`examples`, `std` and `src`:
+A fourth thing was wrong with the first attempt to replace it, and it is worth
+recording because it is the same failure in a smaller size. That version said
+386 files and named `testdata/cases`, `examples`, `std` and `src`. Read
+recursively those four directories hold 458 files, and the repository holds 476;
+386 was the four names read as top-level globs. A coverage number that overstates
+its own evidence is exactly what this section exists to stop.
 
-- `check` agrees on all 386, exit status for exit status.
-- `fmt` agrees on all 386 once blank lines are set aside: 327 byte-identical,
-  59 differing only in the by-design rule where the self-hosted printer keeps a
-  blank line above a comment block.
-- The evaluator does not agree. `src/eval.tw` implements 119 of the 247 names in
+What is true, measured 2026-09-04 by running `./twill <cmd> f` against
+`./twill run src/main.tw <cmd> f` over all 476 `.tw` files `git ls-files '*.tw'`
+reports, which is the whole tree:
+
+- `check` agrees on all 476, exit status for exit status. Six files need more
+  than 25 seconds on the self-hosted side; `src/eval.tw` takes about three
+  minutes. All six agree.
+- `fmt` agrees on all 476 once blank lines are set aside: 355 byte-identical,
+  121 differing only in the by-design rule where the self-hosted printer keeps
+  blank lines the Go printer drops. In every one of the 121 the extra lines are
+  the self-hosted side's, and no token differs anywhere in the 476.
+- The evaluator does not agree. `src/eval.tw` implements 120 of the 248 names in
   `src/builtins.tw`; the other 128 reach "named in the builtin table but has no
-  implementation". Twelve of the 26 programs in `examples/` are byte-identical
-  on both sides, nine do not finish self-hosted inside 25 seconds, four diverge.
+  implementation". Of the 26 programs in `examples/`, twelve are byte-identical
+  on both sides, nine do not finish self-hosted inside 25 seconds, four diverge,
+  and one fails on a path bug in the self-hosted CLI rather than on semantics.
   One of the four, `examples/gbm.tw`, exits 0 on both sides with a test RMSE of
   `0.660285` against `0.659657` -- a fourth-decimal disagreement, not the 1-ULP
   kind section 4 is about.

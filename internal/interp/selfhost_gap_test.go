@@ -21,9 +21,9 @@ import (
 // with a message naming the files to update. A failure here is good news about
 // the evaluator and a chore for the prose; it is not a regression.
 //
-// Two runs, not two hundred and forty-seven. The full probe -- generating a
+// Two runs, not two hundred and forty-eight. The full probe -- generating a
 // call for every name in src/builtins.tw and counting how many reach "named in
-// the builtin table but has no implementation", which is 128 of 247 -- is done
+// the builtin table but has no implementation", which is 128 of 248 -- is done
 // by hand and written down in docs/roadmap.md. Repeating it in the suite would
 // roughly double the cost of the slowest file in the repository to re-derive a
 // number that only moves when someone is already editing src/eval.tw.
@@ -120,7 +120,7 @@ func TestSelfHostedStillHasNoSystemsModeContainers(t *testing.T) {
 		if !strings.Contains(stderr, "is named in the builtin table but has no implementation") {
 			t.Errorf("%s is no longer unimplemented in src/eval.tw.\n"+
 				"printed %q\nstderr %q\n"+
-				"That is a fix, not a regression: the count of 128 of 247 and the "+
+				"That is a fix, not a regression: the count of 128 of 248 and the "+
 				"claim that src/ cannot run src/ are now stale in %s.",
 				name, printed, stderr, docsToUpdate)
 		}

@@ -30,12 +30,13 @@ in the sources" at the end.
 
 ---
 
-## Status, as of 1.9.0 (checked 2026-09-04)
+## Status, as of 1.9.0 plus unreleased `main` (checked 2026-09-04)
 
 This document was written when none of it was built, and it went stale without
-saying so: entries kept being delivered and only three of them (5, 7 and 21)
-were ever marked. Twenty-five of the thirty-two are now delivered, two are half
-delivered, and five are untouched.
+saying so: entries kept being delivered and only two of them (5 and 21) were
+ever marked. Twenty-six of the thirty-two are now delivered, two are half
+delivered, and four are untouched. One of the twenty-six, entry 30, is delivered
+on `main` and unreleased; the other twenty-five are in a tagged release.
 
 The ranking is left exactly as it was. It is an argument about evidence, not a
 queue of open work, and rewriting the order now that the work is done would
@@ -50,7 +51,7 @@ Delivery was verified by running the current binary, not by reading the
 changelog, which is how the two half-done entries and the still-open `record()`
 were caught. The release named in each row is where the feature first shipped,
 taken from the changelog and, where the changelog was silent, from the tag the
-defining commit first appears in. The five still open are 24, 28, 29, 30 and 32.
+defining commit first appears in. The four still open are 24, 28, 29 and 32.
 The two half done are 17 and 31.
 
 "Delivered" throughout means delivered by the Go bootstrap, which is the binary
@@ -62,40 +63,88 @@ front end agrees across the corpus and the evaluator does not.
 
 ## What the second implementation agrees on, and what it does not
 
-Measured 2026-09-04 at `97c4888`, by running both sides over every `.tw` file in
-this repository: 386 of them, being `testdata/cases` (327), `examples` (26),
-`std` (22) and `src` (11). "Bootstrap" below means `./twill <command> <file>`.
-"Self-hosted" means `./twill run src/main.tw <command> <file>`, which is the
-entry point `internal/interp/selfhost_test.go` uses and the one `src/main.tw`'s
-own header calls byte-locked to the Go binary.
+Measured 2026-09-04, re-run on the merge of this branch with `main`, by running
+both sides over **every `.tw` file this repository tracks: 476 of them**, found
+with `git ls-files '*.tw'` and therefore recursive rather than top level.
+"Bootstrap" below means `./twill <command> <file>`. "Self-hosted" means
+`./twill run src/main.tw <command> <file>`, which is the entry point
+`internal/interp/selfhost_test.go` uses and the one `src/main.tw`'s own header
+calls byte-locked to the Go binary.
+
+The whole corpus, by directory, summing to 476:
+
+| Directory | Files | | Directory | Files |
+|---|---:|---|---|---:|
+| `testdata/cases` | 327 | | `bench/workloads` | 16 |
+| `examples` | 26 | | `src` | 11 |
+| `std` | 22 | | `src/gpu` | 10 |
+| `testdata/examples` | 21 | | `src/cli` | 9 |
+| `std/tests` | 19 | | `std/term` | 7 |
+| | | | `testdata/std` | 6 |
+| | | | `bench` | 2 |
+
+An earlier draft of this section said 386, "every `.tw` file in this
+repository", and named `testdata/cases`, `examples`, `std` and `src`. Those four
+names were read as top-level globs, so the 72 files under `src/cli` (9),
+`src/gpu` (10), `std/term` (7), `std/tests` (19), `testdata/examples` (21) and
+`testdata/std` (6) were never looked at, and the 18 under `bench/` were outside
+the four names entirely. 386 + 72 + 18 = 476. The numbers below are the whole
+tree.
 
 ### The front end agrees
 
 | Stage | Files | Result |
 |---|---|---|
-| `check` | 386 | 386 agree on exit status, `src/eval.tw` included |
-| `fmt` | 386 | 327 byte-identical; 59 differ only in blank lines, none in a token |
+| `check` | 476 | 476 agree on exit status, `src/eval.tw` included |
+| `fmt` | 476 | 355 byte-identical; 121 differ only in blank lines, none in a token |
 
-The formatter divergence is the known by-design one and nothing else. On
-`examples/hello.tw` the self-hosted printer keeps the blank line above a comment
-block and the Go printer drops it. Delete blank lines from both outputs and all
-386 files match exactly.
+`check` agrees on all 476, but not inside any cap worth calling interactive.
+Six files take more than 25 seconds through the self-hosted checker when the
+machine is otherwise busy, and these are their times run one at a time:
+`src/eval.tw` 193s, `src/check.tw` 89s, `src/parse.tw` 34s, `std/float.tw` 15s,
+`src/tensor.tw` 13s and `src/fmt.tw` 6s, against well under a second each on the
+bootstrap. All six answer "no shape problems found" on both sides, which is why
+the row above reads 476. Length is not the whole story: `std/linalg.tw` is 1,171
+lines, longer than `src/fmt.tw`, and finishes in 0.5s. A harness with a
+25-second per-file cap reports the slow files as timeouts rather than as
+agreement, so anyone repeating this needs a cap in the minutes.
+
+The formatter divergence is blank lines and nothing else: no token differs
+anywhere in the 476, and deleting blank lines from both outputs makes all 476
+match exactly. In all 121 differing files the extra blank lines are on the
+self-hosted side, never the Go side. The rule is wider than the case that was
+first looked at. The self-hosted printer keeps a blank line above a comment
+block, which is the `examples/hello.tw` case; it also keeps one above a plain
+declaration, which is what `bench/matmul.tw` shows, where the only two
+differences in the file are the blank lines above `fn gflops` and above
+`fn bench`. Counted over the 121 files, more of the kept blank lines sit above
+code than above a comment. Both shapes are the same by-design divergence and
+neither reaches a token.
 
 ### The evaluator does not
 
 `src/eval.tw` dispatches a builtin by name and ends its chain with
 `"builtin ... is named in the builtin table but has no implementation"`.
 Generating a call for every name in `src/builtins.tw`'s `NAMES` and running it
-self-hosted reaches that message for **128 of the 247** names. The count is 128
+self-hosted reaches that message for **128 of the 248** names. The count is 128
 either way the probe is written: numeric-mode calls through `src/cli/main.tw`,
 and systems-mode calls inside a `main()` through `src/main.tw`, agree on the
-same 128 names.
+same 128 names. Eight of the 248 have to be given arguments the checker accepts
+before the probe reaches dispatch at all -- `matmul`, `dot`, `linear`, `conv2d`,
+`maxpool2d` and `quantize` want a shaped tensor, and `None` and `unit` are not
+called at all but evaluated in `src/eval.tw`'s expression case. `quantize` is
+the one of those eight that is unimplemented, and a probe that passes it `0`
+never learns so.
 
-The 119 that are implemented are the numeric-mode builtins. What is missing is
+The 120 that are implemented are the numeric-mode builtins. What is missing is
 very nearly the whole systems half, which is the dialect `src/` is itself
-written in: `arr_*`, `dict_*`, `bytes_*`, `buf_*`, every `f64_*`, every file and
-path builtin, `rng_*`, the whole `gpu_*` block, `quantize`, `abort`, `exit`,
-`env`, `args` and the `mem_*` counters.
+written in. Every name with these prefixes is unimplemented, all of them
+enumerated rather than sampled: `arr_*` (4 of 4), `dict_*` (8 of 8), `bytes_*`
+(3 of 3), `buf_*` (4 of 4), `f64_*` (21 of 21), `rng_*` (9 of 9), `gpu_*` (19 of
+19), `path_*` (9 of 9) and `mem_*` (5 of 5). So are the rest of the file
+builtins, and `quantize`, `abort`, `exit`, `env`, `args`, `run`, `push`, `pop`,
+`chr`, `slice`, `numel` and `is_same`. `black_box`, which `main` added after
+this branch was cut, is implemented on both sides.
 
 The smallest reproduction is `len` on a `Str`:
 
@@ -112,12 +161,13 @@ The shortest statement of the gap is that `src/` cannot run `src/`:
 
 ```
 $ ./twill run src/main.tw run "$PWD/src/main.tw" run "$PWD/examples/hello.tw"
-/tmp/tw/src/main.tw:154: runtime error: builtin "dict_new" is named in the builtin table but has no implementation
+<repo>/src/main.tw:154: runtime error: builtin "dict_new" is named in the builtin table but has no implementation
   154 |           },
 ```
 
-(The inner paths are absolute because the self-hosted CLI resolves a relative
-one against its own directory rather than the caller's. That is the same bug
+(`<repo>` is the checkout's absolute path, which is what `$PWD` expands to. The
+inner paths are absolute because the self-hosted CLI resolves a relative one
+against its own directory rather than the caller's. That is the same bug
 `examples/frames.tw` hits, below.)
 
 The compiler is written in the half of the language the compiler cannot
@@ -157,9 +207,9 @@ test drives `src/main.tw`. `CONTRIBUTING.md` had been telling readers to use
 
 ### Nothing runs the comparison at corpus scale
 
-`internal/interp/selfhost_test.go` holds 59 differential tests and CI does run
+`internal/interp/selfhost_test.go` holds 60 differential tests and CI does run
 them, under `go test ./...`. They are hand-written programs, and the systems-mode
-ones are small enough to stay inside the 119 implemented builtins, so none of
+ones are small enough to stay inside the 120 implemented builtins, so none of
 the above is in their reach.
 
 `tools/diff/run` is the corpus-scale harness, and two things are true of it.
@@ -1467,7 +1517,7 @@ this, and summing an axis away is the ordinary case.
 **Fixed.** `argsort` went into `internal/checker`'s table in 1.4.0 and all three
 are there now. The two tables were extracted and compared on 2026-09-04:
 `internal/checker/checker.go`'s `builtinNames` and `src/builtins.tw`'s `NAMES`
-hold **exactly the same 247 names**, with nothing on either side the other
+hold **exactly the same 248 names**, with nothing on either side the other
 lacks, which is the "fix both tables together" this entry ends by asking for.
 What follows is the state at the time of filing.
 `internal/checker`, mirrored in `src/check.tw` `builtin_names`, recorded as

@@ -134,7 +134,10 @@ with a shift is valid only for a non-negative dividend.
 Deliberate, for a prototype. Two entries left this list in 1.7.0, which is worth
 naming because they were the two largest: user-defined generics (`struct Box[T]`,
 `enum Tree[T]`, `fn first[T](...)`) parse, check and run, and a match pattern is
-a tree, with nesting, literals and guards.
+a tree, with nesting, literals and guards. One rough edge is left on the first
+of those: a bare type parameter in *return* position is read as a unit in
+numeric mode, so `-> T` answers `unknown unit "T"` outside `mode systems`
+(`docs/BUGS.md`, Open).
 
 - Interpreted by default. There is a tracing compiler under `internal/trace`
   and `internal/codegen` which emits C and is bit-exact against the interpreter,

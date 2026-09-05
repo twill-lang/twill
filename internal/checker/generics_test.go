@@ -76,3 +76,26 @@ func TestParameterIsInScopeForTheSignature(t *testing.T) {
 func TestParametersDoNotEscapeTheirDeclaration(t *testing.T) {
 	wantNone(t, "mode systems\nstruct Box[T] { value: T }\nfn g(x: T) -> Str = \"a\"")
 }
+
+// The rule above holds in systems mode. In numeric mode it does not: units are
+// a numeric-mode feature, a bare name in return position is resolved as a unit,
+// and the declaration's own parameters are not consulted first. Every
+// neighbouring form of the same parameter is accepted, which is what makes the
+// one refusal surprising rather than a deliberate restriction.
+//
+// This pins the behaviour rather than blessing it. docs/BUGS.md, Open, has the
+// entry; fixing it should turn this test red, and the fix belongs with the
+// documentation in docs/language-guide.md's "Type parameters" section and
+// docs/RELEASE-1.7.md, which both print the numeric-mode form.
+func TestABareTypeParameterInReturnPositionIsAUnitInNumericMode(t *testing.T) {
+	wantOne(t, "fn first[T](xs: Arr[T]) -> T = xs[0]", `unknown unit "T"`)
+	wantOne(t, "fn pick[Elem](a: Elem, b: Elem) -> Elem = a", `unknown unit "Elem"`)
+
+	// The forms that are accepted, so a fix that widens the rule too far is
+	// caught here too rather than only in the guide.
+	wantNone(t, "fn first[T](xs: Arr[T]) = xs[0]")
+	wantNone(t, "fn dup[T](xs: Arr[T]) -> Arr[T] = xs")
+	wantNone(t, "fn take[T](x: T) = x")
+	wantNone(t, "struct Box[T] { value: T, tag: Str }")
+	wantNone(t, "enum Tree[T] { Leaf(T), Branch(Arr[T]), Empty }")
+}

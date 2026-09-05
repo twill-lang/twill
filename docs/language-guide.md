@@ -1117,11 +1117,20 @@ name. The parameters go in `[]` after the name, and stand for whatever the use
 site supplies.
 
 ```rust
+mode systems
+
 struct Box[T] { value: T, tag: Str }
 enum Tree[T] { Leaf(T), Branch(Arr[T]), Empty }
 
 fn first[T](xs: Arr[T]) -> T = xs[0]
 ```
+
+The `mode systems` line is load-bearing for the last of those three. In numeric
+mode a bare name in return position is resolved as a unit, and the declaration's
+own parameters are not consulted first, so `-> T` there answers
+`unknown unit "T"`. `struct Box[T]`, `enum Tree[T]`, `x: T` in a parameter list
+and `-> Arr[T]` are all fine in either mode; it is only the bare parameter
+returned. `docs/BUGS.md`, Open, has the entry.
 
 **They are erased.** The runtime is the same code whatever `T` is, so nothing is
 specialised and nothing is generated: the parameters exist for the checker and

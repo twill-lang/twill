@@ -376,9 +376,9 @@ fn predict(m: Model, x: [2]) -> [3] { m.w @ x + m.b }
 ## twill is being written in twill
 
 > **The front end matches the reference across the corpus. The evaluator does
-> not.** Measured 2026-09-04 over all 386 `.tw` files in the tree:
+> not.** Measured 2026-09-04 over all 476 `.tw` files this repository tracks:
 > `check` agrees on every one, `fmt` agrees on every one apart from blank
-> lines, and the self-hosted evaluator implements 119 of the 247 builtin names
+> lines, and the self-hosted evaluator implements 120 of the 248 builtin names
 > the two share. `docs/roadmap.md`, "What the second implementation agrees on,
 > and what it does not", has the measurements and how to repeat them.
 
@@ -387,16 +387,21 @@ checker, evaluator, tensor kernels, formatter and CLI, written in the language
 itself under `src/`. The whole `src/`+`std/` tree type-checks clean and runs on
 the Go bootstrap.
 
-What is finished is the front end. Running both sides over the 386 `.tw` files
-in `testdata/cases`, `examples`, `std` and `src`, `twill check` agrees with the
-Go command on all 386, and `twill fmt` agrees on all 386 once blank lines are
-set aside: 327 byte-identical, and 59 differing only in a by-design blank-line
-rule. (An earlier version of this paragraph quoted 443 and 89 files from a
-v1.4.0 run; those counts were a snapshot of a corpus that has since changed
-shape, and the numbers here are freshly measured.)
+What is finished is the front end. Running both sides over every `.tw` file
+`git ls-files` reports, 476 of them, `twill check` agrees with the Go command on
+all 476, and `twill fmt` agrees on all 476 once blank lines are set aside: 355
+byte-identical, and 121 differing only in a by-design blank-line rule. Three of
+the `check` runs take minutes rather than seconds self-hosted, `src/eval.tw`
+longest at 193 seconds; `docs/roadmap.md` names all six that run long and their
+times. (Two earlier versions of this paragraph were wrong
+in opposite directions. One quoted 443 and 89 files from a v1.4.0 run, a
+snapshot of a corpus that has since changed shape. The other quoted 386, which
+was `testdata/cases`, `examples`, `std` and `src` read as top-level globs and so
+left out 90 files in subdirectories and under `bench/`. The counts here are the
+whole tree.)
 
 The evaluator is not finished, and it is the half the word "self-hosted" is
-usually taken to promise. `src/eval.tw` dispatches 119 of the 247 names in
+usually taken to promise. `src/eval.tw` dispatches 120 of the 248 names in
 `src/builtins.tw`; the other 128 reach an explicit "named in the builtin table
 but has no implementation" and stop. The missing set is almost exactly the
 systems-mode half of the language, which is the dialect `src/` is written in:
@@ -405,12 +410,15 @@ seeded generators and GPU calls. `let s: Str = "abc"` then `print(str(len(s)))`
 prints `3` under `twill run` and fails under `twill run src/main.tw run`,
 because the self-hosted `len` has no `Str` case.
 
-Numeric-mode programs mostly do agree. Twelve of the twenty-six programs in
-`examples/` produce byte-identical output on both sides; nine are too slow to
-finish self-hosted inside a 25-second cap and are unmeasured; four diverge,
-including `examples/gbm.tw`, which exits 0 on both sides and prints a test RMSE
-of `0.660285` against `0.659657`. That is a fourth-decimal disagreement, not the
-1-ULP float noise this section used to claim.
+Numeric-mode programs mostly do agree. Of the twenty-six programs in
+`examples/`, twelve produce byte-identical output on both sides; nine are too
+slow to finish self-hosted inside a 25-second cap and are unmeasured; four
+diverge; and one, `examples/frames.tw`, fails only because the self-hosted CLI
+resolves its relative data path against `src/`, which is a path bug rather than
+a semantic difference. Twelve plus nine plus four plus one is the twenty-six.
+One of the four is `examples/gbm.tw`, which exits 0 on both sides and prints a
+test RMSE of `0.660285` against `0.659657`. That is a fourth-decimal
+disagreement, not the 1-ULP float noise this section used to claim.
 
 Nothing in CI or the Makefile compares the two at corpus scale. The
 differential harness under `tools/diff/` is referenced by neither, and it

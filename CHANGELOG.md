@@ -57,11 +57,12 @@
 
 - **The documentation says what the code does.** No code changed. `docs/roadmap.md`
   ranked thirty-two missing features and then went stale without saying so:
-  twenty-five of them had been delivered and two marked. Every row now carries
+  twenty-six of them had been delivered and two marked. Every row now carries
   the release that delivered it, checked by running the current binary rather
   than by reading this file, and the ranking argument is untouched, because the
-  ranking is what the document is for. Five entries are open (24, 28, 29, 30,
-  32) and two are half done (17, 31).
+  ranking is what the document is for. Four entries are open (24, 28, 29, 32)
+  and two are half done (17, 31). Entry 30, the compiler barrier, is the one of
+  the twenty-six that is delivered on `main` rather than in a tagged release.
 
   Three things that were plainly wrong are fixed with it. The roadmap's list of
   bugs in the bootstrap said none of the three was fixed and that no further Go
@@ -71,6 +72,36 @@
   `internal/interp/selfhost_test.go` and `twill run src/cli/main.tw` have made
   untrue. `docs/language-guide.md`'s own `ushr` idiom did not run: it called
   `not` where the builtin is `bnot`, and named a file that does not exist.
+
+  A fourth was found the same way and is recorded rather than fixed. The generic
+  function `docs/language-guide.md` and `docs/RELEASE-1.7.md` both print,
+  `fn first[T](xs: Arr[T]) -> T = xs[0]`, does not check outside `mode systems`:
+  in numeric mode a bare name in return position is resolved as a unit before
+  the declaration's own parameters, so it answers `unknown unit "T"`. Both
+  implementations do it and it reproduces against `main`. Both blocks now carry
+  the `mode systems` line they need, `docs/BUGS.md` Open has the entry, and
+  `internal/checker/generics_test.go` pins the behaviour so a fix fails the
+  suite with the files to correct.
+
+- **Where the two implementations agree, measured over the whole tree.** The
+  comparison behind the section above ran over all 476 `.tw` files
+  `git ls-files '*.tw'` reports, not the 386 an earlier draft of it claimed. 386
+  was `testdata/cases`, `examples`, `std` and `src` read as top-level globs: it
+  missed 72 files under `src/cli`, `src/gpu`, `std/term`, `std/tests`,
+  `testdata/examples` and `testdata/std`, and 18 under `bench/`. Over the 476,
+  `check` agrees on exit status everywhere and `fmt` agrees everywhere once
+  blank lines are set aside, 355 byte-identical and 121 differing only in blank
+  lines the self-hosted printer keeps. The self-hosted evaluator implements 120
+  of the 248 names in `src/builtins.tw` and the other 128 stop at "named in the
+  builtin table but has no implementation".
+
+  Two of those numbers are now asserted rather than written down.
+  `internal/checker/builtintable_test.go` holds the two builtin tables to the
+  same names and holds the documented split to the table's size, across the six
+  files that quote it; `internal/interp/selfhost_gap_test.go` pins the
+  divergences so that closing one fails the suite with the list of files to
+  correct. The table test earned its keep on this branch: merging `main`, which
+  added `black_box`, moved the count from 247 to 248 and the test said so.
 
 ## [1.9.0] - 2026-09-03
 

@@ -475,11 +475,11 @@ instances of one thing: `src/eval.tw` implements the numeric-mode builtins and
 almost none of the systems-mode ones. Generating a call for every name in
 `src/builtins.tw`'s `NAMES` and running it self-hosted reaches
 `"builtin ... is named in the builtin table but has no implementation"` for
-**128 of the 247** names -- `arr_*`, `dict_*`, `bytes_*`, `buf_*`, every
-`f64_*`, every file and path builtin, `rng_*`, `gpu_*`, `abort`, `exit`, `env`,
-`args`, `quantize` and the `mem_*` counters. `src/` consequently cannot run
-`src/`: running `src/main.tw` under itself stops at `src/main.tw:154` on
-`dict_new`.
+**128 of the 248** names -- `arr_*`, `dict_*`, `bytes_*`, `buf_*`, every
+`f64_*`, every file and path builtin, `rng_*`, `gpu_*`, `path_*`, `abort`,
+`exit`, `env`, `args`, `run`, `quantize` and the `mem_*` counters. `src/`
+consequently cannot run `src/`: running `src/main.tw` under itself stops at
+`src/main.tw:154` on `dict_new`.
 
 Three further runtime divergences found in the same pass, over `examples/`:
 
@@ -495,7 +495,9 @@ Three further runtime divergences found in the same pass, over `examples/`:
 
 `docs/roadmap.md`, "What the second implementation agrees on, and what it does
 not", has the front-end half of the same measurement: `check` and `fmt` agree
-across all 386 `.tw` files in the tree.
+across all 476 `.tw` files this repository tracks, `fmt` once blank lines are
+set aside. That is the whole tree read recursively; an earlier draft of this
+line said 386, which was four top-level directories and left out 90 files.
 
 **The `einsum` gradient panics for a bare summed axis.** Reproduced 2026-09-04
 against `main`. The backward pass of an einsum whose output subscript drops a
@@ -532,3 +534,42 @@ be taken through `einsum`.
 runtime whenever a shape depends on a value it cannot fold.
 `docs/CORRECTNESS.md` gives a six-line example and states what is and is not
 being claimed.
+
+**A bare type parameter in return position is read as a unit, in numeric mode
+only.** Found 2026-09-04 by checking that the code blocks in the documentation
+run, and it reproduces against `main`'s binary (`698a868`) as well as this
+branch. Both implementations do it, so it is a shared rule rather than a
+divergence.
+
+```rust
+fn first[T](xs: Arr[T]) -> T = xs[0]
+# shape error: unknown unit "T" (declare it with `unit T`)
+```
+
+Put `mode systems` at the top of that file and it checks clean;
+`internal/checker/generics_test.go`'s `TestParameterIsInScopeForTheSignature`
+asserts exactly that and passes. Units are a numeric-mode feature, and in
+numeric mode a bare name in return position is resolved as a unit without the
+declaration's type parameters being consulted first.
+
+Nothing else in the section misses. In numeric mode `struct Box[T]`,
+`enum Tree[T]`, `x: T` in a parameter list, `xs: Arr[T]` and `-> Arr[T]` all
+check clean, so the rule that refuses `-> T` accepts every neighbouring form of
+the same parameter.
+
+The diagnostic's suggestion makes it worse rather than better. Declaring
+`unit T` silences the error and binds the return to a unit-tagged scalar, so in
+a systems-mode program that then declares `unit T`, `let s: Str = first(xs)` on
+an `Arr[Str]` is reported as `"s" is declared Str but the value is F64`: a wrong
+type, confidently stated, on a program the guide says is correct.
+
+`docs/language-guide.md`'s "Type parameters" section and `docs/RELEASE-1.7.md`
+both print that line in a block with no `mode systems` on it, which is how this
+was found; both now say which mode the block is.
+`internal/checker/generics_test.go`'s
+`TestABareTypeParameterInReturnPositionIsAUnitInNumericMode` pins the present
+behaviour, so fixing it fails the suite with the files to correct.
+
+Not fixed here: this branch changes documentation and its tests, and a
+resolution order in both checkers is a language change that wants its own
+review.

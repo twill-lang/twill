@@ -63,14 +63,18 @@ through it and exits zero.
 
 **How far the two implementations actually agree.** The front end agrees and the
 evaluator does not, so what a self-hosted run tells you depends on which stage
-you exercised. Over all 386 `.tw` files in the tree, `check` agrees on every one
-and `fmt` agrees on every one apart from a by-design blank-line rule. The
-evaluator implements 119 of the 247 names in `src/builtins.tw`; the other 128 --
+you exercised. Over all 476 `.tw` files this repository tracks -- the whole
+tree, not the four top-level directories an earlier draft of this paragraph
+counted -- `check` agrees on every one and `fmt` agrees on every one apart from
+a by-design blank-line rule. Budget minutes, not seconds: `src/eval.tw` alone
+takes about three minutes through the self-hosted checker. The evaluator
+implements 120 of the 248 names in `src/builtins.tw`; the other 128 --
 essentially the whole systems-mode half, arrays through `dict_*`, `bytes_*`,
-`f64_*`, the file and path builtins and `gpu_*` -- reach an explicit "named in
-the builtin table but has no implementation". `src/` therefore cannot run
-`src/`. Do not read a clean self-hosted `check` as evidence that a change is
-correct on both sides; the measurements and how to repeat them are in
+`f64_*`, the file and path builtins, `rng_*`, `mem_*`, `gpu_*` and `run` --
+reach an explicit "named in the builtin table but has no implementation".
+`src/` therefore cannot run `src/`. Do not read a clean self-hosted `check` as
+evidence that a change is correct on both sides; the measurements and how to
+repeat them are in
 `docs/roadmap.md`, "What the second implementation agrees on, and what it does
 not".
 
@@ -80,11 +84,13 @@ Three things check it, and they are not the same thing:
   compares the two implementations, `runBothWays` on printed output and
   `runSelfHostedCheck` on diagnostics. These are the bulk of `internal/interp`'s
   runtime and they are skipped under `-short`, which is why `make race` passes
-  `-short` and `make test` does not. They are 59 hand-written programs, not a
+  `-short` and `make test` does not. They are 60 hand-written programs, not a
   corpus: the numeric-mode ones pass and the systems-mode ones are small enough
-  to stay inside the 119 implemented builtins, so none of the divergence above
+  to stay inside the 120 implemented builtins, so none of the divergence above
   is in their reach.
-- `./twill test std/tests` is the twill-level suite, 17 files, about a second.
+- `./twill test std/tests` is the twill-level suite: 17 `*_test.tw` files run,
+  about half a second. The directory holds 19 `.tw` files; `harness.tw` and
+  `systems_harness.tw` are the helpers the other seventeen import.
 - `tools/diff/` compares two binaries over the fixture corpus in `testdata/`.
   Nothing in CI or the Makefile runs it -- `tools/diff` appears in neither the
   `Makefile` nor `.github/workflows/ci.yml` -- and its checked-in goldens have

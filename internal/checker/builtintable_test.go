@@ -18,10 +18,12 @@ import (
 // until this file; bug 3 in docs/roadmap.md was exactly this drift, three names
 // present on one side and absent on the other, and it was found by reading.
 //
-// The documentation quotes the size of the table -- "247 names", "128 of the
-// 247" -- in five files. A number quoted in prose goes stale silently, which is
+// The documentation quotes the size of the table -- "248 names", "128 of the
+// 248" -- in seven files. A number quoted in prose goes stale silently, which is
 // the failure this whole documentation pass exists to undo, so the count is
-// asserted against the table rather than trusted.
+// asserted against the table rather than trusted. It has already earned its
+// keep: merging main, which added black_box, moved the table from 247 to 248
+// and this test failed with the list of files to correct.
 //
 // This test does not run the self-hosted evaluator and costs nothing.
 
@@ -73,24 +75,32 @@ func TestTheTwoBuiltinTablesHoldTheSameNames(t *testing.T) {
 }
 
 // docsQuotingTheCount are the files that state the size of the builtin table in
-// prose, as "247 names", "119 of the 247", "the other 128".
+// prose, as "248 names", "120 of the 248", "the other 128".
 var docsQuotingTheCount = []string{
 	"README.md",
 	"CONTRIBUTING.md",
 	filepath.Join("docs", "roadmap.md"),
 	filepath.Join("docs", "BUGS.md"),
 	filepath.Join("docs", "CORRECTNESS.md"),
+	filepath.Join("docs", "RELEASE-1.7.md"),
+	filepath.Join("docs", "dtypes.md"),
 }
 
 // selfHostedImplemented and selfHostedUnimplemented are the split of the table
 // measured on 2026-09-04 by generating a call for every name and running it
 // through src/main.tw: how many the self-hosted evaluator dispatches, and how
 // many reach "named in the builtin table but has no implementation". They are
-// not derived here -- deriving them costs 247 self-hosted runs -- but they are
+// not derived here -- deriving them costs 248 self-hosted runs -- but they are
 // held to summing to the table, so a table that grows cannot leave the prose
 // quietly describing a smaller one.
+//
+// Eight names need an argument the checker accepts before the probe reaches
+// dispatch: matmul, dot, linear, conv2d, maxpool2d and quantize want a shaped
+// tensor, and None and unit are evaluated in src/eval.tw's expression case
+// rather than called. Passing 0 to those undercounts by one, because quantize
+// is unimplemented and never gets far enough to say so.
 const (
-	selfHostedImplemented   = 119
+	selfHostedImplemented   = 120
 	selfHostedUnimplemented = 128
 )
 
