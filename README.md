@@ -189,6 +189,26 @@ The REPL keeps reading until brackets balance, so block-body functions can be
 defined interactively. Without installing, `go run ./cmd/twill <file.tw>` works
 too, and `go test ./...` runs the suite.
 
+`twill test` finds the suites; `std/test` is what a suite is written with. A
+file prints one line per failure and a summary the runner reads, and its status
+is its own return value:
+
+```
+mode systems
+
+import "std/test" as t
+
+fn main() -> I64 {
+  t.equal_i64("two and two is four", 2 + 2, 4)
+  t.near("a third is a third", 1.0 / 3.0, 0.3333333333, 0.0000000001)
+  t.report("arith")
+}
+```
+
+`near` takes the tolerance and has no default, because a default epsilon is the
+one number in a numeric test worth stating and the wrong one for something
+whatever it is set to.
+
 ## Differentiation
 
 | Builtin | Returns |
@@ -316,6 +336,7 @@ The `std/` libraries are written in twill itself and compiled into the binary, s
 | `std/text`, `std/float` | string handling for `mode systems`, and exact float formatting and parsing |
 | `std/term` | the terminal layer: capability detection, colour, boxes, frames, display width |
 | `std/io`, `std/json`, `std/hash` | text and line reading, a JSON reader and writer, SHA-256 |
+| `std/test` | the assertions a `*_test.tw` file is written with, printing the verdict `twill test` reads |
 
 That table is a selection. `std/` also carries `batch`, `frame`, `linalg`,
 `llama`, `loss`, `metrics`, `random`, `sample`, `stats` and `gradcheck`.

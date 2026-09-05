@@ -140,3 +140,121 @@ func firstLine(s string) string {
 	}
 	return s
 }
+
+// --- std/test, the other half of the runner ---------------------------------
+//
+// `twill test` reads a file's verdict out of what the file printed, so the
+// harness contract has been part of the toolchain's contract since 1.8 while
+// the toolchain shipped nothing that satisfied it. `std/test` is what satisfies
+// it, and these are the tests that the two halves actually meet: a suite
+// written against std/test is run through the same runOneTestFile the CLI uses,
+// and the verdict and the counts have to come back right.
+//
+// Asserting this from inside a twill suite is not possible -- a suite cannot
+// record a failing check and still report itself green -- which is why the
+// negative case lives here in Go, where the failure is the fixture's and the
+// assertion is the harness's.
+
+const stdTestMixedFixture = `mode systems
+
+import "std/test" as t
+
+fn main() -> I64 {
+  t.check("a true condition passes", 1 == 1)
+  t.equal_str("two equal strings pass", "ab", "ab")
+  t.equal_i64("two equal integers pass", 4, 4)
+  t.near("a difference exactly at the tolerance passes", 1.0, 1.5, 0.5)
+  t.near("a tolerance of zero demands exact equality", 2.0, 2.0, 0.0)
+  t.check("a false condition fails", 1 == 2)
+  t.fail("fail records why", "the reason it failed")
+  t.equal_str("unequal strings fail", "got", "want")
+  t.equal_i64("unequal integers fail", 3, 4)
+  t.near("a difference past the tolerance fails", 1.0, 2.0, 0.5)
+  t.report("fixture")
+}
+`
+
+func TestStdTestReportsFailuresToTheRunner(t *testing.T) {
+	res := runOneTestFile(writeTemp(t, stdTestMixedFixture))
+	if res.ok {
+		t.Fatalf("a suite with five failing checks was reported as passing:\n%s", res.output)
+	}
+	if !res.counted {
+		t.Fatalf("the runner found no summary line in:\n%s", res.output)
+	}
+	if res.checksP != 5 || res.checksF != 5 {
+		t.Fatalf("counts are (%d passed, %d failed), want (5, 5):\n%s",
+			res.checksP, res.checksF, res.output)
+	}
+	if !strings.Contains(res.output, "\nFAILED\n") {
+		t.Errorf("the FAILED marker is not on a line of its own:\n%s", res.output)
+	}
+	// Each failing form has to say enough to diagnose it without opening the
+	// file. `fail` keeps the reason, which is the whole of why it exists, and
+	// the two equality forms show both sides.
+	for _, want := range []string{
+		"  FAIL  a false condition fails",
+		"        the reason it failed",
+		"        got:  got",
+		"        want: want",
+		"        got:  3",
+		"        want: 4",
+		"        want: 2 within 0.5",
+	} {
+		if !strings.Contains(res.output, want) {
+			t.Errorf("the output does not carry %q:\n%s", want, res.output)
+		}
+	}
+}
+
+func TestStdTestReportsAPassingSuiteToTheRunner(t *testing.T) {
+	res := runOneTestFile(writeTemp(t, `mode systems
+
+import "std/test" as t
+
+fn main() -> I64 {
+  t.check("a true condition passes", 1 == 1)
+  t.equal_str("two equal strings pass", "ab", "ab")
+  t.equal_i64("two equal integers pass", 4, 4)
+  t.near("a difference inside the tolerance passes", 1.0, 1.25, 0.5)
+  t.report("fixture")
+}
+`))
+	if !res.ok {
+		t.Fatalf("a suite whose checks all pass was reported as failing:\n%s\n%s",
+			res.output, res.errMsg)
+	}
+	if !res.counted || res.checksP != 4 || res.checksF != 0 {
+		t.Fatalf("counts are (%d passed, %d failed) counted=%v, want (4, 0) counted=true:\n%s",
+			res.checksP, res.checksF, res.counted, res.output)
+	}
+	if !strings.Contains(res.output, "\nOK\n") {
+		t.Errorf("a green suite must end with the OK marker:\n%s", res.output)
+	}
+	// A passing suite prints its summary and nothing else. Six hundred `ok`
+	// lines is how a harness trains people to stop reading its output.
+	if strings.Contains(res.output, "FAIL") {
+		t.Errorf("a green suite printed a FAIL line:\n%s", res.output)
+	}
+}
+
+// The systems-mode suites in std/tests are excluded from TestNumericStdSuitesPass
+// above, so until now nothing in Go asserted that any of them ran. They are the
+// adopters of std/test, and all six pass on the bootstrap; this pins them, so a
+// change to std/test cannot break them silently. std/tests/README said two of
+// them failed, which was not true of the tree either before this change or
+// after it -- measured, not reworded.
+func TestSystemsStdSuitesPass(t *testing.T) {
+	for _, name := range []string{
+		"io_test.tw", "json_test.tw", "linalg_test.tw",
+		"random_test.tw", "stats_test.tw", "text_test.tw",
+	} {
+		name := name
+		t.Run(name, func(t *testing.T) {
+			res := runOneTestFile(filepath.Join("..", "..", "std", "tests", name))
+			if !res.ok {
+				t.Errorf("%s failed:\n%s\n%s", name, res.output, res.errMsg)
+			}
+		})
+	}
+}

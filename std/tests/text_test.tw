@@ -14,232 +14,230 @@ mode systems
 # 0xC3 0xA9. U+1F600 is above 0xFFFF, so four bytes.
 
 import "std/text" as tx
-import "systems_harness.tw" as t
+import "std/test" as t
 
 fn main() -> I64 {
-  let rp: t.Report = t.new_report()
-
   # ---- splitting -----------------------------------------------------------
 
   let csv: Arr[Str] = tx.split("a,b,c", ",")
-  t.check_eq_i64(rp, "splitting on a comma gives one field per value", len(csv), 3)
-  t.check_eq_str(rp, "splitting on a comma keeps the first field", csv[0], "a")
-  t.check_eq_str(rp, "splitting on a comma keeps the last field", csv[2], "c")
+  t.equal_i64("splitting on a comma gives one field per value", len(csv), 3)
+  t.equal_str("splitting on a comma keeps the first field", csv[0], "a")
+  t.equal_str("splitting on a comma keeps the last field", csv[2], "c")
 
   # Adjacent separators produce an empty field. This is the CSV behaviour and
   # the whole reason `split` and `split_whitespace` are different functions.
   let blanks: Arr[Str] = tx.split("a,,b", ",")
-  t.check_eq_i64(rp, "adjacent separators produce an empty field", len(blanks), 3)
-  t.check_eq_str(rp, "the empty field between two separators is empty", blanks[1], "")
+  t.equal_i64("adjacent separators produce an empty field", len(blanks), 3)
+  t.equal_str("the empty field between two separators is empty", blanks[1], "")
 
   # A leading separator produces an empty first field, so column numbers do not
   # shift.
   let leading: Arr[Str] = tx.split(",a", ",")
-  t.check_eq_i64(rp, "a leading separator produces an empty first field", len(leading), 2)
-  t.check_eq_str(rp, "the field after a leading separator is intact", leading[1], "a")
+  t.equal_i64("a leading separator produces an empty first field", len(leading), 2)
+  t.equal_str("the field after a leading separator is intact", leading[1], "a")
 
   # A separator that never occurs gives the whole string as one field.
-  t.check_eq_i64(rp, "a separator that does not occur gives a single field",
+  t.equal_i64("a separator that does not occur gives a single field",
     len(tx.split("abc", ";")), 1)
 
   # Multi-byte separators work, since the search is a byte comparison.
   let arrow: Arr[Str] = tx.split("a->b->c", "->")
-  t.check_eq_i64(rp, "a multi character separator splits on the whole sequence", len(arrow), 3)
-  t.check_eq_str(rp, "a multi character separator is not left in the fields", arrow[1], "b")
+  t.equal_i64("a multi character separator splits on the whole sequence", len(arrow), 3)
+  t.equal_str("a multi character separator is not left in the fields", arrow[1], "b")
 
   # Whitespace splitting collapses runs and drops the ends.
   let words: Arr[Str] = tx.split_whitespace("  the   quick  brown ")
-  t.check_eq_i64(rp, "whitespace splitting collapses runs and drops empty fields", len(words), 3)
-  t.check_eq_str(rp, "whitespace splitting keeps the first word", words[0], "the")
-  t.check_eq_str(rp, "whitespace splitting keeps the last word", words[2], "brown")
+  t.equal_i64("whitespace splitting collapses runs and drops empty fields", len(words), 3)
+  t.equal_str("whitespace splitting keeps the first word", words[0], "the")
+  t.equal_str("whitespace splitting keeps the last word", words[2], "brown")
 
   # ---- lines ---------------------------------------------------------------
 
   let ls: Arr[Str] = tx.lines("one\ntwo\nthree")
-  t.check_eq_i64(rp, "three lines with no trailing newline give three fields", len(ls), 3)
-  t.check_eq_str(rp, "the last line without a newline is kept", ls[2], "three")
+  t.equal_i64("three lines with no trailing newline give three fields", len(ls), 3)
+  t.equal_str("the last line without a newline is kept", ls[2], "three")
 
   # A trailing newline does not produce a phantom empty line.
-  t.check_eq_i64(rp, "a trailing newline does not add an empty line",
+  t.equal_i64("a trailing newline does not add an empty line",
     len(tx.lines("one\ntwo\n")), 2)
 
   # A blank line in the middle is a real line and is kept.
-  t.check_eq_i64(rp, "a blank line in the middle is kept", len(tx.lines("a\n\nb")), 3)
+  t.equal_i64("a blank line in the middle is kept", len(tx.lines("a\n\nb")), 3)
 
   # CRLF endings lose the carriage return. A file written on Windows and
   # compared against an expected value fails invisibly without this.
   let crlf: Arr[Str] = tx.lines("one\r\ntwo\r\n")
-  t.check_eq_i64(rp, "crlf endings give the same line count as lf", len(crlf), 2)
-  t.check_eq_str(rp, "a carriage return is stripped from the end of a line", crlf[0], "one")
+  t.equal_i64("crlf endings give the same line count as lf", len(crlf), 2)
+  t.equal_str("a carriage return is stripped from the end of a line", crlf[0], "one")
 
   # An empty input has no lines at all, rather than one empty line.
-  t.check_eq_i64(rp, "the empty string has no lines", len(tx.lines("")), 0)
+  t.equal_i64("the empty string has no lines", len(tx.lines("")), 0)
 
   # ---- joining -------------------------------------------------------------
 
-  t.check_eq_str(rp, "joining puts the separator between neighbours and not after the last",
+  t.equal_str("joining puts the separator between neighbours and not after the last",
     tx.join(tx.split("a,b,c", ","), "-"), "a-b-c")
-  t.check_eq_str(rp, "joining an empty separator concatenates",
+  t.equal_str("joining an empty separator concatenates",
     tx.join(tx.split("a,b", ","), ""), "ab")
 
   # Split and join with the same separator round-trips, which is the property
   # that pins the empty-field behaviour of both at once.
-  t.check_eq_str(rp, "splitting and joining on the same separator returns the original",
+  t.equal_str("splitting and joining on the same separator returns the original",
     tx.join(tx.split("a,,b,", ","), ","), "a,,b,")
 
   # ---- trimming ------------------------------------------------------------
 
-  t.check_eq_str(rp, "trim removes whitespace from both ends", tx.trim("  hi \t\n"), "hi")
-  t.check_eq_str(rp, "trim leaves interior whitespace alone", tx.trim(" a b "), "a b")
-  t.check_eq_str(rp, "trimming an all whitespace string gives the empty string",
+  t.equal_str("trim removes whitespace from both ends", tx.trim("  hi \t\n"), "hi")
+  t.equal_str("trim leaves interior whitespace alone", tx.trim(" a b "), "a b")
+  t.equal_str("trimming an all whitespace string gives the empty string",
     tx.trim("   "), "")
-  t.check_eq_str(rp, "trim start leaves the trailing whitespace", tx.trim_start("  a  "), "a  ")
-  t.check_eq_str(rp, "trim end leaves the leading whitespace", tx.trim_end("  a  "), "  a")
+  t.equal_str("trim start leaves the trailing whitespace", tx.trim_start("  a  "), "a  ")
+  t.equal_str("trim end leaves the leading whitespace", tx.trim_end("  a  "), "  a")
 
   # One occurrence of the prefix, not all of them.
-  t.check_eq_str(rp, "trim prefix removes exactly one occurrence",
+  t.equal_str("trim prefix removes exactly one occurrence",
     tx.trim_prefix("//a", "/"), "/a")
-  t.check_eq_str(rp, "trim prefix leaves a string without the prefix alone",
+  t.equal_str("trim prefix leaves a string without the prefix alone",
     tx.trim_prefix("abc", "x"), "abc")
-  t.check_eq_str(rp, "trim suffix removes the extension", tx.trim_suffix("file.tw", ".tw"), "file")
+  t.equal_str("trim suffix removes the extension", tx.trim_suffix("file.tw", ".tw"), "file")
 
   # ---- case ----------------------------------------------------------------
 
-  t.check_eq_str(rp, "upper converts the ascii letters", tx.upper("abcXYZ1!"), "ABCXYZ1!")
-  t.check_eq_str(rp, "lower converts the ascii letters", tx.lower("ABCxyz1!"), "abcxyz1!")
+  t.equal_str("upper converts the ascii letters", tx.upper("abcXYZ1!"), "ABCXYZ1!")
+  t.equal_str("lower converts the ascii letters", tx.lower("ABCxyz1!"), "abcxyz1!")
 
   # The property that makes an ASCII-only implementation safe rather than
   # merely incomplete: it cannot corrupt a multi-byte sequence, because every
   # byte of one is above 127 and outside both letter ranges. "café" uppercases
   # to "CAFé", with the accented character untouched and still valid UTF-8.
-  t.check_eq_str(rp, "upper leaves a multi byte character untouched", tx.upper("café"), "CAFé")
-  t.check(rp, "upper leaves a multi byte string valid utf eight",
+  t.equal_str("upper leaves a multi byte character untouched", tx.upper("café"), "CAFé")
+  t.check("upper leaves a multi byte string valid utf eight",
     tx.char_valid(tx.upper("café")))
 
   # ---- searching -----------------------------------------------------------
 
-  t.check_eq_i64(rp, "find gives the byte index of the first occurrence",
+  t.equal_i64("find gives the byte index of the first occurrence",
     tx.find("hello world", "o"), 4)
-  t.check_eq_i64(rp, "rfind gives the byte index of the last occurrence",
+  t.equal_i64("rfind gives the byte index of the last occurrence",
     tx.rfind("hello world", "o"), 7)
-  t.check_eq_i64(rp, "find returns minus one when the needle is absent",
+  t.equal_i64("find returns minus one when the needle is absent",
     tx.find("hello", "z"), -1)
-  t.check_eq_i64(rp, "the empty needle is found at the start", tx.find("abc", ""), 0)
-  t.check(rp, "contains agrees with find", tx.contains("hello", "ell"))
+  t.equal_i64("the empty needle is found at the start", tx.find("abc", ""), 0)
+  t.check("contains agrees with find", tx.contains("hello", "ell"))
 
   # A needle longer than the haystack cannot match and must not read past the
   # end, which is what the loop bound in `find_from` is for.
-  t.check_eq_i64(rp, "a needle longer than the haystack is not found",
+  t.equal_i64("a needle longer than the haystack is not found",
     tx.find("ab", "abc"), -1)
 
-  t.check(rp, "starts with matches a real prefix", tx.starts_with("filename.tw", "file"))
-  t.check(rp, "starts with rejects a longer prefix", not tx.starts_with("ab", "abc"))
-  t.check(rp, "ends with matches an extension", tx.ends_with("filename.tw", ".tw"))
-  t.check(rp, "every string starts with the empty string", tx.starts_with("abc", ""))
+  t.check("starts with matches a real prefix", tx.starts_with("filename.tw", "file"))
+  t.check("starts with rejects a longer prefix", not tx.starts_with("ab", "abc"))
+  t.check("ends with matches an extension", tx.ends_with("filename.tw", ".tw"))
+  t.check("every string starts with the empty string", tx.starts_with("abc", ""))
 
   # ---- replacement ---------------------------------------------------------
 
-  t.check_eq_str(rp, "replace substitutes every occurrence",
+  t.equal_str("replace substitutes every occurrence",
     tx.replace("a.b.c", ".", "/"), "a/b/c")
 
   # The scan resumes after the replacement, so overlapping matches are not
   # re-examined: "aaa" with "aa" to "a" gives "aa", not "a".
-  t.check_eq_str(rp, "replace resumes after the replacement rather than inside it",
+  t.equal_str("replace resumes after the replacement rather than inside it",
     tx.replace("aaa", "aa", "a"), "aa")
 
   # A replacement containing the pattern must terminate, which the same rule
   # guarantees.
-  t.check_eq_str(rp, "a replacement containing the pattern terminates",
+  t.equal_str("a replacement containing the pattern terminates",
     tx.replace("x", "x", "xx"), "xx")
-  t.check_eq_str(rp, "an empty pattern leaves the string unchanged",
+  t.equal_str("an empty pattern leaves the string unchanged",
     tx.replace("abc", "", "-"), "abc")
 
   # ---- padding -------------------------------------------------------------
 
-  t.check_eq_str(rp, "pad left fills to the requested width", tx.pad_left("7", 3, " "), "  7")
-  t.check_eq_str(rp, "pad right fills to the requested width", tx.pad_right("7", 3, "."), "7..")
-  t.check_eq_str(rp, "padding does not truncate a string already at the width",
+  t.equal_str("pad left fills to the requested width", tx.pad_left("7", 3, " "), "  7")
+  t.equal_str("pad right fills to the requested width", tx.pad_right("7", 3, "."), "7..")
+  t.equal_str("padding does not truncate a string already at the width",
     tx.pad_left("toolong", 3, " "), "toolong")
 
   # The reason padding is character-oriented: "café" is 5 bytes and 4
   # characters, so a byte-based pad to width 6 would add one space and misalign
   # the column. This must add two.
-  t.check_eq_str(rp, "padding counts characters and not bytes",
+  t.equal_str("padding counts characters and not bytes",
     tx.pad_left("café", 6, " "), "  café")
 
-  t.check_eq_str(rp, "repeat concatenates n copies", tx.repeat("ab", 3), "ababab")
-  t.check_eq_str(rp, "repeating zero times gives the empty string", tx.repeat("ab", 0), "")
+  t.equal_str("repeat concatenates n copies", tx.repeat("ab", 3), "ababab")
+  t.equal_str("repeating zero times gives the empty string", tx.repeat("ab", 0), "")
 
   # ---- the tokeniser -------------------------------------------------------
 
   let toks: Arr[Str] = tx.tokens("foo_bar-1 baz!")
-  t.check_eq_i64(rp, "the tokeniser splits at every non alphanumeric byte", len(toks), 4)
-  t.check_eq_str(rp, "the tokeniser stops at an underscore", toks[0], "foo")
-  t.check_eq_str(rp, "the tokeniser keeps a bare number as a token", toks[2], "1")
-  t.check_eq_i64(rp, "a string with no alphanumerics has no tokens", len(tx.tokens("...")), 0)
+  t.equal_i64("the tokeniser splits at every non alphanumeric byte", len(toks), 4)
+  t.equal_str("the tokeniser stops at an underscore", toks[0], "foo")
+  t.equal_str("the tokeniser keeps a bare number as a token", toks[2], "1")
+  t.equal_i64("a string with no alphanumerics has no tokens", len(tx.tokens("...")), 0)
 
   let anysplit: Arr[Str] = tx.split_any("a;b,c", ";,")
-  t.check_eq_i64(rp, "splitting on a set of separators uses all of them", len(anysplit), 3)
+  t.equal_i64("splitting on a set of separators uses all of them", len(anysplit), 3)
 
   # ---- UTF-8 ---------------------------------------------------------------
 
   # "café": 5 bytes, 4 characters. The gap between the two is the whole point
   # of the character-oriented half of the module.
-  t.check_eq_i64(rp, "len counts bytes and gives five for cafe with an accent", len("café"), 5)
-  t.check_eq_i64(rp, "char len counts characters and gives four for the same string",
+  t.equal_i64("len counts bytes and gives five for cafe with an accent", len("café"), 5)
+  t.equal_i64("char len counts characters and gives four for the same string",
     tx.char_len("café"), 4)
 
   # Pure ASCII is the case where the two agree, which is why byte-oriented
   # functions are safe for it.
-  t.check_eq_i64(rp, "byte length and character length agree on ascii",
+  t.equal_i64("byte length and character length agree on ascii",
     tx.char_len("hello"), len("hello"))
 
   # The grinning face is one character in four bytes.
-  t.check_eq_i64(rp, "a four byte emoji is five bytes with a following letter", len("😀a"), 5)
-  t.check_eq_i64(rp, "a four byte emoji counts as one character", tx.char_len("😀a"), 2)
+  t.equal_i64("a four byte emoji is five bytes with a following letter", len("😀a"), 5)
+  t.equal_i64("a four byte emoji counts as one character", tx.char_len("😀a"), 2)
 
   let cs: Arr[Str] = tx.chars("café")
-  t.check_eq_i64(rp, "chars gives one entry per character", len(cs), 4)
-  t.check_eq_str(rp, "the accented character comes back whole from chars", cs[3], "é")
+  t.equal_i64("chars gives one entry per character", len(cs), 4)
+  t.equal_str("the accented character comes back whole from chars", cs[3], "é")
 
   # U+00E9 is 233. Decoded from the two-byte sequence 0xC3 0xA9.
-  t.check_eq_i64(rp, "the code point of e acute is two hundred and thirty three",
+  t.equal_i64("the code point of e acute is two hundred and thirty three",
     tx.char_code("é", 0), 233)
-  t.check_eq_i64(rp, "the code point of an ascii byte is the byte",
+  t.equal_i64("the code point of an ascii byte is the byte",
     tx.char_code("A", 0), 65)
 
   # U+1F600 is 128512.
-  t.check_eq_i64(rp, "the code point of the grinning face is one two eight five one two",
+  t.equal_i64("the code point of the grinning face is one two eight five one two",
     tx.char_code("😀", 0), 128512)
 
   # Character slicing never cuts a sequence in half, so the result stays valid.
-  t.check_eq_str(rp, "char slice takes whole characters", tx.char_slice("café", 2, 4), "fé")
-  t.check(rp, "a character slice of a multi byte string is valid utf eight",
+  t.equal_str("char slice takes whole characters", tx.char_slice("café", 2, 4), "fé")
+  t.check("a character slice of a multi byte string is valid utf eight",
     tx.char_valid(tx.char_slice("😀abc", 0, 2)))
 
   # The byte-oriented slice can cut one in half, and this asserts that it does,
   # because the difference between the two functions is the thing a caller has
   # to know about.
-  t.check(rp, "a byte slice through a multi byte character is not valid utf eight",
+  t.check("a byte slice through a multi byte character is not valid utf eight",
     not tx.char_valid(tx.slice("café", 0, 4)))
 
-  t.check(rp, "plain ascii is valid utf eight", tx.char_valid("hello"))
-  t.check(rp, "a lone continuation byte is not valid utf eight", not tx.char_valid(chr(128)))
+  t.check("plain ascii is valid utf eight", tx.char_valid("hello"))
+  t.check("a lone continuation byte is not valid utf eight", not tx.char_valid(chr(128)))
 
   # Reversal is by character, so the accented character survives.
-  t.check_eq_str(rp, "reversing works on characters and not bytes",
+  t.equal_str("reversing works on characters and not bytes",
     tx.char_reverse("café"), "éfac")
-  t.check(rp, "reversing twice returns the original",
+  t.check("reversing twice returns the original",
     tx.char_reverse(tx.char_reverse("café😀")) == "café😀")
 
   # The sentinel at the end of `char_starts` is what makes the last character's
   # span need no special case.
   let starts: Arr[I64] = tx.char_starts("café")
-  t.check_eq_i64(rp, "char starts has one more entry than there are characters",
+  t.equal_i64("char starts has one more entry than there are characters",
     len(starts), 5)
-  t.check_eq_i64(rp, "the last entry of char starts is the byte length",
+  t.equal_i64("the last entry of char starts is the byte length",
     starts[4], 5)
-  t.check_eq_i64(rp, "the accented character starts at byte three", starts[3], 3)
+  t.equal_i64("the accented character starts at byte three", starts[3], 3)
 
-  t.report(rp, "text")
+  t.report("text")
 }
