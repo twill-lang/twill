@@ -120,11 +120,14 @@ func (b *Builder) Mean(x Ref) Ref {
 
 func (b *Builder) reduceAxis(op Op, x Ref, axis int) Ref {
 	in := b.Shape(x)
+	// The message names the axis the caller wrote, the same way
+	// tensor.normalizeAxis does. See the comment there.
+	written := axis
 	if axis < 0 {
 		axis += len(in)
 	}
 	if axis < 0 || axis >= len(in) {
-		return b.fail("%s: axis %d out of range for rank %d", op, axis, len(in))
+		return b.fail("%s: axis %d out of range for rank %d", op, written, len(in))
 	}
 	out := make([]int, 0, len(in)-1)
 	out = append(out, in[:axis]...)
