@@ -2,6 +2,59 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`twill check` and `twill fmt` take several paths, and directories.** Both
+  took exactly one path, which is not how anyone invokes a checker or a
+  formatter: `twill fmt src std` and `twill check .` were usage errors. A named
+  file is taken as given, a directory means every `.tw` file under it
+  (dot-directories skipped, so `.` does not walk into `.git`), named files keep
+  their order and a file named twice is visited once. Every file is visited even
+  after one fails, because running a checker once per broken file to find out how
+  many there are is not a report.
+
+  `twill run` still takes one path, on purpose. Everything after it belongs to
+  the program: `scriptArgs` hands the rest to the `args` builtin, which is how
+  `twill run main.tw run io_test.tw` drives the self-hosted compiler in
+  `tools/conformance`. A second path and a forwarded argument are the same word
+  and no rule can separate them, so forwarding wins.
+
+- **`twill fmt --check`.** Writes nothing, prints the path of every file that
+  would change, and exits 1 if there is one. `--check` together with `--write` is
+  refused rather than resolved by precedence, since they are opposite answers to
+  the same question. A flag neither command recognises is now named and refused
+  too: silently ignoring `--chekc` would have made the new gate un-runnable in
+  precisely the case it matters.
+
+  The CI step is **not** switched on in this change. 386 of the repository's 499
+  `.tw` files are not in canonical form, and almost none of that is whitespace:
+  the formatter normalises `3.0` to `3` and flattens every block-structured
+  expression onto one line, so turning the gate on means reflowing the tree
+  first. That is a separate change with a separate diff to read.
+
+### Changed
+
+- **`twill fmt` keeps the blank lines between paragraphs of statements.** The Go
+  printer emitted one line per statement and dropped them, so one `twill fmt
+  --write` turned a function's paragraphs into an undifferentiated run.
+  `src/fmt.tw` has preserved them since `maybe_blank` landed, and the two
+  formatters were recorded as diverging on the point (NEEDS-78). `maybe_blank` is
+  now ported into `internal/format` rather than re-invented: the same gap of two
+  or more source lines, measured from the previous statement's last line
+  (`ast.StmtEndLine`, itself a port of `stmt_end_line`) to the next statement's
+  leading edge, which is its first own-line comment when it has one. However many
+  blank lines the author left, one comes out.
+
+  Formatting every `.tw` file in the corpus under both implementations and
+  comparing bytes went from **119 divergences of 468 files to none**.
+
+- **An unrecognised subcommand says so.** `twill chekc x.tw` reported `cannot
+  read file "chekc"`, which reads as a missing file and sends the reader looking
+  for one. A first word that is not a command, has no extension, has no separator
+  in it and names nothing on disk is a typo, and the CLI now says
+  `unknown command "chekc"` and points at `twill help`. A path still runs:
+  `twill prog.tw`, `twill ./prog`, and `twill prog` where `prog` exists.
+
 ## [1.10.0] - 2026-09-05
 
 ### Added
