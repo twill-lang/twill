@@ -946,6 +946,56 @@ fn predict(m: Model, x: [2]) -> [3] {
 Accessing a field a record doesn't have (`m.wieght`) is a checker error, whether
 the record is a literal or a declared type.
 
+### Record update
+
+`{ ..base, field: value }` is a copy of `base` with the named fields replaced.
+It is an expression, so a configured record can be built in one place rather
+than by a run of assignments after the constructor:
+
+```rust
+let base = { w: [1.0, 2.0], b: 0.5, lr: 0.01 }
+let tuned = { ..base, lr: 0.1 }
+# { w: tensor([1, 2], shape=[2]), b: 0.5, lr: 0.1 }
+```
+
+The base is written first, before any field, and only once. A `..` anywhere else
+in the literal is a syntax error, so there is never a question of which of two
+spellings of one field wins. The form works with a type name in front of it,
+which is how a struct is configured:
+
+```rust
+struct Chart { title: Str, width: I64, height: I64, fix_y: Bool }
+
+fn styled(d: Chart, t: Str) -> Chart = Chart { ..d, title: t, fix_y: true }
+```
+
+A field the base does not have is added rather than refused, because the record
+that comes out is the same one `{ w: base.w, extra: 1.0 }` produces and records
+are structural. A *typed* update is still checked against its declaration, so
+`Chart { ..d, ttile: "x" }` is a checker error the way `Chart { ttile: "x" }`
+already is.
+
+**The copy is shallow, and this is the part to know.** A field holding a
+container hands over the same container, so a `push` through the copy is visible
+from the base:
+
+```rust
+let base = { tags: arr_new(), n: 1 }
+let m = { ..base, n: 2 }
+push(m.tags, "shared")
+len(base.tags)                     # 1, not 0
+```
+
+That is not a special rule for `..`. It is what `{ tags: base.tags, n: 2 }`
+written out by hand already does, and what the `with_field` builtin does:
+`{ ..base, n: 2 } == with_field(base, "n", 2)`. An update that copied
+deeply would make one spelling of a record literal mean something the other does
+not. To get a deep copy, copy the field yourself.
+
+The base has to be a record. Where the checker can see the type it refuses the
+literal -- `the base of a record update must be a record, got I64` -- and where
+it cannot, the same refusal arrives at run time, without the type.
+
 ## `struct`, and what a parameter is
 
 `struct` is a systems-mode type, declared by name, with typed fields that are
@@ -1028,7 +1078,8 @@ existing caller already assumed, which is the evidence for it being the right
 one.
 
 `Record` in numeric mode keeps its own rule and is unaffected: fields are not
-mutable in place, and you rebuild the record.
+mutable in place, and you rebuild the record. A record update, above, is how you
+rebuild one without naming every field again.
 
 ## `enum`, and `match`
 

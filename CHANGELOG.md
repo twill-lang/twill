@@ -73,6 +73,60 @@
   dispatched. `make conformance-check` counted 5 suites agreeing before this
   change and 8 after, with 9 known divergences and none unexplained.
 
+- **Record update: `S { ..base, field: value }`.** An expression whose value is
+  a copy of `base` with the named fields replaced, so a record or a struct can
+  be configured in one place instead of by a run of assignments after the
+  constructor:
+
+  ```rust
+  let tuned = { ..base, lr: 0.1 }
+  fn styled(d: Chart, t: Str) -> Chart = Chart { ..d, title: t, fix_y: true }
+  ```
+
+  This is `docs/roadmap.md` entry 29 (weft entry 10), which asked for optional
+  and named arguments *or* record update. The entry is now half: the update is
+  delivered, named arguments are not, and the reason the entry offered the
+  choice is the reason this is the half that shipped -- an update is one
+  expression form, while named arguments reach every arity check in both
+  implementations and every builtin, whose arities are word lists with no
+  parameter names in them.
+
+  **The copy is shallow.** A field holding a container hands over the same
+  container, so a `push` through the copy is visible from the base. That is not
+  a rule invented for `..`: it is what `{ tags: base.tags, n: 2 }` written out
+  by hand already does, and what the `with_field` builtin does, and
+  `{ ..base, n: 2 } == with_field(base, "n", 2)` holds on both implementations.
+  A deep copy here would have made one spelling of a record literal mean
+  something the other does not. `docs/language-guide.md` says so under
+  "Record update", with the program that shows it.
+
+  The base is written first and only once; a `..` anywhere else in the literal
+  is a syntax error, which is what keeps a literal from having two spellings of
+  one field with a rule about which wins. A base that is definitely not a
+  record is a checker error, and a base the checker cannot resolve is a runtime
+  error rather than a refusal, which is the checker's standing contract about
+  what it is certain of.
+
+  A field an update names that the base does not have is added rather than
+  refused. Records here are structural and the result is the record
+  `{ a: base.a, b: 1.0 }` already builds, so refusing it would be a diagnostic
+  on a program that runs. A *typed* update is still checked against its
+  declaration, so `Chart { ..d, ttile: "x" }` is refused exactly as
+  `Chart { ttile: "x" }` is.
+
+  Nothing changes meaning: `..` was not legal in any position in a record
+  literal before this, so every program that parsed still parses and still
+  means what it did. The syntax is read by the parser rather than the lexer --
+  `.` is punctuation and a number only starts with one when a digit follows --
+  so no other position in the grammar sees a new token.
+
+  All four halves are doubled and agree: the parser, the checker, the printer
+  and the evaluator, in `internal/` and in `src/*.tw`. The two new diagnostics
+  are byte-identical between them, and the differential tests in
+  `internal/interp/selfhost_test.go` take the expected text from
+  `parser.Parse` and `checker.Check` rather than writing it out, so a rewording
+  on either side fails the build instead of splitting the implementations.
+
 ## [1.10.0] - 2026-09-05
 
 ### Added
