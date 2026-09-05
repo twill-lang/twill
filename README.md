@@ -154,7 +154,7 @@ before the program runs, not a stack trace forty minutes into training.
 The language is deliberately small, and the reference implementation is about
 27,000 lines of Go with no dependencies, of which the differentiable tensor
 engine is 4,700, the interpreter 7,100 and the static checker 4,700. Another
-14,800 lines are tests. Large tensor operations run across CPU cores,
+15,700 lines are tests. Large tensor operations run across CPU cores,
 deterministically: parallelism never changes a result.
 
 ## Install
@@ -376,10 +376,10 @@ fn predict(m: Model, x: [2]) -> [3] { m.w @ x + m.b }
 ## twill is being written in twill
 
 > **The front end matches the reference across the corpus. The evaluator does
-> not.** Measured 2026-09-04 over all 476 `.tw` files this repository tracks:
-> `check` agrees on every one, `fmt` agrees on every one apart from blank
-> lines, and the self-hosted evaluator implements 120 of the 248 builtin names
-> the two share. `docs/roadmap.md`, "What the second implementation agrees on,
+> not.** Measured 2026-09-04 over every `.tw` file this repository tracks:
+> `check` agrees on all of them, `fmt` agrees on all of them apart from blank
+> lines, and the self-hosted evaluator still refuses a substantial part of the
+> builtin table. `docs/roadmap.md`, "What the second implementation agrees on,
 > and what it does not", has the measurements and how to repeat them.
 
 The reference implementation is Go. The second one is twill: the lexer, parser,
@@ -388,41 +388,44 @@ itself under `src/`. The whole `src/`+`std/` tree type-checks clean and runs on
 the Go bootstrap.
 
 What is finished is the front end. Running both sides over every `.tw` file
-`git ls-files` reports, 476 of them, `twill check` agrees with the Go command on
-all 476, and `twill fmt` agrees on all 476 once blank lines are set aside: 355
-byte-identical, and 121 differing only in a by-design blank-line rule. Three of
-the `check` runs take minutes rather than seconds self-hosted, `src/eval.tw`
-longest at 193 seconds; `docs/roadmap.md` names all six that run long and their
-times. (Two earlier versions of this paragraph were wrong
-in opposite directions. One quoted 443 and 89 files from a v1.4.0 run, a
-snapshot of a corpus that has since changed shape. The other quoted 386, which
-was `testdata/cases`, `examples`, `std` and `src` read as top-level globs and so
-left out 90 files in subdirectories and under `bench/`. The counts here are the
-whole tree.)
+`git ls-files '*.tw'` reports -- the whole tree, read recursively -- `twill
+check` agrees with the Go command on every one, and `twill fmt` agrees on every
+one once blank lines are set aside: most are byte-identical and the rest differ
+only in a by-design blank-line rule, with no token differing anywhere. Budget
+minutes rather than seconds: `src/eval.tw` takes minutes through the self-hosted
+checker against well under a second on the bootstrap.
+
+This paragraph carries no file count on purpose. Two earlier versions of it
+carried one and both were wrong, in opposite directions: one quoted a v1.4.0
+snapshot of a corpus that has since changed shape, and the other counted four
+directory names as top-level globs and so left out everything in their
+subdirectories. The corpus grows; the claim is about every file in it.
 
 The evaluator is not finished, and it is the half the word "self-hosted" is
-usually taken to promise. `src/eval.tw` dispatches 120 of the 248 names in
-`src/builtins.tw`; the other 128 reach an explicit "named in the builtin table
-but has no implementation" and stop. The missing set is almost exactly the
-systems-mode half of the language, which is the dialect `src/` is written in:
-the arrays, dictionaries, byte buffers, `f64_*` maths, file and path builtins,
-seeded generators and GPU calls. `let s: Str = "abc"` then `print(str(len(s)))`
-prints `3` under `twill run` and fails under `twill run src/main.tw run`,
-because the self-hosted `len` has no `Str` case.
+usually taken to promise. `src/eval.tw` dispatches a builtin by name and ends
+its chain with "named in the builtin table but has no implementation", and a
+large minority of the names in `src/builtins.tw` still reach it -- the
+filesystem, the clock, the process, the RNG, the `f64_*` scalar intrinsics, the
+GPU calls and the memory counters. The lists, dictionaries, byte buffers and
+string primitives were ported in `main` and are no longer among them.
+`docs/BUGS.md` entry 12 and its Open section carry the current split and the
+one-line probe that re-derives it.
 
-Numeric-mode programs mostly do agree. Of the twenty-six programs in
-`examples/`, twelve produce byte-identical output on both sides; nine are too
-slow to finish self-hosted inside a 25-second cap and are unmeasured; four
-diverge; and one, `examples/frames.tw`, fails only because the self-hosted CLI
-resolves its relative data path against `src/`, which is a path bug rather than
-a semantic difference. Twelve plus nine plus four plus one is the twenty-six.
-One of the four is `examples/gbm.tw`, which exits 0 on both sides and prints a
-test RMSE of `0.660285` against `0.659657`. That is a fourth-decimal
-disagreement, not the 1-ULP float noise this section used to claim.
+Numeric-mode programs mostly do agree, and where they do not the disagreement is
+larger than this section used to claim. `examples/gbm.tw` exits 0 on both sides
+and prints a test regression RMSE of `0.660285` on the bootstrap against
+`0.659657` self-hosted, reproducible across runs: a fourth-decimal
+disagreement, not the 1-ULP float noise the old text described.
+`examples/save_load.tw` reloads a model and the self-hosted `gbm_predict`
+refuses it. `examples/frames.tw` fails for a third reason that is not a semantic
+one at all: the self-hosted CLI resolves the program's relative data path
+against its own directory, so it looks for `src/prices.csv`.
 
-Nothing in CI or the Makefile compares the two at corpus scale. The
-differential harness under `tools/diff/` is referenced by neither, and it
-compares two Go binaries rather than the two implementations.
+`internal/interp/selfhost_run_test.go` compares the two implementations over
+`run` for a directory of fixtures, and CI runs it. Nothing compares them at
+corpus scale: the harness under `tools/diff/` is referenced by neither the
+Makefile nor CI, and it compares two Go binaries rather than the two
+implementations.
 
 `src/` runs on the bootstrap rather than as its own Go-free binary;
 bootstrapping to a standalone twill-built compiler is the next step, and closing
@@ -431,8 +434,8 @@ is that `src/` cannot run `src/`:
 
 ```
 $ ./twill run src/main.tw run "$PWD/src/main.tw" run "$PWD/examples/hello.tw"
-/tmp/tw/src/main.tw:154: runtime error: builtin "dict_new" is named in the builtin table but has no implementation
-  154 |           },
+<repo>/src/main.tw:47: runtime error: builtin "args" is named in the builtin table but has no implementation
+  47 |   let a: Arr[Str] = drop_first(args())
 ```
 
 (The inner paths are absolute because the self-hosted CLI resolves a relative

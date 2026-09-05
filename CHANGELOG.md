@@ -69,7 +69,7 @@
   changes would be made: two are fixed, the ruling did not hold, and the third
   now panics rather than answering a silent zero (`docs/BUGS.md`, Open).
   `CONTRIBUTING.md` said there was no way to run `src/`, which
-  `internal/interp/selfhost_test.go` and `twill run src/cli/main.tw` have made
+  `internal/interp/selfhost_test.go` and `twill run src/main.tw` have made
   untrue. `docs/language-guide.md`'s own `ushr` idiom did not run: it called
   `not` where the builtin is `bnot`, and named a file that does not exist.
 
@@ -84,24 +84,27 @@
   suite with the files to correct.
 
 - **Where the two implementations agree, measured over the whole tree.** The
-  comparison behind the section above ran over all 476 `.tw` files
-  `git ls-files '*.tw'` reports, not the 386 an earlier draft of it claimed. 386
-  was `testdata/cases`, `examples`, `std` and `src` read as top-level globs: it
-  missed 72 files under `src/cli`, `src/gpu`, `std/term`, `std/tests`,
-  `testdata/examples` and `testdata/std`, and 18 under `bench/`. Over the 476,
-  `check` agrees on exit status everywhere and `fmt` agrees everywhere once
-  blank lines are set aside, 355 byte-identical and 121 differing only in blank
-  lines the self-hosted printer keeps. The self-hosted evaluator implements 120
-  of the 248 names in `src/builtins.tw` and the other 128 stop at "named in the
-  builtin table but has no implementation".
+  comparison behind the section above ran over every `.tw` file
+  `git ls-files '*.tw'` reports, which is the whole tree read recursively. An
+  earlier draft of it gave a smaller number and named `testdata/cases`,
+  `examples`, `std` and `src`: those four names had been read as top-level
+  globs, so everything in their subdirectories and everything under `bench/` was
+  outside the count while the sentence claimed the tree. The documentation now
+  carries no `.tw` file count at all, in any of the five files that used to have
+  one, because the corpus grows and the claim is about every file in it. What is
+  claimed: `check` agrees on exit status for every file, and `fmt` agrees for
+  every file once blank lines are set aside, with no token differing anywhere
+  and the extra blank lines always on the self-hosted side.
 
-  Two of those numbers are now asserted rather than written down.
-  `internal/checker/builtintable_test.go` holds the two builtin tables to the
-  same names and holds the documented split to the table's size, across the six
-  files that quote it; `internal/interp/selfhost_gap_test.go` pins the
-  divergences so that closing one fails the suite with the list of files to
-  correct. The table test earned its keep on this branch: merging `main`, which
-  added `black_box`, moved the count from 247 to 248 and the test said so.
+  The evaluator's side of the same measurement now lives in one place,
+  `docs/BUGS.md`, rather than being quoted in six. A split quoted in six files
+  goes stale in five of them.
+
+  `internal/checker/builtintable_test.go` asserts the invariant underneath all
+  of it: the Go checker's `builtinNames` and `src/builtins.tw`'s `NAMES` are the
+  same set. That drift, three names present on one side and absent on the other,
+  is the third bootstrap bug `docs/roadmap.md` records, and it was found by
+  reading rather than by a test.
 
 ## [1.9.0] - 2026-09-03
 

@@ -131,8 +131,8 @@ with a shift is valid only for a non-negative dividend.
 
 ## Known limitations (v1.9)
 
-Deliberate, for a prototype. Two entries left this list in 1.7.0, which is worth
-naming because they were the two largest: user-defined generics (`struct Box[T]`,
+Deliberate, for a prototype. Two entries left this list in 1.7.0, and they are
+worth naming: user-defined generics (`struct Box[T]`,
 `enum Tree[T]`, `fn first[T](...)`) parse, check and run, and a match pattern is
 a tree, with nesting, literals and guards. One rough edge is left on the first
 of those: a bare type parameter in *return* position is read as a unit in

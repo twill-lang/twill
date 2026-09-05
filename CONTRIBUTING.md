@@ -63,39 +63,41 @@ through it and exits zero.
 
 **How far the two implementations actually agree.** The front end agrees and the
 evaluator does not, so what a self-hosted run tells you depends on which stage
-you exercised. Over all 476 `.tw` files this repository tracks -- the whole
-tree, not the four top-level directories an earlier draft of this paragraph
-counted -- `check` agrees on every one and `fmt` agrees on every one apart from
-a by-design blank-line rule. Budget minutes, not seconds: `src/eval.tw` alone
-takes about three minutes through the self-hosted checker. The evaluator
-implements 120 of the 248 names in `src/builtins.tw`; the other 128 --
-essentially the whole systems-mode half, arrays through `dict_*`, `bytes_*`,
-`f64_*`, the file and path builtins, `rng_*`, `mem_*`, `gpu_*` and `run` --
-reach an explicit "named in the builtin table but has no implementation".
-`src/` therefore cannot run `src/`. Do not read a clean self-hosted `check` as
-evidence that a change is correct on both sides; the measurements and how to
-repeat them are in
-`docs/roadmap.md`, "What the second implementation agrees on, and what it does
-not".
+you exercised. Over every `.tw` file this repository tracks -- `git ls-files
+'*.tw'`, the whole tree and not the four top-level directory names an earlier
+draft of this paragraph counted -- `check` agrees on every one and `fmt` agrees
+on every one apart from a by-design blank-line rule. Budget minutes, not
+seconds: `src/eval.tw` alone takes minutes through the self-hosted checker
+against well under a second on the bootstrap, so a harness with a per-file cap
+in the tens of seconds reports the slow files as timeouts rather than as
+agreement. The evaluator is a different story: a large minority of the names in
+`src/builtins.tw` still reach an explicit "named in the builtin table but has no
+implementation", and `src/` therefore cannot run `src/`. Do not read a clean
+self-hosted `check` as evidence that a change is correct on both sides.
+`docs/BUGS.md` entry 12 and its Open section carry the current state of the
+evaluator and the probe that re-derives it; `docs/roadmap.md`, "What the second
+implementation agrees on, and what it does not", carries the front-end half.
 
 Three things check it, and they are not the same thing:
 
 - `internal/interp/selfhost_test.go` runs `src/` on the Go interpreter and
   compares the two implementations, `runBothWays` on printed output and
-  `runSelfHostedCheck` on diagnostics. These are the bulk of `internal/interp`'s
-  runtime and they are skipped under `-short`, which is why `make race` passes
-  `-short` and `make test` does not. They are 60 hand-written programs, not a
-  corpus: the numeric-mode ones pass and the systems-mode ones are small enough
-  to stay inside the 120 implemented builtins, so none of the divergence above
-  is in their reach.
-- `./twill test std/tests` is the twill-level suite: 17 `*_test.tw` files run,
-  about half a second. The directory holds 19 `.tw` files; `harness.tw` and
-  `systems_harness.tw` are the helpers the other seventeen import.
+  `runSelfHostedCheck` on diagnostics, and
+  `internal/interp/selfhost_run_test.go` does the same over `run` for the
+  fixtures in `internal/interp/testdata/selfhost/`. These are the bulk of
+  `internal/interp`'s runtime and they are skipped under `-short`, which is why
+  `make race` passes `-short` and `make test` does not. They are hand-written
+  programs, not a corpus, so a divergence that only a real program reaches is
+  not in their range.
+- `./twill test std/tests` is the twill-level suite: every `*_test.tw` under
+  that directory, about half a second. `harness.tw` and `systems_harness.tw`
+  are helpers rather than suites and are imported by the rest.
 - `tools/diff/` compares two binaries over the fixture corpus in `testdata/`.
   Nothing in CI or the Makefile runs it -- `tools/diff` appears in neither the
   `Makefile` nor `.github/workflows/ci.yml` -- and its checked-in goldens have
   drifted behind the corpus, so `-verify` reports mismatches on a clean
-  checkout. Read a diff before re-recording: a real regression would appear in
+  checkout. Read a diff before re-recording: the ones there today are library
+  functions that have been added since, and a real regression would appear in
   the same list. Note also what it is not: it takes `-old` and `-new` Go
   binaries, so it never looks at `src/`. The both-implementations corpus check
   `docs/self-hosting.md` milestone 1 asks for does not exist.
@@ -103,14 +105,10 @@ Three things check it, and they are not the same thing:
 Nothing in CI compares the two implementations at corpus scale. If you change
 `src/`, run the comparison by hand.
 
-Two tests hold this section to the code rather than to memory.
+One test holds the two builtin tables to each other rather than to memory.
 `internal/checker/builtintable_test.go` asserts that the Go checker's
-`builtinNames` and `src/builtins.tw`'s `NAMES` are the same set, and that every
-count written down in the documentation is that set's real size.
-`internal/interp/selfhost_gap_test.go` pins two of the divergences described
-above and fails when they stop being real, naming the files whose prose then
-needs updating. A failure there is good news about the evaluator and a chore for
-the docs, not a regression.
+`builtinNames` and `src/builtins.tw`'s `NAMES` are the same set, which is the
+drift that `docs/roadmap.md`'s third bootstrap bug was, found by reading.
 
 ## Layout
 

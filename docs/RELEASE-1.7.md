@@ -119,11 +119,12 @@ parameters and the new pattern forms both survive formatting.
 
 > **Note added 2026-09-04.** Read this heading as scoped to the two features
 > 1.7.0 shipped, which is what the three bullets below actually claim, and not
-> as a statement about the two implementations in general. Measured since:
-> the front end agrees across all 476 `.tw` files this repository tracks, and
-> the self-hosted evaluator implements 120 of the 248 builtin names, so it
-> cannot run the systems-mode half of the language at all. `docs/roadmap.md`, "What
-> the second implementation agrees on, and what it does not", has the numbers.
+> as a statement about the two implementations in general. Measured since: the
+> front end agrees across every `.tw` file this repository tracks, and the
+> self-hosted evaluator does not, refusing enough of the builtin table that it
+> cannot run the systems-mode half of the language. `docs/roadmap.md`, "What the
+> second implementation agrees on, and what it does not", has the measurement,
+> and `docs/BUGS.md` has the evaluator's state.
 
 Both features landed on the Go bootstrap and in `src/` together. That is the
 check this project exists to be able to make, and neither half can make it
