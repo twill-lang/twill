@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.11.0] - 2026-09-05
+
 ### Added
 
 - **`std/test`, the assertions the test runner already assumed.** `twill test`
