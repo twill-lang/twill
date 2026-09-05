@@ -759,10 +759,10 @@ whose training loop is written at file level: `attention.tw`, `classifier.tw`,
 `mlp.tw`, `nn_xor.tw`, `records.tw` and `signal_opt.tw`, ten of which are
 mirrored again under `testdata/examples/`. Top-level mutation is an idiom here,
 not an accident, so the guarantee has to be asked for. `const` is that keyword:
-it binds wherever `let` does, and both checkers refuse every assignment through
-the name in the file that declares it, the binding and an element or field of it
-alike. A second binding of a const name in the same scope is refused too, so the
-guarantee cannot be revoked with nothing said.
+it binds wherever `let` does, and in the file that declares it both checkers
+refuse an assignment through the name -- the binding itself, an element of it, a
+field of it, and any nesting of those. A second binding of a const name in the
+same scope is refused too, so the guarantee cannot be revoked with nothing said.
 
 **A caller in another file can still assign to an imported `const`, and that is
 this entry's actual complaint.** It is not delivered. A plain `import` copies the
@@ -776,14 +776,15 @@ A cross-file rule was written and withdrawn rather than shipped. It rode on the
 Go checker's import walk -- the walk that exists so a `match` on an enum
 declared in another module can be judged exhaustive -- and changing that walk
 broke it. A file importing nine or more siblings where a later one declared an
-enum stopped being followed, so a non-exhaustive `match` that the previous
-release refuses was accepted, and whether it was accepted depended on the order
-the sibling imports were written in. The same change gave every nested aliased
-import its own copy of the cycle guard, which made the walk exponential in
-aliased fan-out. Neither was reachable from the ecosystem, so neither the
-differential sweep nor any test found them. `internal/checker/imports.go` is now
-byte-identical to the version before that work, and `check()` in `src/check.tw`
-reads one file as it always did.
+enum stopped being followed, so a non-exhaustive `match` that `main` refuses was
+accepted, and whether it was accepted depended on the order the sibling imports
+were written in. The same change gave every nested aliased import its own copy
+of the cycle guard, which made the walk exponential in aliased fan-out. Neither
+was reachable from the ecosystem -- no `.tw` file in the swept corpus makes more
+than two plain imports -- so neither the differential sweep nor any test found
+them. `internal/checker/imports.go` is now
+byte-identical to the file on `main`, and `check()` in `src/check.tw` reads one
+file as it always did.
 
 Closing this entry properly means a cross-file rule that does not ride on the
 enum walk. Three things are open, and they are separate problems:

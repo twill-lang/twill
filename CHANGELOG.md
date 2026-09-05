@@ -5,8 +5,9 @@
 ### Added
 
 - **`const`, a binding that cannot be assigned to.** It is written wherever a
-  `let` can be, and both checkers refuse every assignment through the name, the
-  binding itself and an element or field of it alike:
+  `let` can be, and both checkers refuse an assignment through the name: the
+  binding itself, an element of it, a field of it, and any nesting of those
+  (`REC.d[0] = ...`) alike:
 
   ```
   HEX is declared const on line 2, so nothing may be assigned through that
@@ -31,9 +32,10 @@
   stay legal, and an inner scope is still a different scope.
 
   The rule lives in the Go checker and in `src/check.tw`, word for word. The
-  differential tests in `internal/interp/selfhost_test.go` take the expected
-  text from `checker.Check` rather than a literal, so a reworded diagnostic on
-  either side fails the build instead of splitting the two implementations.
+  two refusal tests in `internal/interp/selfhost_test.go` take the expected text
+  from `checker.Check` rather than writing it as a literal, so a reworded
+  diagnostic on either side fails the build instead of splitting the two
+  implementations.
 
   **What is not delivered: a caller in another file can still assign to an
   imported `const`.** That is `docs/roadmap.md` entry 28's actual complaint --
@@ -41,9 +43,10 @@
   importer replaces -- and this change does not answer it. A plain `import`
   copies the name into the importing scope and the handle is shared, so a
   second file's `HEX = ...` or `HEX[0] = ...` is still accepted by both
-  checkers and is still what every other importer then reads. `const` today
-  refuses a write in the file that declares the binding, which catches a
-  library breaking its own promise and nothing else. Entry 28 stays open.
+  checkers and is still what every other importer then reads. What `const`
+  refuses today is a write in the file the binding was declared in, which
+  catches a library breaking its own promise rather than a caller breaking it.
+  Entry 28 stays open.
 
   A cross-file rule was written and is withdrawn. It rode on the Go checker's
   import walk, the walk that exists for cross-module enum exhaustiveness, and
@@ -52,7 +55,7 @@
   `match` that `main` refuses was accepted, and whether it was accepted
   depended on the order the imports were written in. The same change made an
   aliased-import walk exponential in fan-out. `internal/checker/imports.go` is
-  therefore byte-identical to the version before this branch, and `check()` in
+  therefore byte-identical to the file on `main`, and `check()` in
   `src/check.tw` reads one file as it always did.
 
   `let` was **not** made read-only at the top level instead, which is the other
