@@ -1,0 +1,23 @@
+# An out-of-range axis names the axis the caller wrote, on both implementations.
+#
+# The two used to disagree here, and only here: the Go kernel reported the axis
+# AFTER adding the rank, so `sum(m, -7)` on a rank-2 tensor said "axis -5", a
+# number that appears nowhere in the program and that a reader has to reverse
+# the adjustment to recognise. src/tensor.tw always reported the original. The
+# comment above bi_reduce in src/eval.tw asserted the Go behaviour and was wrong
+# about the file it sat in.
+#
+# The axis is computed rather than written as a literal on purpose: a constant
+# axis is refused by the checker before either evaluator sees it, so a fixture
+# with `sum(m, -7)` in it would be testing the checker instead.
+#
+# This one runs at the top level rather than inside a `main`, unlike its
+# neighbours: those are systems-mode programs, and a numeric-mode `main` is not
+# called by either driver, so a fixture shaped that way prints nothing on both
+# sides and agrees about nothing.
+fn axis_from(k) = 0 - k
+
+let m = zeros(2, 3)
+# A negative axis in range still counts from the end, and still works.
+print(sum(m, axis_from(1)))
+print(sum(m, axis_from(7)))

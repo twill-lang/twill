@@ -525,6 +525,10 @@ fn expr(p: Printer, e: ast.Expr) -> Str {
     EList(x) => bytes.concat("[", bytes.concat(expr_list(p, x.elements), "]")),
     ERecord(x) => {
       let parts: Arr[Str] = arr_new()
+      match x.base {
+        Some(b) => push(parts, bytes.concat("..", expr(p, b))),
+        None => unit,
+      }
       let i: I64 = 0
       while i < len(x.fields) {
         let f: ast.RecordField = x.fields[i]

@@ -1,6 +1,8 @@
 package interp
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"math"
 	"math/rand"
@@ -44,6 +46,11 @@ func (ip *Interp) installBuiltins() {
 	unaryOp("relu", tensor.Relu)
 	unaryOp("exp", tensor.Exp)
 	unaryOp("log", tensor.Log)
+	// log1p and expm1 are the accurate forms near zero, and they are ordinary
+	// differentiable elementwise ops: a gradient flows through them exactly as
+	// it does through log and exp. See docs/language-guide.md.
+	unaryOp("log1p", tensor.Log1p)
+	unaryOp("expm1", tensor.Expm1)
 	unaryOp("sin", tensor.Sin)
 	unaryOp("cos", tensor.Cos)
 	unaryOp("tanh", tensor.Tanh)
@@ -116,7 +123,11 @@ func (ip *Interp) installBuiltins() {
 			return bitwiseInfix(name, a[0], a[1])
 		})
 	}
-	for _, name := range []string{"and", "or", "band", "bor", "xor", "shl", "shr"} {
+	// `ushr` is in this loop and not in the parser's operator table: it is a
+	// call only. std/float.tw and selvedge both hand-rolled it out of `shr`,
+	// `band`, `bnot` and `shl`, which is four operations and one sign test to
+	// say what the machine does in one instruction.
+	for _, name := range []string{"and", "or", "band", "bor", "xor", "shl", "shr", "ushr"} {
 		bitOp(name)
 	}
 
@@ -163,6 +174,8 @@ func (ip *Interp) installBuiltins() {
 	f64op("f64_sqrt", math.Sqrt)
 	f64op("f64_exp", math.Exp)
 	f64op("f64_log", math.Log)
+	f64op("f64_log1p", math.Log1p)
+	f64op("f64_expm1", math.Expm1)
 	f64op("f64_sin", math.Sin)
 	f64op("f64_cos", math.Cos)
 	f64op("f64_floor", math.Floor)
@@ -556,6 +569,32 @@ func (ip *Interp) installBuiltins() {
 		b.Data = append(b.Data, byte(int64(n)))
 		return value.TheUnit, nil
 	})
+	// SHA-256, lower-case hex. std/hash.tw is the specification and the vector
+	// suite; this is the same digest at machine speed, and the two have to agree
+	// because the digest is a format constant: spool's lockfiles, selvedge's
+	// archives and warp's cache keys all store one and read it back later.
+	//
+	// sha256 takes a Str and sha256_bytes a Bytes. They are two names rather
+	// than one polymorphic builtin because the argument's type is the thing a
+	// caller gets wrong, and a builtin that quietly accepts either would hash a
+	// buffer's contents when the caller meant its text and never say so.
+	def("sha256", 1, false, func(a []value.Value) (value.Value, error) {
+		s, ok := a[0].(value.Str)
+		if !ok {
+			return nil, fmt.Errorf("sha256 expects a string")
+		}
+		sum := sha256.Sum256([]byte(s))
+		return value.Str(hex.EncodeToString(sum[:])), nil
+	})
+	def("sha256_bytes", 1, false, func(a []value.Value) (value.Value, error) {
+		b, ok := a[0].(*value.Bytes)
+		if !ok {
+			return nil, fmt.Errorf("sha256_bytes expects a byte buffer")
+		}
+		sum := sha256.Sum256(b.Data)
+		return value.Str(hex.EncodeToString(sum[:])), nil
+	})
+
 	def("bytes_to_str", 1, false, func(a []value.Value) (value.Value, error) {
 		b, ok := a[0].(*value.Bytes)
 		if !ok {
@@ -3412,7 +3451,9 @@ var processStart = time.Now()
 // bitFuncs is the one definition of what each bitwise word computes. The
 // operators are reachable two ways, infix (`x shr 8`) and called (`shr(x, 8)`),
 // and both routes land here so the two spellings cannot come to mean different
-// things.
+// things. `ushr` is the exception: it is a call and not an operator, so it has
+// no infix spelling to keep in step, and it lives here anyway because it is the
+// same masking and the same I64 round trip as the words that do.
 var bitFuncs = map[string]func(x, y int64) int64{
 	"and":  func(x, y int64) int64 { return x & y },
 	"or":   func(x, y int64) int64 { return x | y },
@@ -3424,6 +3465,11 @@ var bitFuncs = map[string]func(x, y int64) int64{
 	// `shr` is arithmetic (sign-extending), so it is defined on a negative operand.
 	"shl": func(x, y int64) int64 { return x << uint64(y&63) },
 	"shr": func(x, y int64) int64 { return x >> uint64(y&63) },
+	// `ushr` is the logical (zero-filling) right shift: the bit pattern is read
+	// as unsigned, so a set sign bit moves down instead of smearing. It masks
+	// its count the same way, so ushr(x, 0) is x and ushr(-1, 1) is the largest
+	// positive I64.
+	"ushr": func(x, y int64) int64 { return int64(uint64(x) >> uint64(y&63)) },
 }
 
 // bitwiseInfix applies a bitwise word to two values. Each operand is read as an

@@ -283,10 +283,22 @@ masking exists so the operation is total and platform-independent, not because
 either is a useful thing to write. Do not rely on it. Where a shift count is
 computed, range-check it.
 
-#### Getting a logical right shift
+#### The logical right shift
 
-There is no `ushr` operator. Build one. `std/float.tw`'s `ushr` is the idiom,
-and it is what every caller in the ecosystem should use or copy:
+`shr` is arithmetic, so `ushr(x, k)` is the logical (zero-filling) one:
+
+```rust
+ushr(0 - 1, 1)   # 9223372036854775807, not -1
+ushr(x, 0)       # x, for every x
+```
+
+It is a call and not an operator: there is no `x ushr k` spelling, because
+`ushr` is not a reserved word and a program is free to use the name for
+something of its own. It masks its count to 0..63 the way `shl` and `shr` mask
+theirs, so every count is defined.
+
+Callers built the shift out of `shr`, `band`, `bnot` and `shl` before there was
+a builtin, and that idiom is still in `std/float.tw`:
 
 ```rust
 let SIGN_BIT: I64 = shl(1, 63)
@@ -302,6 +314,8 @@ Clearing the sign bit makes the value non-negative, where `shr` is already the
 logical shift, and the bit is then put back at the position it would have
 shifted to. The `k == 0` guard is not decoration: without it `shl(1, 63 - k)`
 would be `shl(1, 63)`, which sets the sign bit rather than clearing nothing.
+Note that the hand-rolled form does not mask its count, so it and the builtin
+part company at `k >= 64`; inside 0..63 they agree.
 
 The same construction appears in `std/random.tw` for splitmix64 and xoshiro.
 Anything porting a reference implementation written over `uint64` needs it,
@@ -745,7 +759,7 @@ g[1]   # [1, 2]   d/db
 ```
 
 Differentiable primitives: `+ - * / % @ ^`, `relu`, `sigmoid`, `tanh`, `exp`,
-`log`, `sin`, `cos`, `sqrt`, `sum`, `mean`, `abs`, `pow`.
+`log`, `log1p`, `expm1`, `sin`, `cos`, `sqrt`, `sum`, `mean`, `abs`, `pow`.
 
 `hessian(f)(x)` gives the exact matrix of second partial derivatives of a scalar
 function, by second-order autodiff via forward-mode jets (see `examples/hessian.tw`
@@ -894,8 +908,8 @@ checker applies the natural rules:
 - `+`, `-`, `%`, and comparisons require both sides to share a unit. Adding
   `USD` to `share` is an error.
 - `matmul`/`dot` multiply the operand units; indexing and slicing preserve them.
-- `exp`, `log`, `sin`, `cos`, `tanh`, and `sigmoid` require a dimensionless
-  argument (their result is dimensionless).
+- `exp`, `log`, `log1p`, `expm1`, `sin`, `cos`, `tanh`, and `sigmoid` require a
+  dimensionless argument (their result is dimensionless).
 
 A bare numeric literal is dimensionless. To give a value a unit, annotate the
 `let` that binds it: the literal is adopted into the declared unit:
@@ -945,6 +959,56 @@ fn predict(m: Model, x: [2]) -> [3] {
 
 Accessing a field a record doesn't have (`m.wieght`) is a checker error, whether
 the record is a literal or a declared type.
+
+### Record update
+
+`{ ..base, field: value }` is a copy of `base` with the named fields replaced.
+It is an expression, so a configured record can be built in one place rather
+than by a run of assignments after the constructor:
+
+```rust
+let base = { w: [1.0, 2.0], b: 0.5, lr: 0.01 }
+let tuned = { ..base, lr: 0.1 }
+# { w: tensor([1, 2], shape=[2]), b: 0.5, lr: 0.1 }
+```
+
+The base is written first, before any field, and only once. A `..` anywhere else
+in the literal is a syntax error, so there is never a question of which of two
+spellings of one field wins. The form works with a type name in front of it,
+which is how a struct is configured:
+
+```rust
+struct Chart { title: Str, width: I64, height: I64, fix_y: Bool }
+
+fn styled(d: Chart, t: Str) -> Chart = Chart { ..d, title: t, fix_y: true }
+```
+
+A field the base does not have is added rather than refused, because the record
+that comes out is the same one `{ w: base.w, extra: 1.0 }` produces and records
+are structural. A *typed* update is still checked against its declaration, so
+`Chart { ..d, ttile: "x" }` is a checker error the way `Chart { ttile: "x" }`
+already is.
+
+**The copy is shallow, and this is the part to know.** A field holding a
+container hands over the same container, so a `push` through the copy is visible
+from the base:
+
+```rust
+let base = { tags: arr_new(), n: 1 }
+let m = { ..base, n: 2 }
+push(m.tags, "shared")
+len(base.tags)                     # 1, not 0
+```
+
+That is not a special rule for `..`. It is what `{ tags: base.tags, n: 2 }`
+written out by hand already does, and what the `with_field` builtin does:
+`{ ..base, n: 2 } == with_field(base, "n", 2)`. An update that copied
+deeply would make one spelling of a record literal mean something the other does
+not. To get a deep copy, copy the field yourself.
+
+The base has to be a record. Where the checker can see the type it refuses the
+literal -- `the base of a record update must be a record, got I64` -- and where
+it cannot, the same refusal arrives at run time, without the type.
 
 ## `struct`, and what a parameter is
 
@@ -1028,7 +1092,8 @@ existing caller already assumed, which is the evidence for it being the right
 one.
 
 `Record` in numeric mode keeps its own rule and is unaffected: fields are not
-mutable in place, and you rebuild the record.
+mutable in place, and you rebuild the record. A record update, above, is how you
+rebuild one without naming every field again.
 
 ## `enum`, and `match`
 
@@ -1310,7 +1375,15 @@ reads `$TWILL_STD/nn.tw`. Unset it and you are back to the copy in the binary.
 ## Standard library
 
 Elementwise math (differentiable): `relu`, `sigmoid`, `tanh`, `exp`, `log`,
-`sin`, `cos`, `sqrt`, `square`, `abs`, `pow(x, p)`, `clip(x, lo, hi)`.
+`log1p`, `expm1`, `sin`, `cos`, `sqrt`, `square`, `abs`, `pow(x, p)`,
+`clip(x, lo, hi)`.
+
+`log1p(x)` is `log(1 + x)` and `expm1(x)` is `exp(x) - 1`, computed without
+forming the sum or the difference. That is the whole reason they exist: at
+`x = 1e-16` the sum `1 + x` rounds to exactly 1, so `log(1 + x)` answers 0 and
+the input is gone, while `log1p(x)` answers `1e-16`. Their gradients are
+`1/(1 + x)` and `exp(x)`, so a log-likelihood or a rate written through them
+differentiates as well as it evaluates.
 
 Elementwise combine: `maximum(a, b)`, `minimum(a, b)`, `where(cond, a, b)`, and
 the comparisons `greater`, `less`, `greater_equal`, `less_equal`, `equal`

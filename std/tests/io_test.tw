@@ -20,166 +20,164 @@ mode systems
 
 import "std/io" as io
 import "std/text" as tx
-import "systems_harness.tw" as t
+import "std/test" as t
 
 fn main() -> I64 {
-  let rp: t.Report = t.new_report()
-
   # ---- joining -------------------------------------------------------------
 
-  t.check_eq_str(rp, "joining two components inserts one separator",
+  t.equal_str("joining two components inserts one separator",
     io.join2("a", "b"), "a/b")
 
   # A trailing separator on the first component must not double. This is the
   # case that arrives from configuration, where whether a directory setting ends
   # in a slash is a coin flip.
-  t.check_eq_str(rp, "joining does not double a separator that is already there",
+  t.equal_str("joining does not double a separator that is already there",
     io.join2("a/", "b"), "a/b")
 
   # An empty component contributes nothing rather than an empty segment.
-  t.check_eq_str(rp, "an empty first component is skipped", io.join2("", "b"), "b")
-  t.check_eq_str(rp, "an empty second component leaves the first alone",
+  t.equal_str("an empty first component is skipped", io.join2("", "b"), "b")
+  t.equal_str("an empty second component leaves the first alone",
     io.join2("a", ""), "a")
 
   # An absolute second component keeps its leading separator, since the join
   # does not add one before a component that already starts with a separator.
-  t.check_eq_str(rp, "joining onto a component that begins with a separator adds nothing",
+  t.equal_str("joining onto a component that begins with a separator adds nothing",
     io.join2("a", "/b"), "a/b")
 
   let three: Arr[Str] = arr_new()
   push(three, "usr")
   push(three, "local")
   push(three, "bin")
-  t.check_eq_str(rp, "joining three components gives two separators",
+  t.equal_str("joining three components gives two separators",
     io.join(three), "usr/local/bin")
 
   # ---- dir_name and base_name ----------------------------------------------
 
-  t.check_eq_str(rp, "the directory of a two part path is the first part",
+  t.equal_str("the directory of a two part path is the first part",
     io.dir_name("a/b"), "a")
-  t.check_eq_str(rp, "the base name of a two part path is the last part",
+  t.equal_str("the base name of a two part path is the last part",
     io.base_name("a/b"), "b")
 
   # A bare name has no directory. The empty string means "here" and is what
   # joins correctly with anything.
-  t.check_eq_str(rp, "a bare name has no directory", io.dir_name("file.tw"), "")
-  t.check_eq_str(rp, "a bare name is its own base name", io.base_name("file.tw"), "file.tw")
+  t.equal_str("a bare name has no directory", io.dir_name("file.tw"), "")
+  t.equal_str("a bare name is its own base name", io.base_name("file.tw"), "file.tw")
 
   # The root is the one directory whose separator cannot be stripped: "" would
   # name the current directory instead.
-  t.check_eq_str(rp, "the directory of a path at the root is the root",
+  t.equal_str("the directory of a path at the root is the root",
     io.dir_name("/a"), "/")
 
   # A trailing separator names the same directory, so the base name is the
   # directory's own name rather than nothing.
-  t.check_eq_str(rp, "a trailing separator does not empty the base name",
+  t.equal_str("a trailing separator does not empty the base name",
     io.base_name("a/b/"), "b")
-  t.check_eq_str(rp, "a path of only separators has no base name", io.base_name("//"), "")
+  t.equal_str("a path of only separators has no base name", io.base_name("//"), "")
 
   # Backslashes are accepted as separators on input, because a path from a
   # Windows environment contains them and refusing would fail to find the base
   # name of a real path.
-  t.check_eq_str(rp, "a backslash is recognised as a separator when splitting",
+  t.equal_str("a backslash is recognised as a separator when splitting",
     io.base_name("dir\\file.tw"), "file.tw")
 
   # ---- extensions ----------------------------------------------------------
 
-  t.check_eq_str(rp, "the extension includes its dot", io.ext("file.tw"), ".tw")
+  t.equal_str("the extension includes its dot", io.ext("file.tw"), ".tw")
 
   # The last dot wins, so a doubled extension gives only the final part.
-  t.check_eq_str(rp, "a doubled extension gives only the last part",
+  t.equal_str("a doubled extension gives only the last part",
     io.ext("archive.tar.gz"), ".gz")
 
   # A leading dot marks a hidden file and is not an extension.
-  t.check_eq_str(rp, "a leading dot is not an extension", io.ext(".gitignore"), "")
-  t.check_eq_str(rp, "a name with no dot has no extension", io.ext("README"), "")
+  t.equal_str("a leading dot is not an extension", io.ext(".gitignore"), "")
+  t.equal_str("a name with no dot has no extension", io.ext("README"), "")
 
   # The dot must be found in the base name, not anywhere in the path. A
   # directory containing a dot would otherwise swallow the whole tail.
-  t.check_eq_str(rp, "a dot in a directory name is not an extension",
+  t.equal_str("a dot in a directory name is not an extension",
     io.ext("v1.2/readme"), "")
 
-  t.check_eq_str(rp, "the stem is the base name without its extension",
+  t.equal_str("the stem is the base name without its extension",
     io.stem("dir/file.tw"), "file")
-  t.check_eq_str(rp, "the stem of a doubled extension keeps the inner one",
+  t.equal_str("the stem of a doubled extension keeps the inner one",
     io.stem("archive.tar.gz"), "archive.tar")
 
-  t.check_eq_str(rp, "replacing an extension keeps the directory",
+  t.equal_str("replacing an extension keeps the directory",
     io.with_ext("dir/file.md", ".tw"), "dir/file.tw")
-  t.check_eq_str(rp, "replacing an extension adds the dot when it was left out",
+  t.equal_str("replacing an extension adds the dot when it was left out",
     io.with_ext("file.md", "txt"), "file.txt")
-  t.check_eq_str(rp, "replacing the extension of a file that has none appends it",
+  t.equal_str("replacing the extension of a file that has none appends it",
     io.with_ext("README", ".md"), "README.md")
 
   # ---- splitting -----------------------------------------------------------
 
   let parts: Arr[Str] = io.split("/usr/local/bin")
-  t.check_eq_i64(rp, "splitting drops the empty component before a leading separator",
+  t.equal_i64("splitting drops the empty component before a leading separator",
     len(parts), 3)
-  t.check_eq_str(rp, "the first component of an absolute path is the first name",
+  t.equal_str("the first component of an absolute path is the first name",
     parts[0], "usr")
 
   # Repeated separators collapse, since an empty component names nothing.
-  t.check_eq_i64(rp, "repeated separators do not produce empty components",
+  t.equal_i64("repeated separators do not produce empty components",
     len(io.split("a//b")), 2)
-  t.check_eq_i64(rp, "an empty path has no components", len(io.split("")), 0)
+  t.equal_i64("an empty path has no components", len(io.split("")), 0)
 
   # Mixed separators split the same way, which is what makes a Windows path
   # usable here.
-  t.check_eq_i64(rp, "a path mixing both separators splits on both",
+  t.equal_i64("a path mixing both separators splits on both",
     len(io.split("a/b\\c")), 3)
 
   # ---- absoluteness --------------------------------------------------------
 
-  t.check(rp, "a leading separator makes a path absolute", io.is_abs("/a/b"))
-  t.check(rp, "a bare name is not absolute", not io.is_abs("a/b"))
-  t.check(rp, "the empty path is not absolute", not io.is_abs(""))
+  t.check("a leading separator makes a path absolute", io.is_abs("/a/b"))
+  t.check("a bare name is not absolute", not io.is_abs("a/b"))
+  t.check("the empty path is not absolute", not io.is_abs(""))
 
   # A drive letter is recognised on every platform, because a path that looks
   # like this came from Windows and joining it onto a working directory would
   # produce nonsense.
-  t.check(rp, "a drive letter with a forward slash is absolute", io.is_abs("C:/x"))
-  t.check(rp, "a drive letter with a backslash is absolute", io.is_abs("C:\\x"))
+  t.check("a drive letter with a forward slash is absolute", io.is_abs("C:/x"))
+  t.check("a drive letter with a backslash is absolute", io.is_abs("C:\\x"))
 
   # A colon in the second position without a separator after it is not a drive
   # reference, so it stays relative.
-  t.check(rp, "a colon without a following separator is not a drive letter",
+  t.check("a colon without a following separator is not a drive letter",
     not io.is_abs("C:x"))
 
   # ---- normalising ---------------------------------------------------------
 
-  t.check_eq_str(rp, "a single dot component is removed",
+  t.equal_str("a single dot component is removed",
     io.normalize("a/./b"), "a/b")
-  t.check_eq_str(rp, "a double dot cancels the component before it",
+  t.equal_str("a double dot cancels the component before it",
     io.normalize("a/b/../c"), "a/c")
-  t.check_eq_str(rp, "several double dots cancel several components",
+  t.equal_str("several double dots cancel several components",
     io.normalize("a/b/c/../../d"), "a/d")
-  t.check_eq_str(rp, "normalising an absolute path keeps it absolute",
+  t.equal_str("normalising an absolute path keeps it absolute",
     io.normalize("/a/b/../c"), "/a/c")
-  t.check_eq_str(rp, "repeated separators collapse when normalising",
+  t.equal_str("repeated separators collapse when normalising",
     io.normalize("a//b"), "a/b")
 
   # A path that cancels to nothing is the current directory, spelled ".", not
   # the empty string: the empty string is not a usable path and "." is.
-  t.check_eq_str(rp, "a path that cancels entirely becomes the current directory",
+  t.equal_str("a path that cancels entirely becomes the current directory",
     io.normalize("a/.."), ".")
 
   # A leading double dot on a relative path is kept. Dropping it would turn a
   # path that escapes its starting directory into one that does not, which is a
   # security-relevant difference and not a cosmetic one.
-  t.check_eq_str(rp, "a leading double dot on a relative path is preserved",
+  t.equal_str("a leading double dot on a relative path is preserved",
     io.normalize("../a"), "../a")
-  t.check_eq_str(rp, "consecutive leading double dots are all preserved",
+  t.equal_str("consecutive leading double dots are all preserved",
     io.normalize("../../a"), "../../a")
 
   # An absolute path cannot escape above the root, so a double dot there is
   # dropped rather than kept.
-  t.check_eq_str(rp, "a double dot at the root is dropped rather than escaping it",
+  t.equal_str("a double dot at the root is dropped rather than escaping it",
     io.normalize("/../a"), "/a")
 
   # Normalising twice changes nothing, which is the property that makes it safe
   # to call defensively.
-  t.check_eq_str(rp, "normalising an already normalised path is a no-op",
+  t.equal_str("normalising an already normalised path is a no-op",
     io.normalize(io.normalize("a/b/../c/./d")), io.normalize("a/b/../c/./d"))
 
   # ---- the pieces fit together ---------------------------------------------
@@ -188,12 +186,12 @@ fn main() -> I64 {
   # holds the two functions together and is where an off-by-one on the
   # separator index would show.
   let path: Str = "std/tests/io_test.tw"
-  t.check_eq_str(rp, "the directory and base name rejoin to the original path",
+  t.equal_str("the directory and base name rejoin to the original path",
     io.join2(io.dir_name(path), io.base_name(path)), path)
 
   # The stem and the extension rebuild the base name.
-  t.check_eq_str(rp, "the stem and the extension rebuild the base name",
+  t.equal_str("the stem and the extension rebuild the base name",
     tx.concat(io.stem(path), io.ext(path)), io.base_name(path))
 
-  t.report(rp, "io")
+  t.report("io")
 }
