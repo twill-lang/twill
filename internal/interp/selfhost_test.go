@@ -8,7 +8,9 @@ import (
 	"testing"
 
 	"github.com/twill-lang/twill/internal/checker"
+	"github.com/twill-lang/twill/internal/format"
 	"github.com/twill-lang/twill/internal/interp"
+	"github.com/twill-lang/twill/internal/lexer"
 	"github.com/twill-lang/twill/internal/parser"
 	"github.com/twill-lang/twill/internal/value"
 )
@@ -1240,5 +1242,148 @@ let HEX: I64 = 2
 	}
 	if !strings.Contains(out, diags[0].Msg) {
 		t.Errorf("the two checkers disagree.\n  go:   %s\n  self: %s", diags[0].Msg, out)
+	}
+}
+
+// The record update across the seam. `{ ..base, f: v }` is parsed, checked,
+// printed and evaluated by two implementations, and the conformance gate
+// compares their output byte for byte, so every one of those has to agree. The
+// evaluator is the half with a decision in it: what the copy shares with its
+// base.
+func TestSelfHostedRunsARecordUpdateLikeTheBootstrap(t *testing.T) {
+	for _, src := range []string{
+		// A field the update does not name keeps the base's value.
+		"let base = { a: 3.0, b: 4.0 }\nprint({ ..base, b: 10.0 })\n",
+		// No fields at all: a plain copy.
+		"let base = { a: 3.0, b: 4.0 }\nprint({ ..base })\n",
+		// Field order is the base's, and an added field goes after it.
+		"let base = { z: 1.0, a: 2.0 }\nprint({ ..base, a: 3.0, m: 4.0 })\n",
+		// The base is not written through.
+		"let base = { a: 3.0 }\nlet m = { ..base, a: 99.0 }\nprint(base)\n",
+		// A base that is itself an expression rather than a name.
+		"fn mk(v) = { a: v, b: 0.0 }\nprint({ ..mk(2.0), b: 5.0 })\n",
+		// Nested: the inner record is shared, which print cannot show but the
+		// two implementations still have to agree about.
+		"let inner = { x: 1.0 }\nlet base = { i: inner, n: 0.0 }\nprint({ ..base, n: 2.0 })\n",
+		// A typed update, where the struct name rides along with the copy.
+		"mode systems\nstruct P { x: I64, y: I64 }\nlet base: P = P { x: 1, y: 2 }\nprint(P { ..base, y: 5 })\n",
+		// In a match arm, which is the position docs/self-hosting.md section 1.2
+		// warns about: `{` there is a record and never a block, and `..` must not
+		// give either parser a second reading of it.
+		"mode systems\nstruct P { x: I64, y: I64 }\nfn pick(o: Opt[P], d: P) -> P {\n  match o {\n    Some(p) => P { ..p, y: 9 },\n    None => P { ..d },\n  }\n}\nlet d: P = P { x: 1, y: 2 }\nprint(pick(Some(d), d))\nprint(pick(None, d))\n",
+		// The same value `with_field` builds, which is how a one-field update was
+		// written before this syntax existed. Both implementations have that
+		// builtin, so this is a claim about all four halves at once.
+		"let base = { a: 1.0, b: 2.0 }\nprint({ ..base, b: 3.0 } == with_field(base, \"b\", 3.0))\n",
+		// The shallow copy, observed: the pushed element is visible through the
+		// base, on both sides.
+		"mode systems\nlet base = { tags: arr_new(), n: 1 }\nlet m = { ..base, n: 2 }\npush(m.tags, \"shared\")\nprint(len(base.tags))\nprint(m.n)\n",
+	} {
+		goOut, selfOut := runBothWays(t, src)
+		if goOut != selfOut {
+			t.Errorf("record update output diverged for %q:\n  go:   %q\n  self: %q", src, goOut, selfOut)
+		}
+	}
+}
+
+// A base that is definitely not a record is a checker error, and the message is
+// taken from checker.Check rather than written out here for the reason the
+// `const` tests above give: a reworded diagnostic on either side has to fail a
+// test rather than quietly split the two implementations.
+func TestSelfHostedRefusesANonRecordUpdateBase(t *testing.T) {
+	const src = `mode systems
+fn f() {
+  let n: I64 = 3
+  let bad = { ..n, y: 1 }
+}
+`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	diags := checker.Check(prog)
+	if len(diags) != 1 {
+		t.Fatalf("the Go checker reported %d diagnostics, want 1: %v", len(diags), diags)
+	}
+	code, out := runSelfHostedCheckOut(t, src)
+	if code != 1 {
+		t.Errorf("self-hosted check exited %d, want 1", code)
+	}
+	if !strings.Contains(out, diags[0].Msg) {
+		t.Errorf("the two checkers disagree.\n  go:   %s\n  self: %s", diags[0].Msg, out)
+	}
+}
+
+// The same for the parser: `..` anywhere but first is refused, in the same
+// words, by both. This one is a syntax error rather than a diagnostic, so the
+// text comes off the Go parser's error.
+func TestSelfHostedRefusesAMisplacedRecordUpdateBase(t *testing.T) {
+	const src = `let base = { x: 1.0 }
+let m = { y: 2.0, ..base }
+`
+	_, err := parser.Parse(src)
+	if err == nil {
+		t.Fatal("the Go parser accepted a base written last")
+	}
+	syn, ok := err.(*lexer.SyntaxError)
+	if !ok {
+		t.Fatalf("expected a *lexer.SyntaxError, got %T", err)
+	}
+	code, out := runSelfHostedCheckOut(t, src)
+	if code != 1 {
+		t.Errorf("self-hosted check exited %d, want 1", code)
+	}
+	if !strings.Contains(out, syn.Msg) {
+		t.Errorf("the two parsers disagree.\n  go:   %s\n  self: %s", syn.Msg, out)
+	}
+}
+
+// The formatter is the third implementation of the syntax, and it too is
+// doubled. `twill fmt` on either side must print the same text, or a formatted
+// file means one thing to one implementation and another to the other.
+func TestSelfHostedFormatsARecordUpdateLikeTheBootstrap(t *testing.T) {
+	skipUnderShort(t)
+	const src = `let base = { a: 1.5, b: 2.5 }
+let m = { ..base, b: 3.5 }
+let c = { ..base }
+`
+	want, err := format.Source(src)
+	if err != nil {
+		t.Fatalf("format: %v", err)
+	}
+	dir := t.TempDir()
+	target := filepath.Join(dir, "input.tw")
+	if err := os.WriteFile(target, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// The self-hosted CLI prints formatted source through write_out, which goes
+	// to the real os.Stdout rather than the interpreter's sink, so it is captured
+	// at the OS level the way runSelfHostedCheckOut captures stderr.
+	saved := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	done := make(chan string, 1)
+	go func() {
+		var b strings.Builder
+		io.Copy(&b, r)
+		done <- b.String()
+	}()
+	ip := interp.New(func(string) {})
+	_, ranMain, runErr := ip.RunFileMain(filepath.Join("..", "..", "src", "main.tw"),
+		[]string{"twill", "fmt", target})
+	w.Close()
+	os.Stdout = saved
+	got := <-done
+	if runErr != nil {
+		t.Fatalf("self-hosted CLI errored: %v", runErr)
+	}
+	if !ranMain {
+		t.Fatal("self-hosted main did not run")
+	}
+	if got != want {
+		t.Errorf("the two formatters disagree.\n  go:\n%s\n  self:\n%s", want, got)
 	}
 }

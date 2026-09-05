@@ -1705,6 +1705,54 @@ fn bind_pattern(c: Checker, pat: ast.MatchPattern, subject: Type, env: CheckEnv)
   }
 }
 
+# infer_record_lit types a record literal, including the update form
+# `{ ..base, f: v }`. The update's type is the base's fields with the named ones
+# replacing what they name, which is the value the evaluator builds.
+#
+# A field named in an update that the base does not have is not reported. The
+# record it produces is the one `{ a: base.a, b: 1 }` produces and runs exactly
+# as well, and records here are structural, so refusing it would be a diagnostic
+# on a correct program -- the one kind of mistake this checker is not allowed to
+# make. A typed update, `P { ..base, b: 1 }`, is still checked against P's
+# declaration by check_struct_lit below, which is where a misspelt field on a
+# struct is caught.
+#
+# An untyped update produces a plain record rather than the base's struct type.
+# Its fields are what a later field access is answered from, and a name it kept
+# would be a nominal claim about a value the update may have added a field to.
+fn infer_record_lit(c: Checker, ex: ast.RecordLit, env: CheckEnv) -> Type {
+  let fields: Dict[Str, Type] = dict_new()
+  # The base is inferred first because it is written first: a diagnostic from
+  # inside it should come before one from a field that replaces part of it.
+  match ex.base {
+    Some(b) => {
+      let base: Type = infer_expr(c, b, env)
+      match as_record(base) {
+        Some(rec) => {
+          for name in dict_keys(rec.fields) {
+            dict_set(fields, name, dict_must(rec.fields, name))
+          }
+        },
+        None => {
+          if is_definite_non_record(base) {
+            report(c, ex.line, bytes.concat("the base of a record update must be a record, got ",
+              type_text(c, base)))
+          }
+        },
+      }
+    },
+    None => unit,
+  }
+  let i: I64 = 0
+  while i < len(ex.fields) {
+    let f: ast.RecordField = ex.fields[i]
+    dict_set(fields, f.name, infer_expr(c, f.value, env))
+    i = i + 1
+  }
+  if len(ex.type_name) > 0 { return check_struct_lit(c, ex, fields) }
+  TRecord(RecordType { fields: fields, name: "", args: [] })
+}
+
 # check_struct_lit types a typed record literal against its struct declaration:
 # every field named must exist and its value must be of the declared type. The
 # literal's type is the struct.
@@ -2316,17 +2364,7 @@ fn infer_expr(c: Checker, e: ast.Expr, env: CheckEnv) -> Type {
     ECall(ex) => infer_call(c, ex, env),
     EIndex(ex) => infer_index(c, ex, env),
     ESlice(ex) => infer_slice(c, ex, env),
-    ERecord(ex) => {
-      let fields: Dict[Str, Type] = dict_new()
-      let i: I64 = 0
-      while i < len(ex.fields) {
-        let f: ast.RecordField = ex.fields[i]
-        dict_set(fields, f.name, infer_expr(c, f.value, env))
-        i = i + 1
-      }
-      if len(ex.type_name) > 0 { return check_struct_lit(c, ex, fields) }
-      TRecord(RecordType { fields: fields, name: "", args: [] })
-    },
+    ERecord(ex) => infer_record_lit(c, ex, env),
     EField(ex) => {
       let target: Type = infer_expr(c, ex.target, env)
       match as_record(target) {

@@ -92,8 +92,9 @@ Three things check it, and they are not the same thing:
   programs, not a corpus, so a divergence that only a real program reaches is
   not in their range.
 - `./twill test std/tests` is the twill-level suite: every `*_test.tw` under
-  that directory, about half a second. `harness.tw` and `systems_harness.tw`
-  are helpers rather than suites and are imported by the rest.
+  that directory, about half a second. The systems-mode suites assert through
+  `std/test`; `harness.tw` is the numeric-mode harness, a helper rather than a
+  suite, and is imported by the rest.
 
 `tools/diff/` is a fourth thing and answers a different question: it compares
 two Go binaries over the fixture corpus in `testdata/`, so it never looks at

@@ -13,7 +13,7 @@ mode systems
 # would mean producing files that the next tool in the chain refuses.
 
 import "std/json" as js
-import "systems_harness.tw" as t
+import "std/test" as t
 
 # Parse and abort on failure. Every call here is on a document expected to be
 # valid, so a failure is a broken test rather than a case to handle.
@@ -79,78 +79,76 @@ fn field_of(v: js.Json, key: Str) -> js.Json {
 }
 
 fn main() -> I64 {
-  let rp: t.Report = t.new_report()
-
   # ---- scalars -------------------------------------------------------------
 
-  t.check(rp, "null parses to the null value", js.is_null(must("null")))
-  t.check(rp, "true parses to a boolean", bool_of(must("true")))
-  t.check(rp, "false parses to a boolean", not bool_of(must("false")))
+  t.check("null parses to the null value", js.is_null(must("null")))
+  t.check("true parses to a boolean", bool_of(must("true")))
+  t.check("false parses to a boolean", not bool_of(must("false")))
 
   # 42 is exactly representable, so the tolerance is zero.
-  t.check_close(rp, "an integer literal parses to its exact value",
+  t.near("an integer literal parses to its exact value",
     num_of(must("42")), 42.0, 0.0)
-  t.check_close(rp, "a negative number keeps its sign",
+  t.near("a negative number keeps its sign",
     num_of(must("-17")), -17.0, 0.0)
 
   # 1.5 and 2^-1 are both exact in binary, so this too is an exact comparison.
-  t.check_close(rp, "a fractional number parses exactly when it is representable",
+  t.near("a fractional number parses exactly when it is representable",
     num_of(must("1.5")), 1.5, 0.0)
 
   # 1e3 = 1000 exactly, and the capital E form is the same number.
-  t.check_close(rp, "exponent notation parses", num_of(must("1e3")), 1000.0, 0.0)
-  t.check_close(rp, "a capital E exponent parses the same as a lower case one",
+  t.near("exponent notation parses", num_of(must("1e3")), 1000.0, 0.0)
+  t.near("a capital E exponent parses the same as a lower case one",
     num_of(must("1E3")), num_of(must("1e3")), 0.0)
-  t.check_close(rp, "a negative exponent parses", num_of(must("5e-1")), 0.5, 0.0)
+  t.near("a negative exponent parses", num_of(must("5e-1")), 0.5, 0.0)
 
   # There is no integer type in the model: 1 and 1.0 are the same value, which
   # is the first thing a caller has to know.
-  t.check(rp, "one and one point zero parse to the same value",
+  t.check("one and one point zero parse to the same value",
     num_of(must("1")) == num_of(must("1.0")))
 
-  t.check_eq_str(rp, "a plain string parses with its quotes removed",
+  t.equal_str("a plain string parses with its quotes removed",
     str_of(must("\"hello\"")), "hello")
-  t.check_eq_str(rp, "the empty string parses", str_of(must("\"\"")), "")
+  t.equal_str("the empty string parses", str_of(must("\"\"")), "")
 
   # ---- escapes -------------------------------------------------------------
 
   # The six single-character escapes plus the solidus.
-  t.check_eq_str(rp, "an escaped quote becomes a quote",
+  t.equal_str("an escaped quote becomes a quote",
     str_of(must("\"a\\\"b\"")), "a\"b")
-  t.check_eq_str(rp, "an escaped backslash becomes one backslash",
+  t.equal_str("an escaped backslash becomes one backslash",
     str_of(must("\"a\\\\b\"")), "a\\b")
-  t.check_eq_str(rp, "an escaped newline becomes a newline byte",
+  t.equal_str("an escaped newline becomes a newline byte",
     str_of(must("\"a\\nb\"")), "a\nb")
-  t.check_eq_str(rp, "an escaped tab becomes a tab byte",
+  t.equal_str("an escaped tab becomes a tab byte",
     str_of(must("\"a\\tb\"")), "a\tb")
 
   # An escaped forward slash is legal input even though it is never emitted.
-  t.check_eq_str(rp, "an escaped solidus is accepted on input",
+  t.equal_str("an escaped solidus is accepted on input",
     str_of(must("\"a\\/b\"")), "a/b")
 
   # \u0041 is 'A'. The simplest of the four \u paths.
-  t.check_eq_str(rp, "a basic latin escape decodes to its ascii byte",
+  t.equal_str("a basic latin escape decodes to its ascii byte",
     str_of(must("\"\\u0041\"")), "A")
 
   # \u00e9 is U+00E9, which encodes as the two bytes 0xC3 0xA9. Checking the
   # byte length as well as the value is what distinguishes a correct encoder
   # from one that truncated the code point to a single byte.
-  t.check_eq_str(rp, "a two byte escape decodes to the accented character",
+  t.equal_str("a two byte escape decodes to the accented character",
     str_of(must("\"\\u00e9\"")), "é")
-  t.check_eq_i64(rp, "a two byte escape produces two bytes",
+  t.equal_i64("a two byte escape produces two bytes",
     len(str_of(must("\"\\u00e9\""))), 2)
 
   # A surrogate pair: U+1F600 is written as \ud83d\ude00 by any encoder that
   # cannot emit it directly. The two halves must combine into one four-byte
   # character, not two three-byte fragments. This is the escape case that is
   # most often wrong and it is invisible until a document contains an emoji.
-  t.check_eq_str(rp, "a surrogate pair combines into one character",
+  t.equal_str("a surrogate pair combines into one character",
     str_of(must("\"\\ud83d\\ude00\"")), "😀")
-  t.check_eq_i64(rp, "a combined surrogate pair produces four bytes and not six",
+  t.equal_i64("a combined surrogate pair produces four bytes and not six",
     len(str_of(must("\"\\ud83d\\ude00\""))), 4)
 
   # Hex digits are accepted in either case.
-  t.check_eq_str(rp, "an escape with upper case hex digits decodes the same",
+  t.equal_str("an escape with upper case hex digits decodes the same",
     str_of(must("\"\\u00E9\"")), str_of(must("\"\\u00e9\"")))
 
   # ---- containers ----------------------------------------------------------
@@ -158,107 +156,107 @@ fn main() -> I64 {
   let arr: js.Json = must("[1, 2, 3]")
   match js.as_array(arr) {
     Some(a) => {
-      t.check_eq_i64(rp, "an array parses with one element per value", len(a), 3)
-      t.check_close(rp, "the elements of an array keep their order",
+      t.equal_i64("an array parses with one element per value", len(a), 3)
+      t.near("the elements of an array keep their order",
         num_of(a[0]), 1.0, 0.0)
-      t.check_close(rp, "the last element of an array is the last value",
+      t.near("the last element of an array is the last value",
         num_of(a[2]), 3.0, 0.0)
     },
-    None => t.check(rp, "an array parses to an array", false),
+    None => t.check("an array parses to an array", false),
   }
 
-  t.check(rp, "an empty array parses", parses("[]"))
-  t.check(rp, "an empty object parses", parses("{}"))
+  t.check("an empty array parses", parses("[]"))
+  t.check("an empty object parses", parses("{}"))
 
   let obj: js.Json = must("{\"a\": 1, \"b\": \"two\", \"c\": null}")
-  t.check_close(rp, "an object field holds its number", num_of(field_of(obj, "a")), 1.0, 0.0)
-  t.check_eq_str(rp, "an object field holds its string", str_of(field_of(obj, "b")), "two")
-  t.check(rp, "an object field can be null", js.is_null(field_of(obj, "c")))
-  t.check(rp, "a missing field gives none", absent(js.field(obj, "zzz")))
+  t.near("an object field holds its number", num_of(field_of(obj, "a")), 1.0, 0.0)
+  t.equal_str("an object field holds its string", str_of(field_of(obj, "b")), "two")
+  t.check("an object field can be null", js.is_null(field_of(obj, "c")))
+  t.check("a missing field gives none", absent(js.field(obj, "zzz")))
 
   # Nesting to three levels, since a recursive descent parser that lost its
   # depth would still handle one.
   let deep: js.Json = must("{\"a\": {\"b\": [{\"c\": 7}]}}")
   match js.at(field_of(field_of(deep, "a"), "b"), 0) {
-    Some(inner) => t.check_close(rp, "a value nested three levels deep is reachable",
+    Some(inner) => t.near("a value nested three levels deep is reachable",
       num_of(field_of(inner, "c")), 7.0, 0.0),
-    None => t.check(rp, "a value nested three levels deep is reachable", false),
+    None => t.check("a value nested three levels deep is reachable", false),
   }
 
   # Whitespace between every token is legal and must be ignored.
-  t.check(rp, "whitespace between tokens is ignored",
+  t.check("whitespace between tokens is ignored",
     parses(" {\n  \"a\" :\t[ 1 , 2 ]\r\n} "))
 
   # Duplicate keys: last one wins, matching every mainstream parser.
-  t.check_close(rp, "a duplicated key takes the last value",
+  t.near("a duplicated key takes the last value",
     num_of(field_of(must("{\"a\": 1, \"a\": 2}"), "a")), 2.0, 0.0)
 
   # ---- what is refused -----------------------------------------------------
 
   # Each of these is accepted by some popular parser and rejected here. The
   # comment on each says which extension it is.
-  t.check(rp, "a trailing comma in an array is refused", not parses("[1, 2,]"))
-  t.check(rp, "a trailing comma in an object is refused", not parses("{\"a\": 1,}"))
-  t.check(rp, "an unquoted key is refused", not parses("{a: 1}"))
-  t.check(rp, "a single quoted string is refused", not parses("'a'"))
-  t.check(rp, "a comment is refused", not parses("[1] // note"))
-  t.check(rp, "a leading zero on a number is refused", not parses("01"))
-  t.check(rp, "a leading plus on a number is refused", not parses("+1"))
-  t.check(rp, "a bare decimal point with no digits after it is refused", not parses("1."))
-  t.check(rp, "an exponent with no digits is refused", not parses("1e"))
-  t.check(rp, "the NaN literal is refused", not parses("NaN"))
-  t.check(rp, "the Infinity literal is refused", not parses("Infinity"))
-  t.check(rp, "an unterminated string is refused", not parses("\"abc"))
-  t.check(rp, "an unterminated array is refused", not parses("[1, 2"))
-  t.check(rp, "a raw newline inside a string is refused", not parses("\"a\nb\""))
-  t.check(rp, "an unknown escape is refused", not parses("\"\\q\""))
-  t.check(rp, "a truncated unicode escape is refused", not parses("\"\\u00\""))
-  t.check(rp, "trailing content after the top level value is refused",
+  t.check("a trailing comma in an array is refused", not parses("[1, 2,]"))
+  t.check("a trailing comma in an object is refused", not parses("{\"a\": 1,}"))
+  t.check("an unquoted key is refused", not parses("{a: 1}"))
+  t.check("a single quoted string is refused", not parses("'a'"))
+  t.check("a comment is refused", not parses("[1] // note"))
+  t.check("a leading zero on a number is refused", not parses("01"))
+  t.check("a leading plus on a number is refused", not parses("+1"))
+  t.check("a bare decimal point with no digits after it is refused", not parses("1."))
+  t.check("an exponent with no digits is refused", not parses("1e"))
+  t.check("the NaN literal is refused", not parses("NaN"))
+  t.check("the Infinity literal is refused", not parses("Infinity"))
+  t.check("an unterminated string is refused", not parses("\"abc"))
+  t.check("an unterminated array is refused", not parses("[1, 2"))
+  t.check("a raw newline inside a string is refused", not parses("\"a\nb\""))
+  t.check("an unknown escape is refused", not parses("\"\\q\""))
+  t.check("a truncated unicode escape is refused", not parses("\"\\u00\""))
+  t.check("trailing content after the top level value is refused",
     not parses("{} {}"))
-  t.check(rp, "an empty document is refused", not parses(""))
+  t.check("an empty document is refused", not parses(""))
 
   # The error carries the offset, so a caller can point at the problem. The
   # trailing comma in "[1,]" is at byte 3.
   match js.parse("[1,]") {
-    Ok(_) => t.check(rp, "a rejected document reports where it failed", false),
-    Err(e) => t.check(rp, "a rejected document reports an offset inside it",
+    Ok(_) => t.check("a rejected document reports where it failed", false),
+    Err(e) => t.check("a rejected document reports an offset inside it",
       e.offset > 0 and e.offset <= 4),
   }
 
   # ---- rendering -----------------------------------------------------------
 
-  t.check_eq_str(rp, "null renders as null", js.render(js.null()), "null")
-  t.check_eq_str(rp, "true renders as true", js.render(js.boolean(true)), "true")
-  t.check_eq_str(rp, "an empty array renders as two brackets",
+  t.equal_str("null renders as null", js.render(js.null()), "null")
+  t.equal_str("true renders as true", js.render(js.boolean(true)), "true")
+  t.equal_str("an empty array renders as two brackets",
     js.render(js.array()), "[]")
-  t.check_eq_str(rp, "an empty object renders as two braces",
+  t.equal_str("an empty object renders as two braces",
     js.render(js.object()), "{}")
 
-  t.check_eq_str(rp, "a string renders quoted", js.render(js.string("hi")), "\"hi\"")
+  t.equal_str("a string renders quoted", js.render(js.string("hi")), "\"hi\"")
 
   # The escapes that must appear in output: the quote, the backslash, and the
   # control characters. A tab renders as \t rather than \u0009 because the short
   # form is half the bytes and is what a reader expects.
-  t.check_eq_str(rp, "a quote in a string is escaped on output",
+  t.equal_str("a quote in a string is escaped on output",
     js.render(js.string("a\"b")), "\"a\\\"b\"")
-  t.check_eq_str(rp, "a backslash in a string is escaped on output",
+  t.equal_str("a backslash in a string is escaped on output",
     js.render(js.string("a\\b")), "\"a\\\\b\"")
-  t.check_eq_str(rp, "a newline renders as the short escape",
+  t.equal_str("a newline renders as the short escape",
     js.render(js.string("a\nb")), "\"a\\nb\"")
-  t.check_eq_str(rp, "a tab renders as the short escape",
+  t.equal_str("a tab renders as the short escape",
     js.render(js.string("a\tb")), "\"a\\tb\"")
 
   # A control character with no short form gets the \u00XX form. Byte 1 is
   # start-of-heading.
-  t.check_eq_str(rp, "a control character with no short escape renders as a unicode escape",
+  t.equal_str("a control character with no short escape renders as a unicode escape",
     js.render(js.string(byte_str(1))), "\"\\u0001\"")
 
   # What is deliberately not escaped: the solidus, and every non-ASCII byte.
   # Emitting UTF-8 directly is what keeps a document readable and its size
   # honest.
-  t.check_eq_str(rp, "a forward slash is not escaped on output",
+  t.equal_str("a forward slash is not escaped on output",
     js.render(js.string("a/b")), "\"a/b\"")
-  t.check_eq_str(rp, "a non ascii character renders as its utf eight bytes",
+  t.equal_str("a non ascii character renders as its utf eight bytes",
     js.render(js.string("é")), "\"é\"")
 
   # ---- round-tripping ------------------------------------------------------
@@ -269,37 +267,37 @@ fn main() -> I64 {
   let src: Str = "{\"name\":\"a\\nb\",\"ok\":true,\"list\":[1,2],\"nested\":{\"x\":null}}"
   let once: js.Json = must(src)
   let twice: js.Json = must(js.render(once))
-  t.check_eq_str(rp, "a string with an escape survives a round trip",
+  t.equal_str("a string with an escape survives a round trip",
     str_of(field_of(twice, "name")), "a\nb")
-  t.check(rp, "a boolean survives a round trip", bool_of(field_of(twice, "ok")))
-  t.check(rp, "a nested null survives a round trip",
+  t.check("a boolean survives a round trip", bool_of(field_of(twice, "ok")))
+  t.check("a nested null survives a round trip",
     js.is_null(field_of(field_of(twice, "nested"), "x")))
 
   # Object key order is preserved, so rendering a parsed document gives back
   # the same text. This is stronger than a value round-trip and is what makes a
   # config file diff cleanly after a program has rewritten it.
-  t.check_eq_str(rp, "rendering a parsed document reproduces the original text",
+  t.equal_str("rendering a parsed document reproduces the original text",
     js.render(once), src)
 
   # A surrogate pair round-trips as one character rather than being re-split.
-  t.check_eq_str(rp, "an emoji survives a round trip as one character",
+  t.equal_str("an emoji survives a round trip as one character",
     str_of(must(js.render(must("\"\\ud83d\\ude00\"")))), "😀")
 
   # ---- indented rendering --------------------------------------------------
 
   # Two-space indentation, with a space after each colon and none before it.
-  t.check_eq_str(rp, "an indented object puts each field on its own line",
+  t.equal_str("an indented object puts each field on its own line",
     js.render_indent(must("{\"a\":1}"), 2), "{\n  \"a\": 1\n}")
-  t.check_eq_str(rp, "an indented array puts each element on its own line",
+  t.equal_str("an indented array puts each element on its own line",
     js.render_indent(must("[1,2]"), 2), "[\n  1,\n  2\n]")
 
   # An empty container stays on one line, since there is nothing to indent and
   # a newline between the brackets is noise.
-  t.check_eq_str(rp, "an empty container is not split across lines",
+  t.equal_str("an empty container is not split across lines",
     js.render_indent(js.array(), 2), "[]")
 
   # Indented and compact output must parse to the same value.
-  t.check(rp, "indented output parses back to the same value",
+  t.check("indented output parses back to the same value",
     js.render(must(js.render_indent(once, 4))) == js.render(once))
 
   # ---- building ------------------------------------------------------------
@@ -310,8 +308,8 @@ fn main() -> I64 {
   let items: js.Json = js.array()
   js.push_item(items, js.boolean(false))
   js.set_field(built, "a", items)
-  t.check_eq_str(rp, "a document built by hand renders as expected",
+  t.equal_str("a document built by hand renders as expected",
     js.render(built), "{\"n\":1,\"s\":\"x\",\"a\":[false]}")
 
-  t.report(rp, "json")
+  t.report("json")
 }

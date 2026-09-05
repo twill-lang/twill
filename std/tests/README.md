@@ -34,45 +34,45 @@ interpreter actually implements. They import `harness.tw` as a file.
 | `transformer_test.tw` | `std/transformer` |
 
 `harness.tw` is the numeric-mode harness, not a suite. Running it directly does
-nothing and prints nothing.
+nothing and prints nothing. It stays a file next to the suites rather than
+moving into the library: a numeric-mode harness needs untyped parameters and the
+tensor builtins `abs` and `max`, and none of those exist in `mode systems`,
+which is where `std/test` lives.
 
-## Written ahead of the language
+## The systems-mode suites
 
-These are `mode systems` suites. Since the front end learned to parse and run
-systems mode, most now run on the bootstrap: `io`, `json`, `linalg` and `stats`
-pass today. The two that do not are written ahead of the language rather than
-broken -- `random` implements xoshiro256\*\* and needs the true 64-bit integer
-arithmetic the f64 bootstrap does not have (`docs/needs.md` NEEDS-2), so its
-exact-stream draws come out wrong, and `text` fails one UTF-8 edge case for the
-same class of reason. They are kept in the tree so the modules are not shipping
-untested once the language catches up. They are not a regression and they are
-not skipped tests waiting on a bug fix; `twill test` runs them and reports the
-failures honestly, and the Go-side regression guard
-(`cmd/twill/test_test.go`) asserts only the numeric suites, which do all pass.
+These are `mode systems` and they assert through `std/test`, the standard
+library's assertion module. All six pass on the bootstrap today.
 
-| Suite | Module under test |
-| --- | --- |
-| `io_test.tw` | `std/io` |
-| `json_test.tw` | `std/json` |
-| `linalg_test.tw` | `std/linalg` |
-| `random_test.tw` | `std/random` |
-| `stats_test.tw` | `std/stats` |
-| `text_test.tw` | `std/text` |
-| `systems_harness.tw` | the harness the six above assert through |
+| Suite | Module under test | Checks |
+| --- | --- | --- |
+| `io_test.tw` | `std/io` | 47 |
+| `json_test.tw` | `std/json` | 76 |
+| `linalg_test.tw` | `std/linalg` | 48 |
+| `random_test.tw` | `std/random` | 39 |
+| `stats_test.tw` | `std/stats` | 58 |
+| `text_test.tw` | `std/text` | 80 |
 
-Three constructs are what the parser stops on:
+They used to import `systems_harness.tw`, one of eleven hand-written harnesses
+across this ecosystem. `std/test` replaced it and the file is gone. The counts
+above are the same under both, check for check, and so is every byte the six
+suites print: 351 assertions lost the leading `rp,` argument and nothing else
+moved.
 
-- **Typed annotations naming a generic type.** `fn av(xs: Arr[F64], v: F64)`
-  fails with `expected ")" but found "["`. The parser has no bracketed type
-  application.
-- **Qualified type annotations.** `let rp: t.Report = t.new_report()` fails with
-  `expected "=" but found "."`. An annotation cannot yet name a type through a
-  module binding.
-- **Struct field assignment.** `rp.passed = rp.passed + 1` fails with
-  `unexpected token "="`. A field is readable but not yet an assignment target,
-  which is what `docs/needs.md` NEEDS-42 asks for.
+The Go-side regression guard is `cmd/twill/test_test.go`:
+`TestNumericStdSuitesPass` runs every numeric suite, and
+`TestSystemsStdSuitesPass` runs all six above, so a change to `std/test` cannot
+break them silently.
 
-The same three constructs are why `go test ./internal/format` has six failing
-subtests over `std/io.tw`, `std/json.tw`, `std/linalg.tw`, `std/random.tw`,
-`std/stats.tw` and `std/text.tw`. The formatter shares the bootstrap parser, so
-it cannot format what that parser cannot read. One cause, two symptoms.
+### What this section used to say
+
+Until this file was corrected it said that `random` and `text` were written
+ahead of the language and failed, and that three constructs stopped the parser:
+generic type annotations (`fn av(xs: Arr[F64], v: F64)`), qualified type
+annotations (`let rp: t.Report = t.new_report()`) and struct field assignment
+(`rp.passed = rp.passed + 1`). None of that is true of the tree it describes.
+All six suites pass, all three constructs parse and run -- `stats_test.tw` and
+`systems_harness.tw` were built out of them -- and `go test ./internal/format`
+is green, where this file claimed six failing subtests over the same cause. The claims were measured and removed rather than
+reworded, because a stale README about which tests fail is worse than none: it
+teaches a reader to expect red and to stop looking.

@@ -977,14 +977,7 @@ func (c *checker) inferExpr(e ast.Expr, env *checkEnv) Type {
 	case *ast.Slice:
 		return c.inferSlice(ex, env)
 	case *ast.RecordLit:
-		fields := map[string]Type{}
-		for _, f := range ex.Fields {
-			fields[f.Name] = c.inferExpr(f.Value, env)
-		}
-		if ex.TypeName != "" {
-			return c.checkStructLit(ex, fields)
-		}
-		return tRecord{fields: fields}
+		return c.inferRecordLit(ex, env)
 	case *ast.Field:
 		// `Opt.Some` names a variant by its enum. The enum name is not a value, so
 		// inferring the target would report it as unknown; the qualifier is read
@@ -2024,6 +2017,44 @@ func (c *checker) checkReturnType(line int, got Type, e ast.Expr) {
 	if !assignable(want, got) {
 		c.report(line, "return gives %s but the function declares %s", c.typeString(got), c.typeString(want))
 	}
+}
+
+// inferRecordLit types a record literal, including the update form
+// `{ ..base, f: v }`. The update's type is the base's fields with the named ones
+// replacing what they name, which is the value the evaluator builds.
+//
+// A field named in an update that the base does not have is not reported. The
+// record it produces is the one `{ a: base.a, b: 1 }` produces and runs exactly
+// as well, and records here are structural, so refusing it would be a diagnostic
+// on a correct program -- the one kind of mistake this checker is not allowed to
+// make. A typed update, `P { ..base, b: 1 }`, is still checked against P's
+// declaration by checkStructLit below, which is where a misspelt field on a
+// struct is caught.
+//
+// An untyped update produces a plain record rather than the base's struct type.
+// Its fields are what a later field access is answered from, and a name it kept
+// would be a nominal claim about a value the update may have added a field to.
+func (c *checker) inferRecordLit(ex *ast.RecordLit, env *checkEnv) Type {
+	fields := map[string]Type{}
+	// The base is inferred first because it is written first: a diagnostic from
+	// inside it should come before one from a field that replaces part of it.
+	if ex.Base != nil {
+		base := c.inferExpr(ex.Base, env)
+		if rec, ok := base.(tRecord); ok {
+			for name, t := range rec.fields {
+				fields[name] = t
+			}
+		} else if isDefiniteNonRecord(base) {
+			c.report(ex.Line, "the base of a record update must be a record, got %s", c.typeString(base))
+		}
+	}
+	for _, f := range ex.Fields {
+		fields[f.Name] = c.inferExpr(f.Value, env)
+	}
+	if ex.TypeName != "" {
+		return c.checkStructLit(ex, fields)
+	}
+	return tRecord{fields: fields}
 }
 
 // checkStructLit types a typed record literal `Name { f: v, ... }` against

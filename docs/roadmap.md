@@ -226,7 +226,7 @@ names, which is the part a test can hold.
 | 26 | Allocation and memory counters | 1 | bobbin | 1.6.0 |
 | 27 | Ranged reads | 1 | warp | 1.6.0 |
 | 28 | Immutable top-level bindings | 1 | weft | **half**: `const` in one file, cross-file open |
-| 29 | Optional and named arguments, or record update | 1 | weft | **open** |
+| 29 | Optional and named arguments, or record update | 1 | weft | **half**: record update unreleased, named arguments open |
 | 30 | A compiler barrier | 1 | bobbin | unreleased, `black_box` |
 | 31 | `Dict` keyed by something other than `Str` | 1 | twill | **half**: `I64` keys, not identity |
 | 32 | An empty record, and removing a field | 1 | twill | **open** |
@@ -1127,18 +1127,26 @@ enum walk. Three things are open, and they are separate problems:
   enum declared in another module is unjudged there while the Go checker judges
   it. That gap is older than this entry and is not closed by it.
 
-**29. Optional and named arguments, or record update**, **open** (weft entry
-10). Neither form exists: a call site takes positional arguments only, and there
-is no update expression over a record. The two halves are not the same size, and
-the entry's "or" is doing real work: record update is one new expression form,
-while named arguments reach every arity check in both implementations and every
-builtin, whose arities are declared as word lists with no parameter names in
-them at all. A chart
+**29. Optional and named arguments, or record update**, **half** (weft entry
+10). The entry's "or" was doing real work, and the cheaper half is now
+delivered. Record update is `S { ..base, field: value }`, one new expression
+form, and it is in both implementations, unreleased. Named arguments are not:
+they reach every arity check on both sides and every builtin, whose arities are
+declared as word lists with no parameter names in them at all.
+
+What the update answers is the configuration half of the complaint. A chart
 has a dozen settings and almost every caller changes two. The constructor takes
 the three that are always given and the rest are mutated on afterwards, so every
 optional setting is a statement rather than an argument and no configuration can
 be built by a pure expression. `fix_y` exists purely to give two of those
-mutations a name.
+mutations a name. `{ ..defaults, fix_y: true }` is that expression, and it is
+one expression, so it can be an argument, a return value or a field.
+
+What it does not answer is a call whose arguments are optional. A function of
+twelve parameters still takes twelve at every call site, and the workaround is
+the one the entry describes: pass a record and update it. That is a smaller gap
+than the one the entry opened with, and it is the half that costs the arity
+rewrite, so the entry is half rather than delivered.
 
 **30. A compiler barrier** (bobbin entry 3). **Delivered, and the entry's
 premise was wrong.** `black_box(x)` returns `x`, in both modes and on both

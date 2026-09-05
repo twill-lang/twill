@@ -730,14 +730,56 @@ func (p *parser) looksLikeRecord() bool {
 	if p.peek(1).Value == "}" {
 		return true
 	}
+	// `{ ..base }` is a record update, whose base is written before any field, so
+	// two dots settle it on their own. No statement begins with `.`, so a block is
+	// not what is being taken away here either.
+	if isDot(p.peek(1)) && isDot(p.peek(2)) {
+		return true
+	}
 	return p.peek(1).Kind == lexer.IDENT &&
 		p.peek(2).Kind == lexer.PUNCT && p.peek(2).Value == ":"
+}
+
+// isDot reports whether a token is the field-access `.`. The lexer has no `..`
+// token: `.` is punctuation and a number literal only starts with one when a
+// digit follows, so `..base` arrives as two of these and an identifier. Reading
+// the pair here rather than in the lexer is what keeps `..` out of every other
+// position in the grammar.
+func isDot(t lexer.Token) bool {
+	return t.Kind == lexer.PUNCT && t.Value == "."
+}
+
+// atDotDot reports whether the parser is looking at the `..` that opens a record
+// update.
+func (p *parser) atDotDot() bool {
+	return isDot(p.peek(0)) && isDot(p.peek(1))
 }
 
 func (p *parser) parseRecordLit() (ast.Expr, error) {
 	line := p.expectPunct("{").Line
 	rec := &ast.RecordLit{Line: line}
 	for !p.check("}") && !p.atEnd() {
+		if p.atDotDot() {
+			t := p.peek(0)
+			// The base is the whole record being copied, so it has to be read
+			// before the fields that replace parts of it. Allowing it last would
+			// mean either a second rule about which wins or a literal whose
+			// meaning depends on where the reader's eye lands.
+			if rec.Base != nil || len(rec.Fields) > 0 {
+				return nil, p.errf(t, "the base of a record update must come first, as `{ ..base, field: value }`")
+			}
+			p.next()
+			p.next()
+			base, err := p.parseExpr()
+			if err != nil {
+				return nil, err
+			}
+			rec.Base = base
+			if !p.match(",") {
+				break
+			}
+			continue
+		}
 		name, err := p.expectIdent()
 		if err != nil {
 			return nil, err
