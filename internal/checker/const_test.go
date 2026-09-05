@@ -99,7 +99,7 @@ fn edit() {
 
 // A function declared above the binding still sees it as const. The prelude
 // registers top-level names before any body is checked, and warp's
-// `examples/train.tw` writes its counter eight lines above the binding, so a
+// `examples/train.tw` writes its counter several lines above the binding, so a
 // rule that waited for the walk would have a hole exactly there.
 func TestAConstIsConstAboveItsOwnLine(t *testing.T) {
 	wantOne(t, "mode systems\nfn f() {\n  K = 2\n}\nconst K: I64 = 1\n", "declared const on line 5")

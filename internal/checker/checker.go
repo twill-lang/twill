@@ -220,7 +220,7 @@ func (c *checker) prelude(prog *ast.Program) *checkEnv {
 	// reaches it, because a function declared above the binding may assign to
 	// it, and that assignment is checked when its declaration is reached. warp's
 	// `examples/train.tw` has exactly that shape: `train_step` writes `STEPS`
-	// eight lines above the `let STEPS` it writes.
+	// several lines above the `let STEPS` that binds it.
 	for _, s := range prog.Body {
 		if lt, ok := s.(*ast.Let); ok {
 			if _, seen := env.get(lt.Name); !seen {

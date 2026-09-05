@@ -862,7 +862,7 @@ fn check(prog: ast.Program) -> Arr[Diagnostic] {
   # reaches it, because a function declared above the binding may assign to it,
   # and that assignment is checked when its declaration is reached. warp's
   # `examples/train.tw` has exactly that shape: `train_step` writes `STEPS`
-  # eight lines above the `let STEPS` it writes.
+  # several lines above the `let STEPS` that binds it.
   for s in prog.body {
     match s {
       SLet(st) => {
