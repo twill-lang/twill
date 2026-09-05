@@ -148,30 +148,34 @@
     2 |   n * fact(n - 1)
   ```
 
-  What it replaced was 424 lines of Go runtime internals and exit code 2, which
-  is twill's code for "you invoked it wrong". A Go stack overflow is a *fatal*
-  error: no recover catches it, so the only way to get a diagnostic at all is to
-  refuse before the stack runs out. `fn fact(n) = n * fact(n - 1)` with the base
-  case forgotten is the most likely first mistake anyone makes in a new
-  language, and it was the most likely first thing they saw. It now exits 1,
-  like any other program that failed.
+  What it replaced was 424 lines of Go runtime traceback on stderr, nothing on
+  stdout, and exit code 2. Not one of those 424 lines named the user's function
+  or the line the recursion was on, and 2 is the status `twill` uses for "you
+  invoked it wrong" (`twill run` with no file exits 2), so the crash was not
+  even distinguishable by status from a typo on the command line. A Go stack
+  overflow is a *fatal* error: no recover catches it, so the only way to get a
+  diagnostic at all is to refuse before the stack runs out. `fn fact(n) = n *
+  fact(n - 1)` with the base case forgotten is the most likely first mistake
+  anyone makes in a new language, and it was the most likely first thing they
+  saw. It now exits 1, like any other program that failed.
 
   The number is measured on both engines over every `.tw` file in `src/`,
-  `examples/`, `std/`, `std/tests/` and `testdata/`. The deepest legitimate
-  recursion anywhere in the repository is the self-hosted compiler checking
-  `src/parse.tw`, at 217 nested calls; nothing run directly gets past 14.
+  `examples/`, `std/`, `std/tests/` and `testdata/`, with the interpreter
+  instrumented to record peak call depth. The deepest legitimate recursion
+  anywhere in the repository is the self-hosted compiler checking `src/parse.tw`,
+  at 217 nested calls; nothing that runs as a program gets past 14, and an
+  earlier round found nothing past 18 across the nine satellites.
 
   What 10,000 does not buy is a promise, and the entry is worth reading before
-  relying on it. Where the host's stack actually runs out depends on how deeply
-  the recursive call sits inside its own expression, not on what the frame
-  holds: a bare call overflows at 236,295 frames, one with `+ 1` around it at
-  150,466, one thirty layers down at 13,046 and one three hundred layers down at
-  1,373, while five parameters and three locals cost exactly nothing. So no
-  fixed limit is below the crash for every shape. 10,000 covers a runaway call
-  nested up to 39 arithmetic layers deep, or 25 layers of `[x][0]`, against a
-  deepest call site of 21 anywhere in this repository; past that envelope the
-  fatal overflow is back, which is no worse than before. `docs/needs.md`
-  NEEDS-30 has the tables.
+  relying on it. Where the host's stack runs out depends on how deeply the
+  recursive call sits inside its own expression, not on what the frame holds: a
+  bare call survives 236,295 nested calls, one with `+ 1` around it 150,466, one
+  thirty layers down 13,046 and one three hundred layers down 1,373, while five
+  parameters and three locals cost exactly nothing. So no fixed limit is below
+  the crash for every shape. 10,000 covers a runaway call nested up to 39
+  arithmetic layers deep, or 25 layers of `[x][0]`, against a deepest call site
+  of 21 anywhere in this repository; past that envelope the fatal overflow is
+  back, which is no worse than before. `docs/needs.md` NEEDS-30 has the tables.
 
 - **`TWILL_MAX_CALL_DEPTH`, so the two engines can refuse a program with the
   same words.** Running the self-hosted evaluator on the bootstrap puts two

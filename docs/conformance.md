@@ -97,7 +97,7 @@ implementation is broken. The evidence column says what came back.
 
 | builtin | bootstrap | self-hosted | evidence |
 |---|---|---|---|
-| `clip` | yes | unknown | main.tw:2657: runtime error: no match arm for {shape: [], data: \x00\x00\x00\x00\x00\x00\x00\x00, dtype: 6} |
+| `clip` | yes | unknown | main.tw:2658: runtime error: no match arm for {shape: [], data: \x00\x00\x00\x00\x00\x00\x00\x00, dtype: 6} |
 
 ## Every name
 

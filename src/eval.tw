@@ -1114,7 +1114,8 @@ let CALL_DEPTH: Arr[I64] = [0]
 let MAX_CALL_DEPTH: I64 = 10000
 
 # call_depth_message is the refusal. interp.callDepthMessage is the same text
-# and the two must agree character for character.
+# and the two must agree character for character;
+# interp.TestSelfHostedRefusalsMatchTheBootstrap is what holds them together.
 fn call_depth_message(name: Str, depth: I64) -> Str {
   let who: Str = "an anonymous function"
   if len(name) > 0 {

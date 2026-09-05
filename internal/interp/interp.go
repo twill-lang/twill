@@ -58,35 +58,49 @@ func CheckLegacyExt(path string) error {
 // interpreter refuses to go further.
 //
 // It exists because a Go stack overflow is a *fatal* error: no recover catches
-// it, the process dies printing several hundred lines of runtime internals, and
-// nothing the interpreter does afterwards runs. A missing base case is the most
-// likely first mistake a newcomer makes, so that crash was the most likely
-// first thing they saw. A counter checked on the way in turns it into an
+// it, the process dies and nothing the interpreter does afterwards runs. With
+// the limit lifted, a three-line runaway recursion prints 424 lines of Go
+// runtime traceback on this machine and exits 2, and not one of those lines
+// names the user's function or the line the recursion is on. See
+// TestRunawayRecursionIsRefused for how that was measured. A missing base case
+// is the most likely first mistake a newcomer makes, so that crash was the most
+// likely first thing they saw. A counter checked on the way in turns it into an
 // ordinary twill error, which is the only way to get one at all.
 //
 // Both ends of the number are measured and docs/needs.md NEEDS-30 has the
-// tables. The low end: over every .tw file in this repository, run on this
-// interpreter and put through the self-hosted checker running on top of it, the
-// deepest call depth anything reaches is 217, and that is the self-hosted
-// checker on src/parse.tw rather than a program. Nothing run directly gets past
-// 14.
+// tables. Depths here are counted in nested twill calls, which is what
+// callDepth counts, so f(n) reaches n+1 of them.
+//
+// The low end: over every .tw file in this repository, run on this interpreter
+// and put through the self-hosted checker running on top of it, the deepest
+// call depth anything reaches is 217, and that is the self-hosted checker on
+// src/parse.tw rather than a program. Nothing run directly gets past 14. An
+// earlier round measured the nine satellite repositories too and found nothing
+// deeper than 18.
 //
 // The high end is not one number, and that has to be said plainly rather than
 // rounded off. What decides where the Go stack runs out is not what the twill
 // frame holds but how deeply the recursive call sits inside the expression
 // around it, because every enclosing operator is another evalExpr frame held
 // live across the call. Measured on this machine, macOS arm64 with Go's 1 GB
-// goroutine stack, a runaway f overflows at 236,295 frames when the call is
-// bare, at 150,466 with one `+ 1` around it, at 13,046 with thirty and at 1,373
-// with three hundred. Widening the frame changes nothing whatever: one
-// parameter or eight, no locals or sixteen, the overflow is at 150,466 either
-// way.
+// goroutine stack, a runaway f survives 236,295 nested calls when the call is
+// bare, 150,466 with one `+ 1` around it, 13,046 with thirty and 1,373 with
+// three hundred.
+//
+// Widening the frame changes nothing whatever: one parameter or eight, no
+// locals or sixteen, the cliff stays at 150,466. An earlier round of this work
+// read the same evidence the other way, reporting that a fat frame of five
+// parameters and three locals died a quarter shallower, at 110,375. That is the
+// two-operator-layer number: its test program had one more layer of expression
+// around the call than the thin one it was compared against. A thin frame with
+// two layers and a fat frame with two layers both survive 110,375.
 //
 // So no fixed limit is uniformly below the crash, because nesting has no upper
 // bound. What 10,000 buys is a bounded envelope: a runaway call still gets the
-// diagnostic while it sits inside up to 39 arithmetic layers, or 25 of the most
-// expensive layer measured, `[x][0]`, and the deepest call site written
-// anywhere in this repository is nested 21 deep. Past that envelope the fatal
+// diagnostic while it sits inside up to 39 arithmetic layers, which survives
+// 10,165 calls, or 25 of the most expensive layer measured, `[x][0]`, which
+// survives 10,271. The deepest call site written anywhere in this
+// repository is nested 21 expressions deep. Past that envelope the fatal
 // overflow is back. The limit is a diagnostic for the shapes people write, not
 // a guarantee for every shape, and it never makes anything worse than it was.
 const DefaultMaxCallDepth = 10000
@@ -112,9 +126,11 @@ func envMaxCallDepth() int {
 
 // callDepthMessage is the refusal, in the one place both engines copy it from.
 // src/eval.tw's call_depth_message is the same text and the two must agree
-// character for character; TestSelfHostedRefusalsMatchTheBootstrap is what
-// holds them together, by running both engines over every shape in
-// recursionCases and comparing the first line of the diagnostic byte for byte.
+// character for character; TestSelfHostedRefusalsMatchTheBootstrap, in
+// recursion_test.go, is what holds them together: it runs each shape of runaway
+// recursion on both engines and requires the self-hosted CLI's first stderr
+// line to equal the bootstrap's byte for byte, so a change made here and not in
+// src/eval.tw fails there.
 func callDepthMessage(name string, depth int) string {
 	who := "an anonymous function"
 	if name != "" {

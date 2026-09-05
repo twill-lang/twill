@@ -13,12 +13,19 @@ import (
 )
 
 // A runaway recursion is refused with an ordinary twill error rather than
-// taking the process down with a Go stack overflow. Before this, the first
-// program a newcomer wrote with a missing base case printed four hundred lines
-// of Go runtime internals and left no exit status behind, because a stack
-// overflow is a fatal error that no recover can catch. The depth counter is
-// what turns it into a diagnostic, and it has to be a refusal *before* the
-// stack runs out, not a rescue after.
+// taking the process down with a Go stack overflow. What that crash looked like
+// was measured rather than remembered: running the program below on this
+// machine (macOS arm64, Go 1.27, the 1 GB default goroutine stack) with the
+// limit lifted, via TWILL_MAX_CALL_DEPTH=100000000, prints nothing on stdout
+// and 424 lines on stderr, the same 424 on every repeat. They are `fatal error:
+// stack overflow` and a runtime traceback: 96 of the lines name the
+// interpreter's own Go frames, and one reads `...1504585 frames elided...`. The
+// process exits 2, so it is not statusless -- but 2 is the status the CLI uses
+// for a usage error, so the crash was not distinguishable by status from a typo
+// on the command line, and no line of it names the user's function or the line
+// the recursion is on. A stack overflow is a fatal error that no recover
+// catches, so the depth counter is what turns that into a diagnostic, and it
+// has to be a refusal *before* the stack runs out, not a rescue after.
 func TestRunawayRecursionIsRefused(t *testing.T) {
 	const src = `fn f(n) {
   if n == 0 { return 0 }
@@ -206,9 +213,10 @@ func TestInterpreterPanicBecomesATwillError(t *testing.T) {
 // two counters over one Go stack, and the outer depth grows by 8 for each of
 // the inner engine's frames (measured; see Interp.MaxCallDepth). The host limit
 // at which the inner engine gets to refuse first was found by bisecting the
-// shipped CLI: 80,012 is not enough and 80,013 is. Any host below that refuses
+// shipped CLI, and re-bisected against this tree after the self-hosted runtime
+// port landed: 80,012 is not enough and 80,013 is. Any host below that refuses
 // first and names a function inside src/eval.tw. 100,000 clears 80,013 and
-// stays well under the 150,000 where the bootstrap's stack actually gives out.
+// stays under the 150,467 where the bootstrap's stack actually gives out.
 const selfHostedHostDepth = 100000
 
 // recursionCases are the programs the two engines are held to. Each is a
