@@ -154,7 +154,7 @@ before the program runs, not a stack trace forty minutes into training.
 The language is deliberately small, and the reference implementation is about
 27,000 lines of Go with no dependencies, of which the differentiable tensor
 engine is 4,700, the interpreter 7,100 and the static checker 4,700. Another
-15,700 lines are tests. Large tensor operations run across CPU cores,
+15,400 lines are tests. Large tensor operations run across CPU cores,
 deterministically: parallelism never changes a result.
 
 ## Install
