@@ -3027,13 +3027,18 @@ fn bi_clip(args: Arr[Value], line: I64) -> Res[Value, RuntimeError] {
 # One argument reduces everything to a scalar; a second reduces a single axis.
 #
 # The axis may be negative and counts from the end, and the normalisation lives
-# in the kernel (src/tensor.tw normalize_axis) rather than here, for a reason
-# worth stating: the
-# message on an out-of-range axis reports the axis *after* the negative
-# adjustment, so `sum(m, -5)` on a rank-2 tensor says "axis -3 out of range for
-# rank 2" and not "-5". Normalising in this file would report the original and
-# the two implementations would disagree on the one input that reaches the
-# message at all.
+# in the kernel (src/tensor.tw normalize_axis) rather than here, so that one
+# place decides both the index and the wording.
+#
+# The message names the axis the CALLER WROTE: `sum(m, -7)` on a rank-2 tensor
+# says "axis -7 out of range for rank 2". This comment used to claim the
+# opposite, that the message reports the axis after the negative adjustment and
+# that normalising here would make the two implementations disagree. The kernel
+# beside it had always reported the original, so the comment was wrong about its
+# own file, and the disagreement it warned about was real and already present:
+# the Go bootstrap printed the adjusted value. Go now reports the original too.
+# A constant axis is refused by the checker before any of this, so the message
+# is only reachable when the axis is computed.
 
 fn bi_reduce(name: Str, args: Arr[Value], line: I64) -> Res[Value, RuntimeError] {
   if len(args) == 0 or len(args) > 2 {

@@ -4,6 +4,75 @@
 
 ### Added
 
+- **`std/test`, the assertions the test runner already assumed.** `twill test`
+  shipped in 1.8 and solved discovery only: it finds every `*_test.tw` under a
+  path, runs each on a fresh interpreter, and reads the file's verdict out of
+  what the file printed. That last part is a contract, and until now the
+  toolchain defined it and shipped nothing that satisfied it. Every repository
+  in the ecosystem wrote its own satisfier by hand instead: eleven harness files
+  and 914 lines by `wc -l`, nine of them the near-identical satellite copies
+  (711 lines) and two more here.
+
+  The module is `mode systems` and exports six names: `check(name, ok)`,
+  `equal_str`, `equal_i64`, `near(name, got, want, tol)`, `fail(name, why)` and
+  `report(suite) -> I64`. A suite is then
+
+  ```
+  mode systems
+
+  import "std/test" as t
+
+  fn main() -> I64 {
+    t.equal_i64("two and two is four", 2 + 2, 4)
+    t.report("arith")
+  }
+  ```
+
+  **`near` takes the tolerance and never defaults it.** That is the one place
+  the eleven copies could quietly disagree about what a float comparison means,
+  and a default is always wrong for something: 1e-12 rejects a legitimate result
+  from an erfc approximation good to 1e-7, and 1e-7 accepts a broken LU. The
+  comparison is `<=`, so a tolerance of `0.0` asserts exact equality rather than
+  asserting nothing that can hold.
+
+  **`report` prints the two markers `cmd/twill/test.go` greps for** and nothing
+  else: `<suite> passed <p> failed <f>`, then `OK` or `FAILED`. The word order
+  is not cosmetic. The runner reads the field *after* each keyword, so
+  `spool: 3 passed, 1 failed` -- the spelling all nine satellite copies settled
+  on -- matches neither signal, and `twill test` reports such a suite with no
+  counts beside it. The verdict still comes out right, because those copies end
+  in `exit(1)`, but a suite whose summary the runner could read would not have
+  needed the exit. `cmd/twill/test_test.go` pins both markers against a fixture
+  suite with deliberate failures in it, which is the only place the negative
+  path can be asserted: a suite cannot record a failing check and still report
+  itself green.
+
+  **`report` returns the exit status rather than raising it.** A suite ends
+  `t.report(...)` as the last expression of `fn main() -> I64`, so the status is
+  the file's own return value and the harness needs no `exit`.
+
+### Changed
+
+- **The six systems-mode standard-library suites now import `std/test`**, and
+  `std/tests/systems_harness.tw` is gone with them. 351 assertions lost the
+  leading `rp,` argument and nothing else moved: all six suites print
+  byte-identical stdout and stderr before and after, and assert the same number
+  of checks -- `io` 47, `json` 76, `linalg` 48, `random` 39, `stats` 58,
+  `text` 80.
+  `std/tests/harness.tw` stays where it is: it is the numeric-mode harness, and
+  it needs untyped parameters and the tensor builtins `abs` and `max`, none of
+  which exist in `mode systems`.
+
+  **The conformance allow-list shrank by three.** `io_test.tw`, `json_test.tw`
+  and `text_test.tw` now produce identical bytes under both implementations,
+  exit code included, and their lines are gone from
+  `testdata/conformance/suite-allow.txt`. The old harness wrote its summary with
+  `write_out` and its failures with `write_err`, and `src/eval.tw` dispatches
+  neither, so all three suites had been dying on the way out of a run that
+  otherwise agreed line for line. `std/test` prints through `print`, which is
+  dispatched. `make conformance-check` counted 5 suites agreeing before this
+  change and 8 after, with 9 known divergences and none unexplained.
+
 - **Record update: `S { ..base, field: value }`.** An expression whose value is
   a copy of `base` with the named fields replaced, so a record or a struct can
   be configured in one place instead of by a run of assignments after the

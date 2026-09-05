@@ -23,26 +23,24 @@ mode systems
 # checked is which particular numbers come out.
 
 import "std/random" as rnd
-import "systems_harness.tw" as t
+import "std/test" as t
 
 fn main() -> I64 {
-  let rp: t.Report = t.new_report()
-
   # ---- the reproducibility contract ----------------------------------------
 
   # A seed reproduces, run to run and generator to generator. This is the
   # promise the file makes; the particular values are the host's business.
   let a1: rnd.Rng = rnd.new_rng(42)
   let a2: rnd.Rng = rnd.new_rng(42)
-  t.check_close(rp, "the same seed gives the same first draw", rnd.uniform(a1) - rnd.uniform(a2), 0.0, 0.0)
-  t.check_close(rp, "and the same second draw", rnd.uniform(a1) - rnd.uniform(a2), 0.0, 0.0)
-  t.check_close(rp, "and the same third draw", rnd.uniform(a1) - rnd.uniform(a2), 0.0, 0.0)
+  t.near("the same seed gives the same first draw", rnd.uniform(a1) - rnd.uniform(a2), 0.0, 0.0)
+  t.near("and the same second draw", rnd.uniform(a1) - rnd.uniform(a2), 0.0, 0.0)
+  t.near("and the same third draw", rnd.uniform(a1) - rnd.uniform(a2), 0.0, 0.0)
 
   # Adjacent seeds are independent from the first draw, which is the property
   # splitmix64 seeding used to provide and the host provides now.
   let b1: rnd.Rng = rnd.new_rng(1)
   let b2: rnd.Rng = rnd.new_rng(2)
-  t.check(rp, "adjacent seeds differ on the first draw", rnd.uniform(b1) != rnd.uniform(b2))
+  t.check("adjacent seeds differ on the first draw", rnd.uniform(b1) != rnd.uniform(b2))
 
   # A draw is in [0, 1), at both ends, over enough draws to catch a scale error.
   let u: rnd.Rng = rnd.new_rng(5)
@@ -55,10 +53,10 @@ fn main() -> I64 {
     if x > hi { hi = x }
     i = i + 1
   }
-  t.check(rp, "no uniform draw is below zero", lo >= 0.0)
-  t.check(rp, "no uniform draw reaches one", hi < 1.0)
-  t.check(rp, "the draws cover the low end", lo < 0.01)
-  t.check(rp, "the draws cover the high end", hi > 0.99)
+  t.check("no uniform draw is below zero", lo >= 0.0)
+  t.check("no uniform draw reaches one", hi < 1.0)
+  t.check("the draws cover the low end", lo < 0.01)
+  t.check("the draws cover the high end", hi > 0.99)
 
   # `normal` draws a Box-Muller pair and caches the second. A dropped cache
   # would still give a correct normal distribution, so this cannot be checked
@@ -66,12 +64,12 @@ fn main() -> I64 {
   # calls and handed back before any new pair is drawn.
   let n: rnd.Rng = rnd.new_rng(2024)
   let first: F64 = rnd.normal(n)
-  t.check(rp, "a pair is cached after the first normal draw", n.has_spare)
+  t.check("a pair is cached after the first normal draw", n.has_spare)
   let partner: F64 = n.spare
-  t.check_close(rp, "the second normal draw is the cached partner of the first",
+  t.near("the second normal draw is the cached partner of the first",
     rnd.normal(n), partner, 0.0)
-  t.check(rp, "and the cache is empty again", not n.has_spare)
-  t.check(rp, "the two draws are different values", first != partner)
+  t.check("and the cache is empty again", not n.has_spare)
+  t.check("the two draws are different values", first != partner)
 
   # Six is not a power of two, so `below(_, 6)` is the rejection path: the mask
   # is 7 and values of 6 and 7 are redrawn. Every residue has to appear and none
@@ -86,7 +84,7 @@ fn main() -> I64 {
     if v < 0 or v > 5 { outside = outside + 1 } else { counts[v] = counts[v] + 1 }
     j = j + 1
   }
-  t.check(rp, "no bounded draw falls outside its range", outside == 0)
+  t.check("no bounded draw falls outside its range", outside == 0)
   let k: I64 = 0
   let thin: I64 = 0
   while k < 6 {
@@ -94,7 +92,7 @@ fn main() -> I64 {
     if counts[k] < 850 or counts[k] > 1150 { thin = thin + 1 }
     k = k + 1
   }
-  t.check(rp, "every residue below six appears about equally often", thin == 0)
+  t.check("every residue below six appears about equally often", thin == 0)
 
   # A permutation is a permutation: every index once, none missing, none twice.
   # That is the part a caller depends on, and the part a broken shuffle breaks --
@@ -102,7 +100,7 @@ fn main() -> I64 {
   # permutation, so the bias is checked separately below.
   let p: rnd.Rng = rnd.new_rng(7)
   let perm: Arr[I64] = rnd.permutation(p, 5)
-  t.check_eq_i64(rp, "a permutation of five has five entries", len(perm), 5)
+  t.equal_i64("a permutation of five has five entries", len(perm), 5)
   let present: Arr[I64] = [0, 0, 0, 0, 0]
   let q: I64 = 0
   let bad: I64 = 0
@@ -111,14 +109,14 @@ fn main() -> I64 {
     if v < 0 or v > 4 { bad = bad + 1 } else { present[v] = present[v] + 1 }
     q = q + 1
   }
-  t.check(rp, "every entry is in range", bad == 0)
+  t.check("every entry is in range", bad == 0)
   let missing: I64 = 0
   let w: I64 = 0
   while w < 5 {
     if present[w] != 1 { missing = missing + 1 }
     w = w + 1
   }
-  t.check(rp, "every index appears exactly once", missing == 0)
+  t.check("every index appears exactly once", missing == 0)
 
   # And the shuffle is unbiased: over many permutations of three, each of the
   # six orderings has to come up about a sixth of the time. The upward variant
@@ -134,7 +132,7 @@ fn main() -> I64 {
     if dict_has(orders, key) { orders[key] = orders[key] + 1 } else { orders[key] = 1 }
     trial = trial + 1
   }
-  t.check_eq_i64(rp, "all six orderings of three appear", len(dict_keys(orders)), 6)
+  t.equal_i64("all six orderings of three appear", len(dict_keys(orders)), 6)
   let ks: Arr[Str] = dict_keys(orders)
   let skewed: I64 = 0
   let z: I64 = 0
@@ -144,7 +142,7 @@ fn main() -> I64 {
     if c < 850 or c > 1150 { skewed = skewed + 1 }
     z = z + 1
   }
-  t.check(rp, "and each about equally often", skewed == 0)
+  t.check("and each about equally often", skewed == 0)
 
   # ---- the seeding contract ------------------------------------------------
 
@@ -160,7 +158,7 @@ fn main() -> I64 {
     if rnd.uniform(a1) != rnd.uniform(a2) { agree = false }
     i = i + 1
   }
-  t.check(rp, "two generators with the same seed produce the same fifty draws", agree)
+  t.check("two generators with the same seed produce the same fifty draws", agree)
 
   # Adjacent seeds must not produce near-identical streams. This is the specific
   # failure splitmix64 seeding exists to prevent: a generator seeded directly
@@ -168,7 +166,7 @@ fn main() -> I64 {
   # hundreds of draws to diverge.
   let s1: rnd.Rng = rnd.new_rng(1)
   let s2: rnd.Rng = rnd.new_rng(2)
-  t.check(rp, "adjacent seeds diverge on the very first draw",
+  t.check("adjacent seeds diverge on the very first draw",
     rnd.uniform(s1) != rnd.uniform(s2))
 
   # Zero is a valid seed and must not produce a degenerate stream. xoshiro's
@@ -181,13 +179,13 @@ fn main() -> I64 {
     if rnd.uniform(z) != 0.0 { nonzero = true }
     i = i + 1
   }
-  t.check(rp, "a seed of zero does not give a stuck generator", nonzero)
+  t.check("a seed of zero does not give a stuck generator", nonzero)
 
   # A split draws from the parent, so the child's stream differs from what the
   # parent goes on to produce.
   let parent: rnd.Rng = rnd.new_rng(99)
   let child: rnd.Rng = rnd.split_rng(parent)
-  t.check(rp, "a split generator does not repeat its parent's next draw",
+  t.check("a split generator does not repeat its parent's next draw",
     rnd.uniform(child) != rnd.uniform(parent))
 
   # ---- ranges --------------------------------------------------------------
@@ -205,13 +203,13 @@ fn main() -> I64 {
     total = total + v
     i = i + 1
   }
-  t.check(rp, "every uniform draw lies in the half open unit interval", in_range)
+  t.check("every uniform draw lies in the half open unit interval", in_range)
 
   # The reference implementation gives a mean of 0.4977390816489078 over these
   # exact ten thousand draws from seed 1. Asserted loosely against the true
   # expectation of 0.5, because the point of this test is the scale of the
   # output and not the stream, which the exact tests above already pin.
-  t.check_close(rp, "ten thousand uniform draws average close to a half",
+  t.near("ten thousand uniform draws average close to a half",
     total / 10000.0, 0.5, 0.01)
 
   # `uniform_open` must never return zero, since `normal` takes its logarithm.
@@ -223,7 +221,7 @@ fn main() -> I64 {
     if v <= 0.0 or v > 1.0 { never_zero = false }
     i = i + 1
   }
-  t.check(rp, "the open uniform draw is never zero and never above one", never_zero)
+  t.check("the open uniform draw is never zero and never above one", never_zero)
 
   # Bounded integers stay inside their bound, including for a bound of one,
   # where the mask is zero and the loop must still terminate.
@@ -235,8 +233,8 @@ fn main() -> I64 {
     if v < 0 or v >= 7 { bounded = false }
     i = i + 1
   }
-  t.check(rp, "bounded integer draws stay below their bound", bounded)
-  t.check_eq_i64(rp, "a bound of one always gives zero", rnd.below(bb, 1), 0)
+  t.check("bounded integer draws stay below their bound", bounded)
+  t.equal_i64("a bound of one always gives zero", rnd.below(bb, 1), 0)
 
   # int_range shifts the bound without changing its width.
   let ir: rnd.Rng = rnd.new_rng(13)
@@ -247,7 +245,7 @@ fn main() -> I64 {
     if v < -5 or v >= 5 { shifted = false }
     i = i + 1
   }
-  t.check(rp, "an integer range draw stays within its half open bounds", shifted)
+  t.check("an integer range draw stays within its half open bounds", shifted)
 
   # ---- normal draws --------------------------------------------------------
 
@@ -265,16 +263,16 @@ fn main() -> I64 {
     nsq = nsq + v * v
     i = i + 1
   }
-  t.check_close(rp, "ten thousand normal draws have a sample mean near zero",
+  t.near("ten thousand normal draws have a sample mean near zero",
     nsum / 10000.0, 0.0, 0.05)
-  t.check_close(rp, "ten thousand normal draws have a sample variance near one",
+  t.near("ten thousand normal draws have a sample variance near one",
     nsq / 10000.0, 1.0, 0.05)
 
   # Mean and standard deviation are applied in the right places: a shift of 100
   # with a spread of 0.001 cannot be confused with the reverse.
   let nw: rnd.Rng = rnd.new_rng(3)
   let far: F64 = rnd.normal_with(nw, 100.0, 0.001)
-  t.check(rp, "a normal draw with a large mean and a small spread lands near its mean",
+  t.check("a normal draw with a large mean and a small spread lands near its mean",
     far > 99.99 and far < 100.01)
 
   # ---- collections ---------------------------------------------------------
@@ -301,8 +299,8 @@ fn main() -> I64 {
     if seen[i] != 1 { bijection = false }
     i = i + 1
   }
-  t.check(rp, "a permutation of a hundred contains every index exactly once", bijection)
-  t.check_eq_i64(rp, "a permutation has the length it was asked for", len(big), 100)
+  t.check("a permutation of a hundred contains every index exactly once", bijection)
+  t.equal_i64("a permutation has the length it was asked for", len(big), 100)
 
   # A shuffle is a permutation of the values, so the sum is unchanged. Floating
   # point addition is not associative, so the sum is only unchanged to rounding,
@@ -327,12 +325,12 @@ fn main() -> I64 {
     after = after + after_arr[i]
     i = i + 1
   }
-  t.check_close(rp, "shuffling preserves the sum of the values", after, before, 0.0000000001)
-  t.check_eq_i64(rp, "shuffling preserves the length", len(after_arr), len(vals))
+  t.near("shuffling preserves the sum of the values", after, before, 0.0000000001)
+  t.equal_i64("shuffling preserves the length", len(after_arr), len(vals))
 
   # `shuffled` copies; the original must be untouched. An `Arr` parameter
   # aliases the caller's array, so this is a real risk rather than a formality.
-  t.check(rp, "the copying shuffle leaves the original array in order",
+  t.check("the copying shuffle leaves the original array in order",
     vals[0] == 0.0 and vals[49] == 73.5)
 
   # A sample without replacement returns distinct elements. Drawn from 0..19,
@@ -363,7 +361,7 @@ fn main() -> I64 {
     if counts[i] != 1 { distinct = false }
     i = i + 1
   }
-  t.check(rp, "a full sample without replacement is a permutation of the pool", distinct)
+  t.check("a full sample without replacement is a permutation of the pool", distinct)
 
   # `choices` draws with replacement, so over a pool of two and forty draws a
   # repeat is a certainty. Asserting the complement of `sample`'s property is
@@ -374,7 +372,7 @@ fn main() -> I64 {
   push(two, 1.0)
   push(two, 2.0)
   let drawn: Arr[F64] = rnd.choices(cr, two, 40)
-  t.check_eq_i64(rp, "drawing with replacement gives as many values as asked", len(drawn), 40)
+  t.equal_i64("drawing with replacement gives as many values as asked", len(drawn), 40)
 
-  t.report(rp, "random")
+  t.report("random")
 }
