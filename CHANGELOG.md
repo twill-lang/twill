@@ -155,6 +155,57 @@
   sweep of 458 `.tw` files across the ecosystem found no case that was not.
   `docs/BUGS.md` entry 11.
 
+- **The documentation says what the code does.** No code changed. `docs/roadmap.md`
+  ranked thirty-two missing features and then went stale without saying so:
+  twenty-six of them had been delivered and two marked. Every row now carries
+  the release that delivered it, checked by running the current binary rather
+  than by reading this file, and the ranking argument is untouched, because the
+  ranking is what the document is for. Four entries are open (24, 28, 29, 32)
+  and two are half done (17, 31). Entry 30, the compiler barrier, is the one of
+  the twenty-six that is delivered on `main` rather than in a tagged release.
+
+  Three things that were plainly wrong are fixed with it. The roadmap's list of
+  bugs in the bootstrap said none of the three was fixed and that no further Go
+  changes would be made: two are fixed, the ruling did not hold, and the third
+  now panics rather than answering a silent zero (`docs/BUGS.md`, Open).
+  `CONTRIBUTING.md` said there was no way to run `src/`, which
+  `internal/interp/selfhost_test.go` and `twill run src/main.tw` have made
+  untrue. `docs/language-guide.md`'s own `ushr` idiom did not run: it called
+  `not` where the builtin is `bnot`, and named a file that does not exist.
+
+  A fourth was found the same way and is recorded rather than fixed. The generic
+  function `docs/language-guide.md` and `docs/RELEASE-1.7.md` both print,
+  `fn first[T](xs: Arr[T]) -> T = xs[0]`, does not check outside `mode systems`:
+  in numeric mode a bare name in return position is resolved as a unit before
+  the declaration's own parameters, so it answers `unknown unit "T"`. Both
+  implementations do it and it reproduces against `main`. Both blocks now carry
+  the `mode systems` line they need, `docs/BUGS.md` Open has the entry, and
+  `internal/checker/generics_test.go` pins the behaviour so a fix fails the
+  suite with the files to correct.
+
+- **Where the two implementations agree, measured over the whole tree.** The
+  comparison behind the section above ran over every `.tw` file
+  `git ls-files '*.tw'` reports, which is the whole tree read recursively. An
+  earlier draft of it gave a smaller number and named `testdata/cases`,
+  `examples`, `std` and `src`: those four names had been read as top-level
+  globs, so everything in their subdirectories and everything under `bench/` was
+  outside the count while the sentence claimed the tree. The documentation now
+  carries no `.tw` file count at all, in any of the five files that used to have
+  one, because the corpus grows and the claim is about every file in it. What is
+  claimed: `check` agrees on exit status for every file, and `fmt` agrees for
+  every file once blank lines are set aside, with no token differing anywhere
+  and the extra blank lines always on the self-hosted side.
+
+  The evaluator's side of the same measurement now lives in one place,
+  `docs/BUGS.md`, rather than being quoted in six. A split quoted in six files
+  goes stale in five of them.
+
+  `internal/checker/builtintable_test.go` asserts the invariant underneath all
+  of it: the Go checker's `builtinNames` and `src/builtins.tw`'s `NAMES` are the
+  same set. That drift, three names present on one side and absent on the other,
+  is the third bootstrap bug `docs/roadmap.md` records, and it was found by
+  reading rather than by a test.
+
 ## [1.9.0] - 2026-09-03
 
 The release the ecosystem's eleven hand-written sorts were waiting for. Minor
@@ -556,7 +607,12 @@ The self-hosted `grads` is wrong when the same tensor is passed as two
 arguments: the whole gradient lands on the second parameter. Distinct arguments
 agree, and the bootstrap is correct.
 
-## [Unreleased]
+## Recorded as unreleased, shipped in 1.6.4
+
+> Left under an "Unreleased" heading when 1.6.4 was cut, and it stayed there.
+> Everything below shipped: it is the `jvp`/`vjp`/`hvp` entry above, at greater
+> length. Kept in place rather than merged upward, so the record of when each
+> change was written is not rewritten.
 
 ### Added
 
@@ -1163,7 +1219,13 @@ for most of them for months.
   headline feature, and it was firing on the compiler's own source.
 
 
-## [Unreleased]
+## Recorded as unreleased, shipped in 1.5.0
+
+> Left under an "Unreleased" heading when 1.5.0 was cut, and it stayed there.
+> Everything below shipped: `twill test` (`cmd/twill/test.go` first appears at
+> `v1.5.0`), `linspace`, `arange` and the `std/num` additions. Kept in place
+> rather than merged upward, so the record of when each change was written is
+> not rewritten.
 
 ### Added
 
@@ -1746,7 +1808,14 @@ unchanged and fully backward compatible.
   matters more than it looks: an unstable one returns the same values in a
   different arrangement, and the gradient follows the arrangement.
 
-## [Unreleased]
+## Recorded as unreleased, shipped in 1.5.0
+
+> Left under an "Unreleased" heading when 1.5.0 was cut, and it stayed there.
+> Everything below shipped: function types in annotations, and `arr_push`
+> (first in `internal/interp/builtins.go` at `v1.5.0`). This block also sits in
+> the wrong place, between 1.2.0 and 1.1.0, while its entries are dated
+> 2026-08-11. Kept in place rather than moved, so the record of when each change
+> was written is not rewritten.
 
 ### Added
 

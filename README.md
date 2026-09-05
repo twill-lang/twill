@@ -152,9 +152,9 @@ gradients back, and a model held in a record gets a record.
 before the program runs, not a stack trace forty minutes into training.
 
 The language is deliberately small, and the reference implementation is about
-25,000 lines of Go with no dependencies, of which the differentiable tensor
-engine is 4,700, the interpreter 6,900 and the static checker 4,700. Another
-14,000 lines are tests. Large tensor operations run across CPU cores,
+27,000 lines of Go with no dependencies, of which the differentiable tensor
+engine is 4,700, the interpreter 7,100 and the static checker 4,700. Another
+15,400 lines are tests. Large tensor operations run across CPU cores,
 deterministically: parallelism never changes a result.
 
 ## Install
@@ -297,6 +297,9 @@ cover:
 Tensors and lists also support differentiable first-axis slicing (`v[1:3]`,
 `m[:2]`). The [language guide](docs/language-guide.md) has the full list.
 
+On a list, `sort` also takes a comparison, so a list of anything can be ordered:
+`sort(items, fn(a, b) = a.n < b.n)`. Every form is stable.
+
 ## The standard library
 
 The `std/` libraries are written in twill itself and compiled into the binary, so
@@ -310,6 +313,12 @@ The `std/` libraries are written in twill itself and compiled into the binary, s
 | `std/data` | standardizing, train/test splitting, minibatching |
 | `std/backtest` | returns, moving averages, equity curves, drawdown, Sharpe, Sortino, CAGR |
 | `std/num`, `std/shapes` | numerics and rearrangements the builtins leave out |
+| `std/text`, `std/float` | string handling for `mode systems`, and exact float formatting and parsing |
+| `std/term` | the terminal layer: capability detection, colour, boxes, frames, display width |
+| `std/io`, `std/json`, `std/hash` | text and line reading, a JSON reader and writer, SHA-256 |
+
+That table is a selection. `std/` also carries `batch`, `frame`, `linalg`,
+`llama`, `loss`, `metrics`, `random`, `sample`, `stats` and `gradcheck`.
 
 The optimizers walk a model's tensor leaves with `map_leaves` and `zip_leaves`,
 which is why the same `optim.adam` works on a list of matrices and on a record of
@@ -366,23 +375,72 @@ fn predict(m: Model, x: [2]) -> [3] { m.w @ x + m.b }
 
 ## twill is being written in twill
 
-> **As of v1.4.0 this runs. The twill compiler written in twill executes on the
-> Go bootstrap and matches the reference across every stage.**
+> **The front end matches the reference across the corpus. The evaluator does
+> not.** Measured 2026-09-04 over every `.tw` file this repository tracks:
+> `check` agrees on all of them, `fmt` agrees on all of them apart from blank
+> lines, and the self-hosted evaluator still refuses a substantial part of the
+> builtin table. `docs/roadmap.md`, "What the second implementation agrees on,
+> and what it does not", has the measurements and how to repeat them.
 
 The reference implementation is Go. The second one is twill: the lexer, parser,
 checker, evaluator, tensor kernels, formatter and CLI, written in the language
-itself under `src/`. As of v1.4.0 the whole `src/`+`std/` tree type-checks clean
-and runs on the Go bootstrap: `twill check` matched the Go command byte-for-byte
-on every corpus file and `twill fmt` on every one it formats, bar a by-design
-blank-line divergence. Those runs were counted at v1.4.0, at 443 and 89 files;
-the corpus has grown since and the counts are a snapshot, not a running total.
-`tools/diff` re-runs the comparison. The self-hosted evaluator runs the entire
-example corpus,
-autodiff, jacobians, hessians, neural-net training, CNNs, attention, gradient
-boosting and Monte Carlo pricing, with output identical to `twill run` save a
-couple of 1-ULP float-accumulation differences. It runs on the bootstrap rather
-than as its own Go-free binary; bootstrapping to a standalone twill-built
-compiler is the next step.
+itself under `src/`. The whole `src/`+`std/` tree type-checks clean and runs on
+the Go bootstrap.
+
+What is finished is the front end. Running both sides over every `.tw` file
+`git ls-files '*.tw'` reports -- the whole tree, read recursively -- `twill
+check` agrees with the Go command on every one, and `twill fmt` agrees on every
+one once blank lines are set aside: most are byte-identical and the rest differ
+only in a by-design blank-line rule, with no token differing anywhere. Budget
+minutes rather than seconds: `src/eval.tw` takes minutes through the self-hosted
+checker against well under a second on the bootstrap.
+
+This paragraph carries no file count on purpose. Two earlier versions of it
+carried one and both were wrong, in opposite directions: one quoted a v1.4.0
+snapshot of a corpus that has since changed shape, and the other counted four
+directory names as top-level globs and so left out everything in their
+subdirectories. The corpus grows; the claim is about every file in it.
+
+The evaluator is not finished, and it is the half the word "self-hosted" is
+usually taken to promise. `src/eval.tw` dispatches a builtin by name and ends
+its chain with "named in the builtin table but has no implementation", and a
+large minority of the names in `src/builtins.tw` still reach it -- the
+filesystem, the clock, the process, the RNG, the `f64_*` scalar intrinsics, the
+GPU calls and the memory counters. The lists, dictionaries, byte buffers and
+string primitives were ported in `main` and are no longer among them.
+`docs/BUGS.md` entry 12 and its Open section carry the current split and the
+one-line probe that re-derives it.
+
+Numeric-mode programs mostly do agree, and where they do not the disagreement is
+larger than this section used to claim. `examples/gbm.tw` exits 0 on both sides
+and prints a test regression RMSE of `0.660285` on the bootstrap against
+`0.659657` self-hosted, reproducible across runs: a fourth-decimal
+disagreement, not the 1-ULP float noise the old text described.
+`examples/save_load.tw` reloads a model and the self-hosted `gbm_predict`
+refuses it. `examples/frames.tw` fails for a third reason that is not a semantic
+one at all: the self-hosted CLI resolves the program's relative data path
+against its own directory, so it looks for `src/prices.csv`.
+
+`internal/interp/selfhost_run_test.go` compares the two implementations over
+`run` for a directory of fixtures, and CI runs it. Nothing compares them at
+corpus scale: the harness under `tools/diff/` is referenced by neither the
+Makefile nor CI, and it compares two Go binaries rather than the two
+implementations.
+
+`src/` runs on the bootstrap rather than as its own Go-free binary;
+bootstrapping to a standalone twill-built compiler is the next step, and closing
+the evaluator gap is a prerequisite for it. The shortest statement of that gap
+is that `src/` cannot run `src/`:
+
+```
+$ ./twill run src/main.tw run "$PWD/src/main.tw" run "$PWD/examples/hello.tw"
+<repo>/src/main.tw:47: runtime error: builtin "args" is named in the builtin table but has no implementation
+  47 |   let a: Arr[Str] = drop_first(args())
+```
+
+(The inner paths are absolute because the self-hosted CLI resolves a relative
+one against its own directory rather than the caller's, which is the same bug
+`examples/frames.tw` hits.)
 
 The paragraph above is about the front end, and about the example corpus, and
 it is worth being exact about where the agreement stops.
@@ -461,8 +519,12 @@ This is a prototype, and some of it is deliberately left for later.
   than silently answered with zero; use `hessian` for second derivatives.
 - The shape checker is best-effort, not a full type system. It catches
   mismatches when shapes are statically knowable and stays quiet otherwise.
-- Imports are files and `std/` modules. There is no package manager yet, and no
-  versioning of third-party libraries.
+- Imports are files and `std/` modules. Versioning and third-party libraries are
+  [spool](https://github.com/twill-lang/spool)'s job rather than the compiler's:
+  a `spool.toml` names a dependency and spool fetches it, and this repository
+  carries one so that the language itself resolves to a real package. Nothing in
+  the compiler knows about spool, so a vendored dependency is reached by the
+  ordinary file import rule and not by a package path.
 - The self-hosted compiler runs on the Go bootstrap, not yet as its own Go-free
   binary. Bootstrapping to a standalone twill-built compiler is the next step.
 - The self-hosted evaluator does not implement the whole shared builtin table,

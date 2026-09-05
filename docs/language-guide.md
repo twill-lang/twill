@@ -259,8 +259,8 @@ error. The bitwise meaning has its own name for the same reason the bitwise
 complement is `bnot` and not `not`. `and(a, b)` and `or(a, b)` in call form
 remain the bitwise operations, for the code that already wrote them that way.
 
-`I64` is two's complement and exactly 64 bits. `and`, `or`, `xor` and `not` are
-defined bit by bit on that representation and have nothing to say about sign.
+`I64` is two's complement and exactly 64 bits. `band`, `bor`, `xor` and `bnot`
+are defined bit by bit on that representation and have nothing to say about sign.
 `shl` discards bits shifted off the top, so it wraps, and it is the same
 operation for negative and non-negative operands.
 
@@ -285,7 +285,7 @@ computed, range-check it.
 
 #### Getting a logical right shift
 
-There is no `ushr` operator. Build one. `src/float.tw`'s `ushr` is the idiom,
+There is no `ushr` operator. Build one. `std/float.tw`'s `ushr` is the idiom,
 and it is what every caller in the ecosystem should use or copy:
 
 ```rust
@@ -294,7 +294,7 @@ let SIGN_BIT: I64 = shl(1, 63)
 fn ushr(x: I64, k: I64) -> I64 {
   if k == 0 { return x }
   if x >= 0 { return shr(x, k) }
-  or(shr(and(x, not(SIGN_BIT)), k), shl(1, 63 - k))
+  or(shr(and(x, bnot(SIGN_BIT)), k), shl(1, 63 - k))
 }
 ```
 
@@ -1181,11 +1181,20 @@ name. The parameters go in `[]` after the name, and stand for whatever the use
 site supplies.
 
 ```rust
+mode systems
+
 struct Box[T] { value: T, tag: Str }
 enum Tree[T] { Leaf(T), Branch(Arr[T]), Empty }
 
 fn first[T](xs: Arr[T]) -> T = xs[0]
 ```
+
+The `mode systems` line is load-bearing for the last of those three. In numeric
+mode a bare name in return position is resolved as a unit, and the declaration's
+own parameters are not consulted first, so `-> T` there answers
+`unknown unit "T"`. `struct Box[T]`, `enum Tree[T]`, `x: T` in a parameter list
+and `-> Arr[T]` are all fine in either mode; it is only the bare parameter
+returned. `docs/BUGS.md`, Open, has the entry.
 
 **They are erased.** The runtime is the same code whatever `T` is, so nothing is
 specialised and nothing is generated: the parameters exist for the checker and

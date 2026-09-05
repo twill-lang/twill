@@ -60,10 +60,16 @@ and `false` do exhaust it.
 **A declaration can be written in terms of a type it does not name.**
 
 ```rust
+mode systems
+
 struct Box[T] { value: T, tag: Str }
 enum Tree[T] { Leaf(T), Branch(Arr[T]), Empty }
 fn first[T](xs: Arr[T]) -> T = xs[0]
 ```
+
+(`mode systems` added 2026-09-04. Without it the last line answers
+`unknown unit "T"`: in numeric mode a bare name in return position is read as a
+unit. `docs/BUGS.md`, Open.)
 
 `Arr`, `Dict`, `Opt` and `Res` have been generic and checked since 1.5. A
 declaration in a twill program could not be: `[` after the name was a syntax
@@ -110,6 +116,15 @@ Both printers have the case now, and a round-trip test asserts that the type
 parameters and the new pattern forms both survive formatting.
 
 ## Parity
+
+> **Note added 2026-09-04.** Read this heading as scoped to the two features
+> 1.7.0 shipped, which is what the three bullets below actually claim, and not
+> as a statement about the two implementations in general. Measured since: the
+> front end agrees across every `.tw` file this repository tracks, and the
+> self-hosted evaluator does not, refusing enough of the builtin table that it
+> cannot run the systems-mode half of the language. `docs/roadmap.md`, "What the
+> second implementation agrees on, and what it does not", has the measurement,
+> and `docs/BUGS.md` has the evaluator's state.
 
 Both features landed on the Go bootstrap and in `src/` together. That is the
 check this project exists to be able to make, and neither half can make it

@@ -438,8 +438,11 @@ runtime error: builtin "arr_new" is named in the builtin table but has no
 implementation
 ```
 
-128 of the 247 names in `src/builtins.tw` were in that state, which is the
-message `src/eval.tw` prints when a name reaches the end of its dispatch. Two
+128 of the names in `src/builtins.tw` were in that state, which is the
+message `src/eval.tw` prints when a name reaches the end of its dispatch. (The
+denominator first written here was 247; the table holds 248, counted from the
+`NAMES` line on 2026-09-04, and `internal/checker/builtintable_test.go` now
+holds the two tables to the same set.) Two
 of them did worse than refuse, and those two are open divergences 1 and 2 from
 the section below:
 
@@ -468,9 +471,11 @@ literal of rank 0 or 1. In both, the port had stopped at the case the author
 had in front of them, and nothing compared the two implementations at runtime
 to say so.
 
-**How it was caught.** Not by any gate in the repository. `tools/diff/` runs
-`check` and `fmt` over 443 files and says nothing about what a program prints,
-and the self-hosted tests in `internal/interp/selfhost_test.go` all invoke
+**How it was caught.** Not by any gate in the repository, and the harness
+this paragraph first named is not one either. `tools/diff/run` takes `-old` and
+`-new` **Go** binaries, so it never looks at `src/` at all, and it is referenced
+by neither the `Makefile` nor `.github/workflows/ci.yml`, so nothing runs it in
+any case. The self-hosted tests in `internal/interp/selfhost_test.go` all invoke
 `check`. So the two evaluators were free to disagree, and the divergences were
 found by hand and written down rather than by anything that would notice them
 again.
@@ -496,13 +501,15 @@ of a builtin's behaviour as its answer, and half the fixtures exist to pin one.
 
 ## Open
 
-**The self-hosted evaluator still refuses 97 of the 247 builtin names.** Entry
+**The self-hosted evaluator still refuses 97 of the 248 builtin names.** Entry
 12 above ported 31 of them and closed divergences 1 and 2 of the three recorded
 here. What is left is the filesystem, the clock, the process, the RNG, the
 `f64_*` scalar intrinsics, the GPU stubs and the memory counters, each of which
 still ends at "named in the builtin table but has no implementation". The count
 is measurable rather than estimated: run each remaining name through
-`src/main.tw run` and read the first stderr line.
+`src/main.tw run` and read the first stderr line. Re-measured that way on
+2026-09-04, against this branch merged with `main`: 248 names in `src/builtins.tw`,
+151 dispatched, 97 refused.
 
 **`src/cli/main.tw` does not call a systems-mode program's `main`.** This is
 divergence 3 of the three, and it is still open. `src/main.tw` grew a `run_main`
@@ -545,6 +552,67 @@ scope for this port and recorded so it is not lost: `let m: Tensor = [[1.0,
 all self-hosted, with no error. That is a wrong answer rather than a refusal,
 and it is the most serious item on this page. `src/eval.tw` has no port of the
 Go `assignNested` path.
+
+**The `einsum` gradient panics for a bare summed axis.** Reproduced 2026-09-04
+against this branch merged with `main`. The backward pass of an einsum whose
+output subscript drops a label crashes rather than returning a gradient:
+
+```rust
+let A = tensor([[1.0, 2.0], [3.0, 4.0]])
+fn f(x) = sum(einsum("ij->i", x))
+print(grad(f)(A))            # panic: index out of range [0] with length 0
+```
+
+The gradient of an einsum is another einsum with the operand's subscript as the
+output, so differentiating `"ij->i"` asks for an output `ij` from an input whose
+only subscript is `i`. The label `j` appears in no input; it sizes to zero, the
+output buffer is empty, and `einsumRaw` indexes it. `Einsum`'s backward closure
+in `internal/tensor/einsum.go` has a `continue` for the case where sizing
+returns an *error*, which is a second defect on the same line and would have
+answered a silent zero, but it is not what runs today.
+
+This is on the ordinary path, since summing an axis away is what einsum is for.
+It is recorded here because `docs/roadmap.md` has carried it since the
+self-hosting exercise found it, described as a silent zero, and the symptom has
+changed. Not fixed: no test covers it yet, and the fix is a real decision about
+what the gradient of a dropped label should be rather than a guard.
+
+**A bare type parameter in return position is read as a unit, in numeric mode
+only.** Found 2026-09-04 by checking that the code blocks in the documentation
+run. Both implementations do it, so it is a shared rule rather than a
+divergence.
+
+```rust
+fn first[T](xs: Arr[T]) -> T = xs[0]
+# shape error: unknown unit "T" (declare it with `unit T`)
+```
+
+Put `mode systems` at the top of that file and it checks clean;
+`internal/checker/generics_test.go`'s `TestParameterIsInScopeForTheSignature`
+asserts exactly that and passes. Units are a numeric-mode feature, and in
+numeric mode a bare name in return position is resolved as a unit without the
+declaration's type parameters being consulted first.
+
+Nothing else in the section misses. In numeric mode `struct Box[T]`,
+`enum Tree[T]`, `x: T` in a parameter list, `xs: Arr[T]` and `-> Arr[T]` all
+check clean, so the rule that refuses `-> T` accepts every neighbouring form of
+the same parameter.
+
+The diagnostic's suggestion makes it worse rather than better. Declaring
+`unit T` silences the error and binds the return to a unit-tagged scalar, so in
+a systems-mode program that then declares `unit T`, `let s: Str = first(xs)` on
+an `Arr[Str]` is reported as `"s" is declared Str but the value is F64`: a wrong
+type, confidently stated, on a program the guide says is correct.
+
+`docs/language-guide.md`'s "Type parameters" section and `docs/RELEASE-1.7.md`
+both printed that line in a block with no `mode systems` on it, which is how
+this was found; both now say which mode the block is.
+`internal/checker/generics_test.go`'s
+`TestABareTypeParameterInReturnPositionIsAUnitInNumericMode` pins the present
+behaviour, so fixing it fails the suite with the files to correct.
+
+Not fixed here: that pass changes documentation and its tests, and a resolution
+order in both checkers is a language change that wants its own review.
 
 **`einsum` refuses a label repeated within one operand.** `einsum("ii->", A)`,
 the trace, returns "repeated label \"i\" within one operand is not supported".
