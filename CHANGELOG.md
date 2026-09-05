@@ -156,13 +156,22 @@
   language, and it was the most likely first thing they saw. It now exits 1,
   like any other program that failed.
 
-  The number is measured, over 1,163 runs of every `.tw` file in `src/`,
-  `examples/`, `std/`, `std/tests/`, `testdata/` and the nine satellites, on
-  both engines. The deepest legitimate recursion anywhere is the self-hosted
-  compiler checking `src/parse.tw`, at 217 nested calls; no user program passes
-  18. The bootstrap's stack survives 150,000 nested calls and dies at 151,562.
-  So 10,000 is about 46x above the deepest real program and about 15x below the
-  crash. `docs/needs.md` NEEDS-30 has the table.
+  The number is measured on both engines over every `.tw` file in `src/`,
+  `examples/`, `std/`, `std/tests/` and `testdata/`. The deepest legitimate
+  recursion anywhere in the repository is the self-hosted compiler checking
+  `src/parse.tw`, at 217 nested calls; nothing run directly gets past 14.
+
+  What 10,000 does not buy is a promise, and the entry is worth reading before
+  relying on it. Where the host's stack actually runs out depends on how deeply
+  the recursive call sits inside its own expression, not on what the frame
+  holds: a bare call overflows at 236,295 frames, one with `+ 1` around it at
+  150,466, one thirty layers down at 13,046 and one three hundred layers down at
+  1,373, while five parameters and three locals cost exactly nothing. So no
+  fixed limit is below the crash for every shape. 10,000 covers a runaway call
+  nested up to 39 arithmetic layers deep, or 25 layers of `[x][0]`, against a
+  deepest call site of 21 anywhere in this repository; past that envelope the
+  fatal overflow is back, which is no worse than before. `docs/needs.md`
+  NEEDS-30 has the tables.
 
 - **`TWILL_MAX_CALL_DEPTH`, so the two engines can refuse a program with the
   same words.** Running the self-hosted evaluator on the bootstrap puts two
@@ -176,8 +185,9 @@
   ```
 
   prints for `prog.tw` exactly the bytes `twill run prog.tw` prints. 100,000 is
-  above the 80,013 the self-hosted evaluator needs -- bisected on the shipped
-  CLI, not derived -- and well under the 150,000 where the stack gives out.
+  above the 80,013 the self-hosted evaluator needs, bisected on the shipped CLI
+  rather than derived, and not so far above it that the host runs out of stack
+  on the way.
 
 ### Changed
 

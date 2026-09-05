@@ -647,13 +647,30 @@ missing base case; if it is not, rewrite it as a loop
 
 The limit is there because the alternative is not a deeper recursion, it is a
 crash: the evaluator runs on the host's stack, and running out of it takes the
-whole process down with nothing an error handler can catch. 10,000 is about
-forty-six times the deepest recursion measured anywhere in this repository, its
-standard library, its test corpus and its nine satellite projects, where the
-deepest is the self-hosted compiler checking `src/parse.tw` at 217 nested calls
-and no user program passes 18. So a program that reaches 10,000 has almost
-certainly lost its base case. Recursion is not the language's loop; a `while`
-costs no stack at all.
+whole process down with nothing an error handler can catch. 10,000 is far above
+anything a working program needs. The deepest recursion measured anywhere in
+this repository is the self-hosted compiler checking `src/parse.tw`, at 217
+nested calls, and nothing run directly gets past 14. So a program that reaches
+10,000 has almost certainly lost its base case. Recursion is not the language's
+loop; a `while` costs no stack at all.
+
+The limit is a diagnostic for the recursions people write, and not a guarantee
+for every one they could write. What decides how much host stack a twill frame
+costs is not what the frame holds, which costs nothing at all, but how deeply
+the recursive call sits inside the expression around it: every enclosing
+operator is one more frame the evaluator has to hold open across the call. A
+bare `return f(n - 1)` runs 236,294 deep before the host stack gives out;
+`f(n - 1) + 1` reaches 150,465; thirty layers of arithmetic reach 13,045, and
+three hundred reach 1,372. Because nothing bounds how deep an expression may be,
+no fixed limit can be below the crash for every program. What 10,000 covers is a
+runaway call nested inside up to 39 layers of arithmetic, or 25 layers of
+`[x][0]`, the most expensive layer measured; the deepest call site written
+anywhere in this repository is nested 21 deep. Write a recursion whose call sits
+deeper inside its expression than that envelope, and lose its base case, and the
+process dies on the host's stack the way it did before the limit existed. Binding the call to a
+`let` and using the name afterwards puts it back in reach of the diagnostic:
+with those forty layers applied to a bound name rather than to the call, the
+crash moves back out to 236,274.
 
 `TWILL_MAX_CALL_DEPTH` overrides the number for one run. There is exactly one
 reason to reach for it, and it is not "my program needs more stack": an
@@ -667,8 +684,8 @@ TWILL_MAX_CALL_DEPTH=100000 twill run src/main.tw run prog.tw
 
 prints for `prog.tw` exactly what `twill run prog.tw` prints, and why the plain
 form does not: without it the host stops first and reports against a function
-inside `src/eval.tw`. Set it past 150,000 and the stack overflow the limit
-exists to prevent comes back.
+inside `src/eval.tw`. It is not a knob for buying stack: raise it far enough and
+the overflow the limit exists to turn into a diagnostic comes back.
 
 ## Control flow
 

@@ -120,6 +120,49 @@ print(f(50))
 	}
 }
 
+// The counter counts calls, and it counts them the same wherever the call sits
+// inside the expression around it.
+//
+// This is worth pinning because the two quantities are easy to confuse, and the
+// first version of this work confused them. How much of the host's Go stack a twill
+// frame costs depends almost entirely on how deeply the recursive call is nested
+// in its own expression, since every enclosing operator is another evalExpr
+// frame held open across the call; see DefaultMaxCallDepth for the measurements.
+// The refusal must not inherit any of that. It fires at the same call count for
+// a bare `f(n - 1)` and for one buried forty operators deep, and it says the
+// same thing.
+func TestTheRefusalIsIndependentOfExpressionNesting(t *testing.T) {
+	const limit = 200
+	for _, layers := range []int{0, 1, 10, 40} {
+		t.Run(fmt.Sprintf("%d layers", layers), func(t *testing.T) {
+			call := "f(n - 1)"
+			for i := 0; i < layers; i++ {
+				call += " + 1"
+			}
+			// 500 is deeper than the limit and nowhere near the host's stack, so
+			// what this measures is the counter and not the machine.
+			src := fmt.Sprintf("fn f(n) {\n  if n == 0 { return 0 }\n  %s\n}\nprint(f(500))\n", call)
+			ip := interp.New(func(string) {})
+			ip.MaxCallDepth = limit
+			_, err := ip.Run(src)
+			if err == nil {
+				t.Fatal("a recursion past the limit was answered, not refused")
+			}
+			re, ok := err.(*interp.RuntimeError)
+			if !ok {
+				t.Fatalf("error is %T, not a *interp.RuntimeError: %v", err, err)
+			}
+			want := fmt.Sprintf(`call depth limit reached: "f" is %d calls deep`, limit)
+			if !strings.HasPrefix(re.Msg, want) {
+				t.Errorf("message %q does not start with %q", re.Msg, want)
+			}
+			if re.Line != 3 {
+				t.Errorf("error is reported at line %d; the recursive call is on line 3", re.Line)
+			}
+		})
+	}
+}
+
 // Any panic that is not one of the interpreter's own signals comes back as a
 // twill error, not a Go trace. A builtin that faults is a bug in twill, and the
 // person who hits it is running a twill program: they should be told which line

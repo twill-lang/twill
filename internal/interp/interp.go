@@ -64,25 +64,31 @@ func CheckLegacyExt(path string) error {
 // first thing they saw. A counter checked on the way in turns it into an
 // ordinary twill error, which is the only way to get one at all.
 //
-// The number is measured, not guessed, and the measurement is written down in
-// docs/needs.md NEEDS-30 with the command that produced it. The deepest
-// legitimate recursion found by running every .tw file in examples/,
-// std/tests/, testdata/ and the nine satellite repositories, and by putting
-// every file in src/, examples/, std/ and the satellites through the
-// self-hosted compiler, is the self-hosted compiler checking src/parse.tw at
-// 217 nested calls. Nothing a user program does comes close: the deepest are
-// selvedge/tests/registry_test.tw at 18 and std/tests/json_test.tw at 14.
+// Both ends of the number are measured and docs/needs.md NEEDS-30 has the
+// tables. The low end: over every .tw file in this repository, run on this
+// interpreter and put through the self-hosted checker running on top of it, the
+// deepest call depth anything reaches is 217, and that is the self-hosted
+// checker on src/parse.tw rather than a program. Nothing run directly gets past
+// 14.
 //
-// The other end was measured by bisection on this machine (macOS arm64, the 1
-// GB default goroutine stack): the bootstrap survives 150,000 nested twill
-// calls and dies at 151,562, and a frame holding five parameters, three locals
-// and a nested expression dies at the same depth, because what fills the stack
-// is the interpreter's own Go frames rather than anything the twill frame
-// holds.
+// The high end is not one number, and that has to be said plainly rather than
+// rounded off. What decides where the Go stack runs out is not what the twill
+// frame holds but how deeply the recursive call sits inside the expression
+// around it, because every enclosing operator is another evalExpr frame held
+// live across the call. Measured on this machine, macOS arm64 with Go's 1 GB
+// goroutine stack, a runaway f overflows at 236,295 frames when the call is
+// bare, at 150,466 with one `+ 1` around it, at 13,046 with thirty and at 1,373
+// with three hundred. Widening the frame changes nothing whatever: one
+// parameter or eight, no locals or sixteen, the overflow is at 150,466 either
+// way.
 //
-// So 10,000 is about 46x above the deepest real program and about 15x below the
-// crash, which leaves room on both sides for programs and machines unlike the
-// ones measured.
+// So no fixed limit is uniformly below the crash, because nesting has no upper
+// bound. What 10,000 buys is a bounded envelope: a runaway call still gets the
+// diagnostic while it sits inside up to 39 arithmetic layers, or 25 of the most
+// expensive layer measured, `[x][0]`, and the deepest call site written
+// anywhere in this repository is nested 21 deep. Past that envelope the fatal
+// overflow is back. The limit is a diagnostic for the shapes people write, not
+// a guarantee for every shape, and it never makes anything worse than it was.
 const DefaultMaxCallDepth = 10000
 
 // maxCallDepthEnv overrides DefaultMaxCallDepth for interpreters made by New.
@@ -106,8 +112,9 @@ func envMaxCallDepth() int {
 
 // callDepthMessage is the refusal, in the one place both engines copy it from.
 // src/eval.tw's call_depth_message is the same text and the two must agree
-// character for character; interp.TestSelfHostedRecursionLimitMessageMatches
-// is what holds them together.
+// character for character; TestSelfHostedRefusalsMatchTheBootstrap is what
+// holds them together, by running both engines over every shape in
+// recursionCases and comparing the first line of the diagnostic byte for byte.
 func callDepthMessage(name string, depth int) string {
 	who := "an anonymous function"
 	if name != "" {
@@ -214,11 +221,12 @@ type Interp struct {
 	// for the host to be given a larger number than the guest, which is what
 	// this field and TWILL_MAX_CALL_DEPTH are for. The number the self-hosted
 	// evaluator needs was bisected on the shipped CLI rather than derived: at
-	// 80,012 the host still refuses first, at 80,013 the guest does. The
-	// bootstrap's stack does not give out until 150,000, so
-	// TWILL_MAX_CALL_DEPTH=100000 buys the identical message with margin on both
-	// sides. Raise it past 150,000 and the stack overflow this whole mechanism
-	// exists to prevent comes back.
+	// 80,012 the host still refuses first, at 80,013 the guest does.
+	// TWILL_MAX_CALL_DEPTH=100000 is the documented value because it clears
+	// 80,013 without sitting on it. There is no single number above which it
+	// stops working, for the same reason there is no single crash depth: see
+	// DefaultMaxCallDepth. What is known is that the host survives this one,
+	// because TestSelfHostedRefusalsMatchTheBootstrap runs it.
 	MaxCallDepth int
 	// rngs holds the independent generator streams `rng_open` hands out, by
 	// handle. A twill value cannot carry a native pointer, so a stream is named
