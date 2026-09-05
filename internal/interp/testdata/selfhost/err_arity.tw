@@ -1,0 +1,7 @@
+mode systems
+
+# The arity check happens before the coercions, so it is the count that gets
+# named and not the argument.
+fn main() {
+  print(chr(65, 66))
+}

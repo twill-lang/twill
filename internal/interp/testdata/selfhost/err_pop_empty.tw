@@ -1,0 +1,9 @@
+mode systems
+
+# A builtin's message is part of its behaviour, so each of the err_* fixtures
+# checks one diagnostic. Only the first one in a file can be reached, which is
+# why they are one file each.
+fn main() {
+  let a: Arr[I64] = arr_new()
+  print(str(pop(a)))
+}
