@@ -7,7 +7,7 @@
 #
 # Each line is `<suite> <signature>`. The signature identifies the divergence,
 # not the suite, so a line excuses one finding rather than the file it happens
-# in: if io_test.tw stops dying on arr_new and starts printing a wrong number
+# in: if io_test.tw stops dying on write_out and starts printing a wrong number
 # instead, the signature no longer matches and the build says so. Four things
 # fail here, and only the first is a new file:
 #
@@ -25,27 +25,35 @@
 # The signature is computed from the exit codes and the first line of each
 # stream that moved, with source line numbers masked and control bytes escaped,
 # so editing src/eval.tw above the line it faults on does not move it. A run
-# that hit the time budget is keyed on that alone, because how far it got before
-# the clock stopped it is a property of the machine.
+# that hit the time budget cannot be keyed on its content, because how far it
+# got before the clock stopped it is a property of the machine; it is keyed on
+# which side ran out of time and on whether the two sides said the same thing
+# over the output they both produced.
 
 # --- The evaluator has no implementation for the builtin ---------------------
-# Six systems-mode suites die on the first line of their harness, because
-# std/tests/systems_harness.tw calls arr_new; sample_test.tw gets further and
-# dies on rng_open. docs/conformance.md lists every name in this state.
-#   io_test.tw:50      builtin "arr_new" ... has no implementation
-#   json_test.tw:256   builtin "arr_new" ... has no implementation
-#   linalg_test.tw:50  builtin "arr_new" ... has no implementation
-#   random_test.tw:50  builtin "arr_new" ... has no implementation
-#   stats_test.tw:50   builtin "arr_new" ... has no implementation
-#   text_test.tw:50    builtin "arr_new" ... has no implementation
-io_test.tw               66f3c666c2d4
-json_test.tw             7f638d19d14f
-linalg_test.tw           1e763102167f
-random_test.tw           9605f32ccc11
-stats_test.tw            c72577437d6f
-text_test.tw             8cf53ff3402b
+# Each of these dies at a named line on a named builtin that src/eval.tw does
+# not dispatch. docs/conformance.md lists every name in that state. These
+# signatures moved when the self-hosted Arr, Dict, buffer and string runtime
+# landed on main: all six systems-mode suites used to die on the first line of
+# std/tests/systems_harness.tw, which calls arr_new, and now get as far as
+# printing their results and fall over on the way out.
+#   io_test.tw:119     builtin "write_out" ... has no implementation
+#   json_test.tw:119   builtin "write_out" ... has no implementation
+#   text_test.tw:119   builtin "write_out" ... has no implementation
+io_test.tw               9786e999b01b
+json_test.tw             007212f18d1f
+text_test.tw             1492121f2ed1
 
+#   linalg_test.tw:362 builtin "f64_of_i64" ... has no implementation
+#   stats_test.tw:165  builtin "f64_of_i64" ... has no implementation
+linalg_test.tw           53a1a865f09f
+stats_test.tw            463ecc24a31b
+
+#   random_test.tw:85  builtin "rng_open" ... has no implementation
 #   sample_test.tw:85  builtin "rng_open" ... has no implementation
+# The two signatures differ because the bootstrap's first line does: the suites
+# report their own names and their own counts before the self-hosted side fails.
+random_test.tw           a5ad8a197b6f
 sample_test.tw           580ff949593f
 
 # --- The evaluator dispatches the builtin and then falls over ----------------
@@ -61,21 +69,22 @@ nn_test.tw               047ff7c80fd0
 optim_test.tw            dd04fd5f0d78
 
 # --- The evaluator returns a different number --------------------------------
-# The most serious kind, because nothing errors. gradcheck_test.tw passes 19 of
-# 19 on the bootstrap and 17 of 19 self-hosted:
+# The most serious kind, because nothing errors and both sides exit 0.
+# gradcheck_test.tw passes 19 of 19 on the bootstrap and 17 of 19 self-hosted.
+# The worst absolute error of
 #   numeric_grad(fn(v) = sum(v * v), [1.0, -3.0, 0.5], 1e-5)
-#     bootstrap:   worst element off by 3.9e-11
-#     self-hosted: worst element off by 5.1e-8
-# Both print as the same six significant figures, so only an exact comparison
-# finds it. That is why this gate has no tolerance.
+# against the exact [2.0, -6.0, 1.0] is 3.9306336e-11 on the bootstrap and
+# 5.0524135986e-8 self-hosted. Both print as the same six significant figures,
+# so only an exact comparison finds it. That is why this gate has no tolerance.
 gradcheck_test.tw        9214b09c03e6
 
 # --- The evaluator does not finish -------------------------------------------
 # Both of these complete on the bootstrap in under a second and do not finish
 # self-hosted inside the budget, so they are recorded as divergences rather than
-# as slow passes. They print a prefix of the right output before the budget runs
-# out, so what is known is that they are too slow, not that they are wrong.
-# Their signatures are equal because that is the whole of what is known about
-# either: the self-hosted side ran out of time.
-llama_test.tw            bbb122c08aee
-transformer_test.tw      bbb122c08aee
+# as slow passes. Their signatures are equal because the whole of what is known
+# about either is the same: the self-hosted side ran out of time, and everything
+# it printed before it did agrees with what the bootstrap printed. If one of
+# them starts printing something else on the way to the budget, that agreement
+# is what stops matching and the line stops covering it.
+llama_test.tw            f5a0b1782033
+transformer_test.tw      f5a0b1782033

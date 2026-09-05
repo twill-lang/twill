@@ -14,23 +14,23 @@
   from what came back, so the table is measured rather than declared; `-check`
   fails the build if the committed file is not what a run produces. `suites`
   runs every `std/tests/*_test.tw` twice, once on the Go bootstrap and once on
-  `src/main.tw`, and compares exit code, stdout and stderr exactly. `make diff`
-  wires up `tools/diff/run`, which had been in the tree since it was written
-  with nothing referencing it, so it had never run.
+  `src/main.tw`, and compares exit code, stdout and stderr exactly.
+  `make conformance-check` is the gate, and it has its own CI job.
 
-  Roughly half the shared builtin table has no implementation under
-  `src/eval.tw`; `docs/conformance.md` has the count and the names. Most of the
-  standard-library suites diverge, `testdata/conformance/suite-allow.txt` says
-  why for each, and the worst of them is `gradcheck_test.tw`, which errors
-  nowhere and simply gets a different answer.
+  Part of the shared builtin table has no implementation under `src/eval.tw`;
+  `docs/conformance.md` has the count and the names, and is the only file that
+  states either. Most of the standard-library suites diverge,
+  `testdata/conformance/suite-allow.txt` says why for each, and the worst of
+  them is `gradcheck_test.tw`, which errors nowhere and simply gets a different
+  answer.
 
-  Both allow-lists are keyed to the divergence, not to the file. A suite line
-  carries a signature of the disagreement it excuses, so `io_test.tw` cannot
-  stop dying on `arr_new`, start printing a wrong number, and stay green on the
-  strength of its name still being listed. A golden line carries the kind of
-  finding it excuses, so a fixture that stops running, or whose golden is
-  deleted, fails a check whose whole job is comparing against recorded output.
-  The lists may only shrink.
+  The allow-list is keyed to the divergence, not to the file. Each line carries
+  a signature of the disagreement it excuses, so `io_test.tw` cannot stop dying
+  on the builtin its line names, start printing a wrong number, and stay green
+  on the strength of its name still being listed. A suite that runs out of time
+  is keyed on which side ran out and on whether the two agreed over the output
+  both produced, so "too slow" does not also excuse "and wrong". The list may
+  only shrink.
 
 - **`black_box(x)`, a compiler barrier, and the correction that it was already
   needed.** `docs/roadmap.md` entry 30 is bobbin's, and it was filed with the

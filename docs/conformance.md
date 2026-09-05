@@ -21,14 +21,35 @@ is not the same question as what the self-hosted compiler itself uses. Every
 name here is available to `src/*.tw` while the Go bootstrap is executing it, so
 `write_out` can be in the list below and still be how `src/main.tw` prints.
 
+## Checking a row by hand
+
+Both sides of a row are one command. The path has to be absolute on the
+self-hosted side: the self-hosted CLI resolves a relative path against the
+directory of the twill file that is reading it, which is `src/`, while the Go
+bootstrap resolves it against the working directory. A relative path there
+does not disagree with this table, it fails to find the file, and every row
+checked that way comes back inconclusive.
+
+```bash
+echo 'read_file(0)' > /tmp/probe.tw
+./twill run /tmp/probe.tw --no-check              # the bootstrap column
+./twill run src/main.tw run /tmp/probe.tw --no-check   # the self-hosted column
+```
+
+The literal `0` is what the tool passes too, and it passes 0, 1, 2 and 3 of
+them in turn, because a builtin that complains about the argument count has
+not answered the question. A name whose implementation needs more than three
+arguments to get past that complaint is reported as inconclusive rather than
+guessed at.
+
 ## Summary
 
 | | count |
 |---|---|
 | names in the shared table | 248 |
 | implemented by the Go bootstrap | 248 |
-| implemented by the self-hosted evaluator | 119 |
-| **missing from the self-hosted evaluator** | **128** |
+| implemented by the self-hosted evaluator | 150 |
+| **missing from the self-hosted evaluator** | **97** |
 | missing from the Go bootstrap | 0 |
 | inconclusive (see below) | 1 |
 
@@ -39,38 +60,31 @@ answer. They are listed here so that "the two implementations agree" can be
 read as the bounded claim it is.
 
 ```
-abort                   all_finite              args                    arr
-arr_clear               arr_new                 arr_of_tensor           arr_push
-buf_get8                buf_len                 buf_new                 buf_set8
-bytes_new               bytes_push              bytes_to_str            chr
-clock_now_ms            cwd                     dict_del                dict_get
-dict_has                dict_keys               dict_must               dict_new
-dict_or                 dict_set                emit_line               env
-exit                    f64_bits                f64_bits_hi             f64_bits_lo
-f64_ceil                f64_cos                 f64_exp                 f64_floor
-f64_from_bits           f64_from_halves         f64_hex                 f64_log
-f64_mod                 f64_of_i64              f64_pow                 f64_round
-f64_signbit             f64_sin                 f64_sqrt                f64_tanh
-f64_to_str              f64_trunc               file_size               gbm_describe
-gpu_alloc               gpu_available           gpu_copy                gpu_device_close
-gpu_device_count        gpu_device_info         gpu_device_info_i64     gpu_device_open
-gpu_finish              gpu_free                gpu_kernel              gpu_launch
-gpu_program_build       gpu_read                gpu_set_arg_buffer      gpu_set_arg_f64
-gpu_set_arg_i64         gpu_set_arg_local       gpu_write               i64_of_f64
-i64_of_str              is_same                 is_tty_stdout           list_dir
+abort                   all_finite              args                    clock_now_ms
+cwd                     emit_line               env                     exit
+f64_bits                f64_bits_hi             f64_bits_lo             f64_ceil
+f64_cos                 f64_exp                 f64_floor               f64_from_bits
+f64_from_halves         f64_log                 f64_mod                 f64_of_i64
+f64_pow                 f64_round               f64_signbit             f64_sin
+f64_sqrt                f64_tanh                f64_trunc               file_size
+gbm_describe            gpu_alloc               gpu_available           gpu_copy
+gpu_device_close        gpu_device_count        gpu_device_info         gpu_device_info_i64
+gpu_device_open         gpu_finish              gpu_free                gpu_kernel
+gpu_launch              gpu_program_build       gpu_read                gpu_set_arg_buffer
+gpu_set_arg_f64         gpu_set_arg_i64         gpu_set_arg_local       gpu_write
+i64_of_f64              is_same                 is_tty_stdout           list_dir
 load_value              mem_allocs              mem_bytes               mem_counters_available
 mem_live_bytes          mem_tensors             mkdir_all               module_source
-mono_ns                 mtime                   num_to_text             numel
-path_base               path_dir                path_exists             path_ext
-path_is_abs             path_is_dir             path_join               path_normalize
-path_stem               pop                     push                    quantize
+mono_ns                 mtime                   path_base               path_dir
+path_exists             path_ext                path_is_abs             path_is_dir
+path_join               path_normalize          path_stem               quantize
 read_file               read_file_at            read_text_or            remove_all
 remove_dir              remove_file             rename                  resolve_path
 rng_close               rng_f64                 rng_norm                rng_normal
 rng_open                rng_perm                rng_seed                rng_u53
-rng_uniform             run                     save_value              slice
-str_quote               str_to_f64              temp_dir                window_size
-write_err               write_file              write_out               write_text_or
+rng_uniform             run                     save_value              temp_dir
+window_size             write_err               write_file              write_out
+write_text_or
 ```
 
 ## Inconclusive
@@ -83,7 +97,7 @@ implementation is broken. The evidence column says what came back.
 
 | builtin | bootstrap | self-hosted | evidence |
 |---|---|---|---|
-| `clip` | yes | unknown | main.tw:2425: runtime error: no match arm for {shape: [], data: \x00\x00\x00\x00\x00\x00\x00\x00, dtype: 6} |
+| `clip` | yes | unknown | main.tw:2603: runtime error: no match arm for {shape: [], data: \x00\x00\x00\x00\x00\x00\x00\x00, dtype: 6} |
 
 ## Every name
 
@@ -104,25 +118,25 @@ implementation is broken. The evidence column says what came back.
 | `args` | yes | no |
 | `argsort` | yes | yes |
 | `argtopk` | yes | yes |
-| `arr` | yes | no |
-| `arr_clear` | yes | no |
-| `arr_new` | yes | no |
-| `arr_of_tensor` | yes | no |
-| `arr_push` | yes | no |
+| `arr` | yes | yes |
+| `arr_clear` | yes | yes |
+| `arr_new` | yes | yes |
+| `arr_of_tensor` | yes | yes |
+| `arr_push` | yes | yes |
 | `band` | yes | yes |
 | `black_box` | yes | yes |
 | `bnot` | yes | yes |
 | `bor` | yes | yes |
 | `broadcast_to` | yes | yes |
-| `buf_get8` | yes | no |
-| `buf_len` | yes | no |
-| `buf_new` | yes | no |
-| `buf_set8` | yes | no |
-| `bytes_new` | yes | no |
-| `bytes_push` | yes | no |
-| `bytes_to_str` | yes | no |
+| `buf_get8` | yes | yes |
+| `buf_len` | yes | yes |
+| `buf_new` | yes | yes |
+| `buf_set8` | yes | yes |
+| `bytes_new` | yes | yes |
+| `bytes_push` | yes | yes |
+| `bytes_to_str` | yes | yes |
 | `ceil` | yes | yes |
-| `chr` | yes | no |
+| `chr` | yes | yes |
 | `clip` | yes | unknown |
 | `clock_now_ms` | yes | no |
 | `columns` | yes | yes |
@@ -134,14 +148,14 @@ implementation is broken. The evidence column says what came back.
 | `cumprod` | yes | yes |
 | `cumsum` | yes | yes |
 | `cwd` | yes | no |
-| `dict_del` | yes | no |
-| `dict_get` | yes | no |
-| `dict_has` | yes | no |
-| `dict_keys` | yes | no |
-| `dict_must` | yes | no |
-| `dict_new` | yes | no |
-| `dict_or` | yes | no |
-| `dict_set` | yes | no |
+| `dict_del` | yes | yes |
+| `dict_get` | yes | yes |
+| `dict_has` | yes | yes |
+| `dict_keys` | yes | yes |
+| `dict_must` | yes | yes |
+| `dict_new` | yes | yes |
+| `dict_or` | yes | yes |
+| `dict_set` | yes | yes |
 | `diff` | yes | yes |
 | `dot` | yes | yes |
 | `dtype` | yes | yes |
@@ -163,7 +177,7 @@ implementation is broken. The evidence column says what came back.
 | `f64_floor` | yes | no |
 | `f64_from_bits` | yes | no |
 | `f64_from_halves` | yes | no |
-| `f64_hex` | yes | no |
+| `f64_hex` | yes | yes |
 | `f64_log` | yes | no |
 | `f64_mod` | yes | no |
 | `f64_of_i64` | yes | no |
@@ -173,7 +187,7 @@ implementation is broken. The evidence column says what came back.
 | `f64_sin` | yes | no |
 | `f64_sqrt` | yes | no |
 | `f64_tanh` | yes | no |
-| `f64_to_str` | yes | no |
+| `f64_to_str` | yes | yes |
 | `f64_trunc` | yes | no |
 | `field` | yes | yes |
 | `file_size` | yes | no |
@@ -212,7 +226,7 @@ implementation is broken. The evidence column says what came back.
 | `hvp` | yes | yes |
 | `i64` | yes | yes |
 | `i64_of_f64` | yes | no |
-| `i64_of_str` | yes | no |
+| `i64_of_str` | yes | yes |
 | `int` | yes | yes |
 | `is_same` | yes | no |
 | `is_tty_stdout` | yes | no |
@@ -250,8 +264,8 @@ implementation is broken. The evidence column says what came back.
 | `mono_ns` | yes | no |
 | `mtime` | yes | no |
 | `nbytes` | yes | yes |
-| `num_to_text` | yes | no |
-| `numel` | yes | no |
+| `num_to_text` | yes | yes |
+| `numel` | yes | yes |
 | `ones` | yes | yes |
 | `or` | yes | yes |
 | `path_base` | yes | no |
@@ -264,11 +278,11 @@ implementation is broken. The evidence column says what came back.
 | `path_normalize` | yes | no |
 | `path_stem` | yes | no |
 | `permutation` | yes | yes |
-| `pop` | yes | no |
+| `pop` | yes | yes |
 | `pow` | yes | yes |
 | `print` | yes | yes |
 | `prod` | yes | yes |
-| `push` | yes | no |
+| `push` | yes | yes |
 | `quantize` | yes | no |
 | `rand` | yes | yes |
 | `randn` | yes | yes |
@@ -306,7 +320,7 @@ implementation is broken. The evidence column says what came back.
 | `shr` | yes | yes |
 | `sigmoid` | yes | yes |
 | `sin` | yes | yes |
-| `slice` | yes | no |
+| `slice` | yes | yes |
 | `softmax` | yes | yes |
 | `sort` | yes | yes |
 | `split` | yes | yes |
@@ -314,8 +328,8 @@ implementation is broken. The evidence column says what came back.
 | `square` | yes | yes |
 | `stop_grad` | yes | yes |
 | `str` | yes | yes |
-| `str_quote` | yes | no |
-| `str_to_f64` | yes | no |
+| `str_quote` | yes | yes |
+| `str_to_f64` | yes | yes |
 | `sum` | yes | yes |
 | `tanh` | yes | yes |
 | `temp_dir` | yes | no |

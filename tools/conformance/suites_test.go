@@ -51,6 +51,31 @@ func TestDivergenceKeyOfATimeoutIgnoresHowFarItGot(t *testing.T) {
 	}
 }
 
+// The other half of that: a timeout is excused as a timeout, and not as a
+// licence to print something else on the way. This is the case the old key
+// admitted -- it was `timeout boot=false self=true` and nothing more, so a
+// suite listed as too slow could start printing a wrong answer before the
+// budget stopped it and stay green.
+func TestATimeoutThatPrintsSomethingElseIsADifferentDivergence(t *testing.T) {
+	boot := outcome{stdout: "line one\nline two\n"}
+	slow := outcome{stdout: "line one\n", timedOut: true}
+	wrong := outcome{stdout: "line ONE\n", timedOut: true}
+	if divergenceKey(boot, slow) == divergenceKey(boot, wrong) {
+		t.Error("a timed-out run that printed a different first line has the same signature as one that did not")
+	}
+}
+
+// A stream cut off mid-write ends in a fragment rather than a line. Comparing
+// the fragment would make the key depend on where the scheduler stopped it.
+func TestAPartialLastLineDoesNotMoveATimeoutSignature(t *testing.T) {
+	boot := outcome{stdout: "line one\nline two\n"}
+	a := outcome{stdout: "line one\nline t", timedOut: true}
+	b := outcome{stdout: "line one\nline two", timedOut: true}
+	if divergenceKey(boot, a) != divergenceKey(boot, b) {
+		t.Error("how far through the last line the process got changed the signature")
+	}
+}
+
 func TestReadAllowRefusesABareName(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "allow.txt")

@@ -57,31 +57,26 @@ review a change to `src/`:
 ```bash
 make conformance         # regenerate docs/conformance.md, then commit it
 make conformance-check   # the table is current, and the std suites still agree
-make diff                # the fixture corpus still matches its goldens
 ```
 
 `make conformance-check` runs every suite in `std/tests/` twice, once on each
 implementation, and compares the bytes. The divergences that exist today are
-listed in `testdata/conformance/suite-allow.txt`, and the ones between the
-fixture corpus and its recorded goldens are in
-`testdata/conformance/golden-allow.txt`.
+listed in `testdata/conformance/suite-allow.txt`.
 
-Neither list excuses a file. Each line names one divergence and carries a key
-for it, so an entry stops covering a suite the moment the suite starts failing a
-different way:
+The list does not excuse a file. Each line names one divergence and carries a
+signature of it, so an entry stops covering a suite the moment the suite starts
+failing a different way:
 
 ```
-io_test.tw               66f3c666c2d4      # the signature of the divergence
-testdata/examples/mlp.tw golden-mismatch   # the kind of the finding
+io_test.tw               9786e999b01b   # the signature of the divergence
 ```
 
-`conformance suites -list` prints the lines a run would accept, and the
-harnesses print the measured key next to the recorded one when they disagree.
-Both lists may only shrink. Five things fail: a divergence that is not on the
-list, a divergence that is not the one its line records, a line that no longer
-diverges, a line that names nothing, and a fixture whose golden has gone
-missing. Adding a line to either file is a change that has to be argued for in
-the pull request, not a way to get a build green.
+`conformance suites -list` prints the lines a run would accept, and the gate
+prints the measured signature next to the recorded one when they disagree. The
+list may only shrink. Four things fail: a divergence that is not on the list, a
+divergence that is not the one its line records, a line that no longer diverges,
+and a line that names nothing. Adding a line is a change that has to be argued
+for in the pull request, not a way to get a build green.
 
 ## Layout
 

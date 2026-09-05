@@ -30,7 +30,7 @@ import (
 //
 // Each line carries a signature of the divergence it excuses, not just the
 // suite's name. A name on its own would excuse the suite rather than the
-// finding: io_test.tw could stop dying on arr_new and start printing a wrong
+// finding: io_test.tw could stop dying on write_out and start printing a wrong
 // number, and the build would stay green because the name was still on the
 // list. The signature is what makes the entry a claim about one divergence.
 func suitesMain(argv []string) int {
@@ -172,6 +172,7 @@ func describe(boot, self outcome) string {
 	var b strings.Builder
 	if boot.timedOut || self.timedOut {
 		fmt.Fprintf(&b, "  timed out: bootstrap %t, self-hosted %t\n", boot.timedOut, self.timedOut)
+		fmt.Fprintf(&b, "  agrees over the output both produced: %t\n", agreesSoFar(boot, self))
 	}
 	if boot.code != self.code {
 		fmt.Fprintf(&b, "  exit code: bootstrap %d, self-hosted %d\n", boot.code, self.code)
@@ -205,18 +206,22 @@ var sourceLine = regexp.MustCompile(`([A-Za-z0-9_./-]+\.tw):[0-9]+:`)
 // divergenceKey reduces a disagreement to the part of it that is a property of
 // the two implementations rather than of the machine.
 //
-// A run that hit the budget is keyed on that alone. How far it got before the
-// clock stopped it is a race with the hardware: llama_test.tw prints 31 lines
-// here and would print a different number on a slower runner, so keying on the
-// content would make the gate fail on the CI box for no reason. What is known
-// about it is that it did not finish, and that is what the entry claims.
+// A run that hit the budget cannot be keyed on its content. How far it got
+// before the clock stopped it is a race with the hardware, so a key built from
+// what it printed would fail on a slower runner for no reason. It is keyed
+// instead on two facts that do not move: which side ran out of time, and
+// whether the two sides said the same thing over the output they both managed
+// to produce. Keying on the timeout alone was weaker than it looked, because it
+// excused "the self-hosted side is too slow" and "and it is printing the wrong
+// answer while it is at it" with the same twelve characters.
 //
 // Everything else is keyed on the exit codes and on the first line of each
 // stream that moved, with source line numbers masked and control bytes escaped
 // -- the messages carry raw tensor bytes, and a signature is no place for a NUL.
 func divergenceKey(boot, self outcome) string {
 	if boot.timedOut || self.timedOut {
-		return fmt.Sprintf("timeout boot=%t self=%t", boot.timedOut, self.timedOut)
+		return fmt.Sprintf("timeout boot=%t self=%t agrees-so-far=%t",
+			boot.timedOut, self.timedOut, agreesSoFar(boot, self))
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "exit boot=%d self=%d", boot.code, self.code)
@@ -234,6 +239,42 @@ func divergenceKey(boot, self outcome) string {
 			stream.name, n, normalizeLine(x), normalizeLine(y))
 	}
 	return b.String()
+}
+
+// agreesSoFar reports whether the two runs said the same thing over the output
+// they both managed to produce. It is the part of a timed-out comparison that
+// belongs to the implementations rather than to the clock.
+func agreesSoFar(boot, self outcome) bool {
+	return prefixAgrees(boot.stdout, self.stdout) && prefixAgrees(boot.stderr, self.stderr)
+}
+
+// prefixAgrees compares two streams over the complete lines both of them
+// contain. The shorter stream ends the comparison, because a run the budget cut
+// short has written a prefix of what it would have written and the length of
+// that prefix is the machine's business.
+func prefixAgrees(a, b string) bool {
+	al, bl := completeLines(a), completeLines(b)
+	n := len(al)
+	if len(bl) < n {
+		n = len(bl)
+	}
+	for i := 0; i < n; i++ {
+		if al[i] != bl[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// completeLines is the lines of a stream that were finished. A process killed
+// mid-write leaves a fragment after the last newline; it is not a line, and
+// comparing it would put the scheduler back into the key.
+func completeLines(s string) []string {
+	i := strings.LastIndexByte(s, '\n')
+	if i < 0 {
+		return nil
+	}
+	return strings.Split(s[:i], "\n")
 }
 
 func normalizeLine(s string) string {

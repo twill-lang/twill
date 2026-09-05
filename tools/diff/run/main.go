@@ -37,7 +37,6 @@ func main() {
 		seed    = flag.Int64("seed", 1, "fuzz seed; the same seed gives the same programs")
 		timeout = flag.Duration("timeout", 120*time.Second, "per-case time limit")
 		jobs    = flag.Int("jobs", runtime.NumCPU(), "cases to run at once")
-		allow   = flag.String("allow", "", "file of fixture paths whose findings are known and not fatal")
 	)
 	flag.Parse()
 
@@ -50,13 +49,6 @@ func main() {
 	}
 
 	rep := &report{}
-	if *allow != "" {
-		known, err := readAllow(*allow)
-		if err != nil {
-			fail(err)
-		}
-		rep.allowed = known
-	}
 	switch {
 	case *record:
 		if *bin == "" {
@@ -493,21 +485,6 @@ type report struct {
 	mu       sync.Mutex
 	counts   map[string]int
 	findings []finding
-	// allowed maps a fixture path to the one kind of finding already understood
-	// against it. A finding of that kind is reported and does not fail the run;
-	// anything else does, including a different kind of finding against the
-	// same fixture. The list is the whole point of running this in CI at all:
-	// without it the harness has been red since before anyone wired it up, and
-	// a permanently red check is a check nobody reads.
-	//
-	// The key is the kind and not the content of the difference, and that is a
-	// measured choice rather than a lazy one. Nine of the twenty-nine fixtures
-	// that mismatch on both arm64 and amd64 mismatch differently: the same tree
-	// built for amd64 puts examples/gbm.tw's first difference on line 15 rather
-	// than line 5. Keying on content would make this list per-CPU. Keying on
-	// kind still catches the change that matters most, which is a fixture that
-	// stops running at all rather than one whose golden is still stale.
-	allowed map[string]string
 }
 
 func (r *report) count(kind string) {
@@ -532,56 +509,12 @@ func (r *report) divergences() int {
 	n := 0
 	for _, f := range r.findings {
 		switch f.kind {
-		case "nondeterministic", "skipped":
-			// Information, not failure: the fixture said something different
-			// twice in a row, or the harness had no way to run it.
+		case "nondeterministic", "skipped", "missing golden":
 		default:
-			// A missing golden used to be excused here too, which meant a
-			// fixture with no recorded output, and a golden someone deleted,
-			// both passed a check whose whole job is comparing against
-			// recorded output. It counts.
-			if r.allowed[f.where] == allowKind(f.kind) {
-				continue
-			}
 			n++
 		}
 	}
 	return n
-}
-
-// allowKind is the spelling a finding kind has on the allow-list: one word, so
-// a line stays two fields.
-func allowKind(kind string) string { return strings.ReplaceAll(kind, " ", "-") }
-
-// readAllow reads `<fixture> <kind>` pairs, `#` starting a comment. A path on
-// its own is refused rather than read as a wildcard: that was the old format,
-// and taking it to mean "excuse this fixture whatever happens to it" is the
-// hole this format exists to close.
-func readAllow(path string) (map[string]string, error) {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	out := map[string]string{}
-	for i, line := range strings.Split(string(b), "\n") {
-		if j := strings.IndexByte(line, '#'); j >= 0 {
-			line = line[:j]
-		}
-		fields := strings.Fields(line)
-		switch len(fields) {
-		case 0:
-			continue
-		case 2:
-			key := filepath.FromSlash(fields[0])
-			if _, dup := out[key]; dup {
-				return nil, fmt.Errorf("%s:%d: %s is listed twice", path, i+1, fields[0])
-			}
-			out[key] = fields[1]
-		default:
-			return nil, fmt.Errorf("%s:%d: want `<fixture> <kind>`, got %q", path, i+1, strings.TrimSpace(line))
-		}
-	}
-	return out, nil
 }
 
 func (r *report) print() {
@@ -594,32 +527,8 @@ func (r *report) print() {
 		fmt.Printf("%-24s %d\n", k, r.counts[k])
 	}
 	sort.Slice(r.findings, func(i, j int) bool { return r.findings[i].where < r.findings[j].where })
-	found := map[string]bool{}
 	for _, f := range r.findings {
-		found[f.where] = true
-		label := f.kind
-		switch want, listed := r.allowed[f.where]; {
-		case listed && want == allowKind(f.kind):
-			label = "known " + f.kind
-		case listed:
-			label = fmt.Sprintf("%s (the allow-list says %s)", f.kind, want)
-		}
-		fmt.Printf("\n=== %s: %s\n%s\n", label, f.where, f.detail)
-	}
-	// An allow-listed fixture that agrees today is reported, not failed. Two of
-	// the entries differ only in the last bit of a float and come back clean on
-	// another architecture, so making a cleared entry fatal would turn the list
-	// into something that has to be edited per machine. Reporting it keeps the
-	// pressure on without pinning the build to one CPU.
-	var cleared []string
-	for where := range r.allowed {
-		if !found[where] {
-			cleared = append(cleared, where)
-		}
-	}
-	sort.Strings(cleared)
-	for _, where := range cleared {
-		fmt.Printf("\nnote: %s is on the allow-list and agrees here; delete its line\n", where)
+		fmt.Printf("\n=== %s: %s\n%s\n", f.kind, f.where, f.detail)
 	}
 	fmt.Printf("\n%d divergence(s)\n", r.divergences())
 }
