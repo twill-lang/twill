@@ -1242,3 +1242,26 @@ let HEX: I64 = 2
 		t.Errorf("the two checkers disagree.\n  go:   %s\n  self: %s", diags[0].Msg, out)
 	}
 }
+
+// The rank-preserving flag is a shape change, and a shape change is exactly the
+// kind of thing the two implementations can transcribe differently: one of them
+// composes reduce-then-reshape in the interpreter and the other in the tensor
+// kernel. Printing the result compares the shape, the values, the dtype tag and
+// the diagnostics in one go.
+func TestSelfHostedKeepdimsMatches(t *testing.T) {
+	src := "let m = tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])\n" +
+		"print(sum(m, 1, true))\nprint(sum(m, 1, false))\nprint(sum(m, 1, 1))\n" +
+		"print(mean(m, 0, true))\nprint(max(m, -1, true))\nprint(min(m, 1, true))\n" +
+		"print(prod(m, 1, true))\nprint(median(m, 1, true))\n" +
+		"print(argmax(m, 1, true))\nprint(argmin(m, 0, true))\n" +
+		"print(logsumexp(m, 1, true))\n" +
+		"print(m - sum(m, 1, true) / 3.0)\n" +
+		"print(grad(fn(v) = sum(sum(v, 1, true)))(m))\n"
+	goOut, selfOut := runBothWays(t, src)
+	if goOut != selfOut {
+		t.Fatalf("keepdims differs:\n Go   %q\n self %q", goOut, selfOut)
+	}
+	if !strings.Contains(goOut, "shape=[2, 1]") {
+		t.Fatalf("expected a kept axis in the output, got %q", goOut)
+	}
+}

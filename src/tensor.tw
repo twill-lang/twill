@@ -1267,11 +1267,11 @@ fn remove_axis(shape: Arr[I64], axis: I64) -> Arr[I64] {
 }
 
 # The reduced shape with a 1 left in the reduced axis. This is what other array
-# libraries spell `keepdims=True`. The bootstrap has no such flag and asks the
-# caller to `broadcast_to` the original shape instead; both are here because a
-# 1-axis is what makes the result line up against the input again, and
-# right-aligned broadcasting will not do that on its own: reducing axis 1 of a
-# [2, 3] gives a [2], and [2] does not align with [2, 3].
+# libraries spell `keepdims=True` and what a reduction's third argument spells
+# here. `broadcast_to` remains alongside it, because a 1-axis is what makes the
+# result line up against the input again and right-aligned broadcasting will not
+# do that on its own: reducing axis 1 of a [2, 3] gives a [2], and [2] does not
+# align with [2, 3].
 fn keep_axis(shape: Arr[I64], axis: I64) -> Arr[I64] {
   let out: Arr[I64] = copy_shape(shape)
   out[axis] = 1

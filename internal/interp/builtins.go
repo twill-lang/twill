@@ -1318,26 +1318,39 @@ func (ip *Interp) installBuiltins() {
 	})
 
 	// Reductions: one argument reduces everything to a scalar; a second
-	// argument reduces a single axis.
+	// argument reduces a single axis; a third is the rank-preserving flag,
+	// which leaves that axis in at length 1 instead of dropping it.
+	//
+	// The count is checked before argument 0 is read, which it was not: `sum()`
+	// used to reach asTensor on an empty slice and panic.
 	reduce := func(name string, full func(*tensor.Tensor) *tensor.Tensor,
 		axis func(*tensor.Tensor, int) (*tensor.Tensor, error)) {
 		def(name, -1, true, func(a []value.Value) (value.Value, error) {
+			if len(a) == 0 || len(a) > 3 {
+				return nil, fmt.Errorf("%s expects (tensor) or (tensor, axis[, keepdims])", name)
+			}
 			t, err := asTensor(a[0], name)
 			if err != nil {
 				return nil, err
 			}
-			switch len(a) {
-			case 1:
+			if len(a) == 1 {
 				return full(t), nil
-			case 2:
-				ax, err := intOf(a[1], name)
-				if err != nil {
+			}
+			ax, err := intOf(a[1], name)
+			if err != nil {
+				return nil, err
+			}
+			keep := false
+			if len(a) == 3 {
+				if keep, err = flagOf(a[2], name); err != nil {
 					return nil, err
 				}
-				return axis(t, ax)
-			default:
-				return nil, fmt.Errorf("%s expects (tensor) or (tensor, axis)", name)
 			}
+			res, err := reduceAxisKeep(t, ax, keep, axis)
+			if err != nil {
+				return nil, err
+			}
+			return res, nil
 		})
 	}
 	reduce("sum", tensor.Sum, tensor.SumAxis)
@@ -1425,29 +1438,48 @@ func (ip *Interp) installBuiltins() {
 	topping("topk", tensor.TopKAxis)
 	topping("argtopk", tensor.ArgTopKAxis)
 
-	// argmax/argmin/flip all take an optional axis and default to the last one.
-	lastAxis := func(name string, run func(*tensor.Tensor, int) (*tensor.Tensor, error)) {
+	// argmax/argmin/flip/diff all take an optional axis and default to the last
+	// one. argmax and argmin remove that axis, so they take the rank-preserving
+	// flag as well; flip keeps the rank it was given and diff only shortens the
+	// axis, so for those a third argument is the arity error it always was.
+	lastAxis := func(name string, keepdims bool, run func(*tensor.Tensor, int) (*tensor.Tensor, error)) {
+		usage := name + " expects (tensor[, axis])"
+		maxArgs := 2
+		if keepdims {
+			usage = name + " expects (tensor[, axis[, keepdims]])"
+			maxArgs = 3
+		}
 		def(name, -1, true, func(a []value.Value) (value.Value, error) {
-			if len(a) == 0 || len(a) > 2 {
-				return nil, fmt.Errorf("%s expects (tensor[, axis])", name)
+			if len(a) == 0 || len(a) > maxArgs {
+				return nil, fmt.Errorf("%s", usage)
 			}
 			t, err := asTensor(a[0], name)
 			if err != nil {
 				return nil, err
 			}
 			axis := len(t.Shape) - 1
-			if len(a) == 2 {
+			if len(a) >= 2 {
 				if axis, err = intOf(a[1], name); err != nil {
 					return nil, err
 				}
 			}
-			return run(t, axis)
+			keep := false
+			if len(a) == 3 {
+				if keep, err = flagOf(a[2], name); err != nil {
+					return nil, err
+				}
+			}
+			res, err := reduceAxisKeep(t, axis, keep, run)
+			if err != nil {
+				return nil, err
+			}
+			return res, nil
 		})
 	}
-	lastAxis("argmax", tensor.ArgmaxAxis)
-	lastAxis("argmin", tensor.ArgminAxis)
-	lastAxis("flip", tensor.FlipAxis)
-	lastAxis("diff", tensor.DiffAxis)
+	lastAxis("argmax", true, tensor.ArgmaxAxis)
+	lastAxis("argmin", true, tensor.ArgminAxis)
+	lastAxis("flip", false, tensor.FlipAxis)
+	lastAxis("diff", false, tensor.DiffAxis)
 
 	// roll takes the shift first, since that is the argument nobody omits.
 	def("roll", -1, true, func(a []value.Value) (value.Value, error) {
@@ -1489,7 +1521,39 @@ func (ip *Interp) installBuiltins() {
 		})
 	}
 	lastAxisOp("softmax", tensor.Softmax)
-	lastAxisOp("logsumexp", tensor.LogSumExp)
+
+	// logsumexp reduces the axis it works on rather than preserving it, so it
+	// takes the rank-preserving flag and does not share softmax's dispatch any
+	// more. It keeps softmax's laxity about the argument count -- neither ever
+	// refused a trailing argument and turning that into an error is a separate
+	// decision -- so the third position gains a meaning it did not have and no
+	// call that ran before stops running.
+	def("logsumexp", -1, true, func(a []value.Value) (value.Value, error) {
+		if len(a) == 0 {
+			return nil, fmt.Errorf("logsumexp expects (tensor[, axis[, keepdims]])")
+		}
+		t, err := asTensor(a[0], "logsumexp")
+		if err != nil {
+			return nil, err
+		}
+		axis := len(t.Shape) - 1
+		if len(a) >= 2 {
+			if axis, err = intOf(a[1], "logsumexp"); err != nil {
+				return nil, err
+			}
+		}
+		keep := false
+		if len(a) >= 3 {
+			if keep, err = flagOf(a[2], "logsumexp"); err != nil {
+				return nil, err
+			}
+		}
+		res, err := reduceAxisKeep(t, axis, keep, tensor.LogSumExp)
+		if err != nil {
+			return nil, err
+		}
+		return res, nil
+	})
 
 	def("reshape", -1, true, func(a []value.Value) (value.Value, error) {
 		if len(a) < 2 {
@@ -3391,6 +3455,51 @@ func int64Of(v value.Value, who string) (int64, error) {
 		return 0, err
 	}
 	return int64(x), nil
+}
+
+// flagOf reads a boolean flag argument, written either way.
+//
+// The flags that came before this one -- sort's `descending`, topk's `smallest`
+// -- are numbers, because a comparison in twill already yields 1 and 0, and
+// `sort(t, 0, true)` is a runtime error today for want of a Bool case here. A
+// new flag does not have to inherit that. Both spellings are accepted, so
+// `keepdims` can be written the way anybody would write it, and nothing that
+// worked before means anything different.
+func flagOf(v value.Value, who string) (bool, error) {
+	if b, ok := v.(value.Bool); ok {
+		return bool(b), nil
+	}
+	n, err := scalarOf(v, who)
+	if err != nil {
+		return false, err
+	}
+	return n != 0, nil
+}
+
+// reduceAxisKeep runs an axis reduction and, when keep is set, puts the reduced
+// axis back at length 1 -- what every other array library spells `keepdims`.
+//
+// It is a composition, reduce then reshape, rather than a flag threaded through
+// every kernel. Reshape's gradient is the identity on the buffer, so no
+// reduction's backward pass has to learn that the flag exists, and the
+// self-hosted side is the same composition (src/tensor.tw reduce_axis_keep)
+// rather than a second transcription of seven kernels.
+//
+// The reduction runs first so that an out-of-range axis is reported by the
+// kernel, in the kernel's words, exactly as it is without the flag. That leaves
+// the axis known to be in range by the time the shape is built.
+func reduceAxisKeep(t *tensor.Tensor, ax int, keep bool,
+	run func(*tensor.Tensor, int) (*tensor.Tensor, error)) (*tensor.Tensor, error) {
+	res, err := run(t, ax)
+	if err != nil || !keep {
+		return res, err
+	}
+	if ax < 0 {
+		ax += len(t.Shape)
+	}
+	shape := append([]int(nil), t.Shape...)
+	shape[ax] = 1
+	return tensor.Reshape(res, shape)
 }
 
 func scalarOf(v value.Value, who string) (float64, error) {

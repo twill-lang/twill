@@ -2,6 +2,50 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Rank-preserving reductions.** Every builtin that removes an axis takes a
+  third argument that leaves it in at length 1 instead, which is what other
+  array libraries spell `keepdims`:
+
+  ```
+  sum(t, 1)          # a [2, 3] becomes a [2]
+  sum(t, 1, true)    # a [2, 3] becomes a [2, 1]
+  ```
+
+  The point is the shape. Broadcasting aligns from the right, so a `[2]` does
+  not line back up against the `[2, 3]` it was reduced from and a `[2, 1]` does;
+  `t - mean(t, 1, true)` centres each row, where `t - mean(t, 1)` was a shape
+  error. `num.keep` and `nn.keepdim`, which wrapped the reshape and the
+  `broadcast_to` by hand, still work and are still the way to expand against a
+  shape that is not one of the operands.
+
+  It applies to `sum`, `mean`, `max`, `min`, `prod`, `median`, `logsumexp`,
+  `argmax` and `argmin`. `argmax` and `argmin` return positions rather than
+  values, and that changes nothing about what the flag means, because it is a
+  claim about the shape and not about the numbers in it: `argmax(t, 1, true)`
+  is a `[2, 1]` of indices, which is the shape you need to compare against the
+  input those indices point into. `softmax` and `flip` preserve the shape they
+  were given and `diff` shortens an axis rather than removing one, so none of
+  those three takes the flag.
+
+  The flag is positional, because twill has no named arguments (roadmap entry
+  29). Unlike `sort`'s `descending` and `topk`'s `smallest`, which are numbers,
+  it may be written as a Bool or as a number: `sort(t, 0, true)` is still a
+  runtime error and `sum(t, 0, true)` is not.
+
+  Both implementations compose it the same way, as the reduction followed by a
+  reshape, so no reduction's backward pass has to know the flag exists and the
+  gradient is unchanged. Both checkers fold it into the static shape, so the
+  broadcast error the flag exists to remove is gone at check time and the one it
+  does not remove is still reported.
+
+### Fixed
+
+- **`sum()` with no arguments panicked the Go checker** instead of reaching the
+  arity error the runtime already had for it. Every reduction did. The
+  self-hosted checker did not, so it was also a divergence.
+
 ## [1.10.0] - 2026-09-05
 
 ### Added

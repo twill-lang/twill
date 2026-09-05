@@ -5024,10 +5024,11 @@ fn reduce_result(c: Checker, name: Str, ex: ast.Call, arg_types: Arr[Type]) -> T
   if len(arg_types) == 1 {
     return set_dtype(tensor_with_unit(arr_new(), u), rdt)
   }
-  if len(arg_types) == 2 {
+  if len(arg_types) == 2 or len(arg_types) == 3 {
     if rank0_axis(c, ex, arg_types) {
       return TUnknown
     }
+    let keep: Flag = const_keepdims(ex.args, 2)
     match arg_tensor(arg_types, 0) {
       Some(t) => {
         if len(t.dims) > 0 {
@@ -5038,7 +5039,10 @@ fn reduce_result(c: Checker, name: Str, ex: ast.Call, arg_types: Arr[Type]) -> T
               # and the one people write when they mean "the last axis".
               if ax < 0 { ax = ax + len(t.dims) }
               if ax >= 0 and ax < len(t.dims) {
-                return set_dtype(tensor_with_unit(remove_dim(t.dims, ax), u), rdt)
+                # The axis is checked either way; only the shape depends on a
+                # flag the checker may not be able to fold.
+                if not keep.known { return TUnknown }
+                return set_dtype(tensor_with_unit(reduced_dims(t.dims, ax, keep.value), u), rdt)
               }
               report_axis(c, ex, t)
             },
@@ -5077,14 +5081,15 @@ fn axis_preserve_result(c: Checker, ex: ast.Call, arg_types: Arr[Type], axis_arg
 }
 
 # axis_reduce_result handles argmax/argmin/logsumexp, which always reduce one
-# axis and default to the last. The result is dimensionless: an index has no
-# unit, and logsumexp's argument had to be dimensionless anyway.
+# axis and default to the last, and take the rank-preserving flag in the third
+# position. The result is dimensionless: an index has no unit, and logsumexp's
+# argument had to be dimensionless anyway.
 fn axis_reduce_result(c: Checker, name: Str, ex: ast.Call, arg_types: Arr[Type]) -> Type {
   match arg_tensor(arg_types, 0) {
     Some(t) => {
       if len(t.dims) == 0 { return TUnknown }
       let axis: I64 = len(t.dims) - 1
-      if len(ex.args) == 2 {
+      if len(ex.args) >= 2 {
         match const_int(ex.args[1]) {
           Some(ax) => axis = ax,
           None => return TUnknown,
@@ -5095,13 +5100,52 @@ fn axis_reduce_result(c: Checker, name: Str, ex: ast.Call, arg_types: Arr[Type])
         report_axis(c, ex, t)
         return TUnknown
       }
+      let keep: Flag = const_keepdims(ex.args, 2)
+      if not keep.known { return TUnknown }
       # An index is i32 whatever it was taken over (tensor.tw); logsumexp
       # keeps a float dtype and declines an integer one.
       let rdt: I64 = float_result_dtype(t.dtype)
       if in_set(name, "argmax argmin") { rdt = tensor.DT_I32 }
-      set_dtype(tensor_of(remove_dim(t.dims, axis)), rdt)
+      set_dtype(tensor_of(reduced_dims(t.dims, axis, keep.value)), rdt)
     },
     None => TUnknown,
+  }
+}
+
+# The input's shape with the reduced axis dropped, or left in at length 1 when
+# the rank-preserving flag is set. One place decides what keepdims does to a
+# shape, so the reductions and the index reductions cannot drift apart on it.
+fn reduced_dims(dims: Arr[I64], axis: I64, keep: Bool) -> Arr[I64] {
+  if not keep { return remove_dim(dims, axis) }
+  let out: Arr[I64] = arr_new()
+  let i: I64 = 0
+  while i < len(dims) {
+    if i == axis { push(out, 1) } else { push(out, dims[i]) }
+    i = i + 1
+  }
+  out
+}
+
+# A folded flag argument. `known` is false when the argument is there but is not
+# a literal: the result's rank then depends on a value the checker cannot see,
+# and there is no answer to give, because guessing either shape would report
+# mismatches against a shape the program may never have.
+struct Flag {
+  known: Bool,
+  value: Bool,
+}
+
+# Absent is false; a literal `true`, `false` or number is what it says, matching
+# flag_of's rule at runtime that a non-zero number is set.
+fn const_keepdims(args: Arr[ast.Expr], idx: I64) -> Flag {
+  if len(args) <= idx { return Flag { known: true, value: false } }
+  match args[idx] {
+    EBool(b) => return Flag { known: true, value: b.value },
+    _ => unit,
+  }
+  match const_int(args[idx]) {
+    Some(n) => Flag { known: true, value: n != 0 },
+    None => Flag { known: false, value: false },
   }
 }
 
