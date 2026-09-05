@@ -1,0 +1,39 @@
+mode systems
+
+# The two clocks. Neither reading can be printed -- they are different on every
+# run -- so what is printed is what the contract actually promises: the
+# monotonic clock never goes backwards, the wall clock is somewhere after the
+# start of 2020, and the difference between two readings of either is a
+# duration rather than a moment.
+
+fn yes(label: Str, value: Bool) {
+  write_out(label)
+  write_out(" = ")
+  write_out(str(value))
+  write_out("\n")
+}
+
+fn spin(n: I64) -> I64 {
+  let total: I64 = 0
+  let i: I64 = 0
+  while i < n {
+    total = total + i
+    i = i + 1
+  }
+  total
+}
+
+fn main() {
+  let t0: I64 = mono_ns()
+  let _burn: I64 = spin(20000)
+  let t1: I64 = mono_ns()
+  yes("the monotonic clock does not go backwards", t1 >= t0)
+  yes("and its zero point is not in the future", t0 >= 0)
+
+  # 1577836800000 is 2020-01-01T00:00:00Z in milliseconds. The wall clock being
+  # after it is the whole of what can be said about it without printing it.
+  let now: F64 = clock_now_ms()
+  yes("the wall clock is after 2020", now > 1577836800000.0)
+  yes("the wall clock is before the year 4000", now < 64060588800000.0)
+  yes("two wall-clock readings do not go backwards", clock_now_ms() >= now)
+}

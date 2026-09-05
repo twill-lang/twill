@@ -34,14 +34,12 @@
 # Each of these dies at a named line on a named builtin that src/eval.tw does
 # not dispatch. docs/conformance.md lists every name in that state.
 #
-# io_test.tw, json_test.tw and text_test.tw were here until the systems-mode
-# suites moved from std/tests/systems_harness.tw to std/test. The old harness
-# wrote its summary with write_out and its failures with write_err, and neither
-# is dispatched self-hosted, so all three died on the way out of a run that had
-# otherwise agreed line for line. std/test prints through `print`, which is
-# dispatched, so the three now agree byte for byte including the exit code and
-# their lines are gone from this list. That is the whole of what changed for
-# them: the divergence was in the harness, not in std/io, std/json or std/text.
+# Three lines left this section when the filesystem, clock and process port
+# landed: io_test.tw, json_test.tw and text_test.tw all died on the write_out
+# in std/tests/systems_harness.tw, which is how a systems-mode suite prints its
+# verdict, and now agree byte for byte. Nothing replaced them, which is the
+# claim worth reading: those three suites had no second divergence waiting
+# behind the first.
 #
 #   linalg_test.tw:362 builtin "f64_of_i64" ... has no implementation
 #   stats_test.tw:165  builtin "f64_of_i64" ... has no implementation

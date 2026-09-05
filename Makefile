@@ -58,16 +58,22 @@ check: build vet test race
 conformance: build
 	go run ./tools/conformance builtins -bin ./$(BINARY)
 
-# The gate. Two separate claims:
+# The gate. Three separate claims:
 #   1. docs/conformance.md matches what the two implementations actually do.
 #   2. Every std/tests suite produces the same bytes under both, except the ones
 #      on testdata/conformance/suite-allow.txt, each of which is keyed to the
 #      divergence it excuses rather than to the suite's name.
+#   3. Every case under testdata/conformance/cases produces the same bytes under
+#      both, with no exceptions and no allow-list. A suite is code written for
+#      another purpose and most of what it finds is a port that is not finished;
+#      a case is written to pin one builtin and is checked in only once both
+#      sides agree, so a divergence there is a regression.
 # The allow-list may only shrink. A new disagreement is a failure, and so is a
 # divergence that has changed into a different one under an existing line.
 conformance-check: build
 	go run ./tools/conformance builtins -bin ./$(BINARY) -check
 	go run ./tools/conformance suites -bin ./$(BINARY)
+	go run ./tools/conformance cases -bin ./$(BINARY)
 
 # Everything, including the linters and the conformance gate. What the release
 # gate should be.

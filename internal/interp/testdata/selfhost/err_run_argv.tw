@@ -1,0 +1,8 @@
+mode systems
+
+# run takes a program and a vector of arguments, and never a command line. A
+# single string where the vector belongs is the mistake that a shell would have
+# hidden, so it is refused by name.
+fn main() {
+  print(str(run("/bin/echo", "hello world", "")))
+}

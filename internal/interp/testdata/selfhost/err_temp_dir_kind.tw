@@ -1,0 +1,7 @@
+mode systems
+
+# temp_dir takes a name prefix, and the refusal says prefix rather than path:
+# it is the one filesystem builtin whose argument is not a path.
+fn main() {
+  print(str(temp_dir(7)))
+}

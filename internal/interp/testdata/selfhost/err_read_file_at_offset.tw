@@ -1,0 +1,8 @@
+mode systems
+
+# read_file_at reads its offset with the exact integer conversion, not the
+# truncating one: a fractional offset is refused rather than rounded, because
+# rounding would accept a call the bootstrap rejects.
+fn main() {
+  print(str(read_file_at("somewhere.txt", 0.5, 4)))
+}
