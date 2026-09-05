@@ -14,78 +14,9 @@
   for the changed value, or declare it with let if it is meant to change.
   ```
 
-  The reason it exists is the top level. A plain `import` drops a file's
-  top-level definitions into the importing scope and they stay the one binding,
-  so a lookup table declared with `let` is writable by anything that imports it,
-  and every other importer then reads the replacement. weft's `QUADRANTS`,
-  `DENSITY`, `LEVELS` and `HEX` are the reported case: a palette a caller can
-  replace is a theme file that cannot keep the promise it makes about which
-  colour means what. `docs/roadmap.md` entry 28.
-
-  **The rule crosses the file boundary**, because a rule that stopped at the
-  file would not have answered the report at all. Both checkers follow a
-  program's imports far enough to collect the top-level `const` names they
-  declare, and then refuse an assignment through one, an element or field write
-  through one, and a top-level rebinding of one:
-
-  ```
-  HEX is declared const in "theme.tw" on line 2, so nothing may be assigned
-  through that name: not the binding, and not an element or field of it. The
-  handle is shared, so this write is what every other importer then reads.
-  Bind a new name for the changed value; whether HEX may change is that
-  file's decision.
-  ```
-
-  The Go checker already walked imports for their enum declarations and now
-  collects consts in the same walk; the self-hosted checker read no imported
-  files at all and gained a walk of its own, for consts only. Both spellings are
-  covered: `HEX = ...` after a plain import, and `theme.HEX = ...` under an
-  alias. Two aliases deep (`mid.theme.HEX = ...`) is not.
-
-  **The two walks stop in the same place, which took two corrections to be
-  true.** The bound is nine files down any one branch, and the checkers held
-  nine and eight while a comment in `src/check.tw` said they agreed: a chain of
-  nine -- `app.tw` through eight modules into a `theme.tw` declaring `const
-  HEX` -- was refused by one and called clean by the other. In the other
-  direction, a file imported both under an alias and plainly was collected by
-  the self-hosted walk and missed by the Go one, which followed the aliased
-  import first, threw its consts away, and left the file marked visited for the
-  plain branch that shared its cycle guard. Neither is reachable from the
-  ecosystem, so neither the differential sweep nor a test found them; both are
-  now built by hand in `internal/checker/constimport_test.go` and, across the
-  two implementations, in `internal/interp/selfhost_test.go`. The nine-file cap
-  is in `docs/language-guide.md` under **`const`**, because a chain of ten is a
-  write the rule does not refuse.
-
-  **The self-hosted walk runs on demand**, which is not a nicety: run eagerly it
-  cost the compiler's own entry points a factor of twelve to sixteen. Parsing an
-  imported
-  file there is interpreted twill parsing twill, and a check of `src/main.tw`
-  pulls in the whole front end. Three runs each, user CPU, self-hosted `check`
-  of the file named:
-
-  ```
-                    main   eager walk   on demand
-  src/main.tw       0.53s       6.16s       0.56s
-  src/cli/main.tw   0.40s       6.40s       0.44s
-  ```
-
-  Nothing in either file could have been affected by the answer: both import
-  only under an alias and neither assigns through one, so 14,415 lines of twill
-  were parsed to fill maps nothing read. The maps are now filled at the three
-  places that read them, and each fill is narrow -- a plain import's names when
-  a top-level binding or a bare-name assignment wants them, one alias's names
-  when an assignment is written through that alias -- and the parses are
-  memoised across the branches of one check, which is worth 13.0s to 2.3s on
-  six plain imports of one 6000-line module. Laziness cannot
-  change a verdict: what the walk collects is a function of the file set, and
-  every question is asked after the whole file has been read. The Go checker
-  fills both maps eagerly, and the differential tests are what say the two
-  still agree.
-
-  **A `const` is the only binding of its name in the scope that declares it.** A
-  second `let` of that name there is refused rather than quietly taking the
-  const's place:
+  **A `const` is also the only binding of its name in the scope that declares
+  it.** A second `let` of that name there is refused rather than quietly taking
+  the const's place:
 
   ```
   HEX is declared const on line 1, so the name cannot be bound a second time
@@ -99,26 +30,48 @@
   `const` was refused and a `let` below it was not. Two plain `let`s of one name
   stay legal, and an inner scope is still a different scope.
 
+  The rule lives in the Go checker and in `src/check.tw`, word for word. The
+  differential tests in `internal/interp/selfhost_test.go` take the expected
+  text from `checker.Check` rather than a literal, so a reworded diagnostic on
+  either side fails the build instead of splitting the two implementations.
+
+  **What is not delivered: a caller in another file can still assign to an
+  imported `const`.** That is `docs/roadmap.md` entry 28's actual complaint --
+  weft's `HEX`, `QUADRANTS`, `DENSITY` and `LEVELS` are lookup tables an
+  importer replaces -- and this change does not answer it. A plain `import`
+  copies the name into the importing scope and the handle is shared, so a
+  second file's `HEX = ...` or `HEX[0] = ...` is still accepted by both
+  checkers and is still what every other importer then reads. `const` today
+  refuses a write in the file that declares the binding, which catches a
+  library breaking its own promise and nothing else. Entry 28 stays open.
+
+  A cross-file rule was written and is withdrawn. It rode on the Go checker's
+  import walk, the walk that exists for cross-module enum exhaustiveness, and
+  changing that walk broke it: a file importing nine or more siblings where a
+  later one declared an enum stopped being followed, so a non-exhaustive
+  `match` that `main` refuses was accepted, and whether it was accepted
+  depended on the order the imports were written in. The same change made an
+  aliased-import walk exponential in fan-out. `internal/checker/imports.go` is
+  therefore byte-identical to the version before this branch, and `check()` in
+  `src/check.tw` reads one file as it always did.
+
   `let` was **not** made read-only at the top level instead, which is the other
   half of what weft asked for. A read-only `let` was implemented behind a flag
-  and swept over the 563 `.tw` files in twill, `std`, `testdata`, `examples` and
-  the five satellite repositories entry 28 counts: it refused 45 of them,
-  including this repository's own `std/tests/harness.tw` and `src/eval.tw`, the
-  test harness in every one of spool, loom, bobbin, weft and warp, warp's
-  `examples/train.tw`, and twelve numeric-mode programs under `examples/` whose
-  training loop is written at file level. Making `let` read-only would have
-  refused all of them, so the guarantee is asked for rather than imposed.
+  and swept over the 545 `.tw` files under `src/`, `std/`, `testdata/` and
+  `examples/` here plus the five satellite repositories entry 28 counts (spool,
+  loom, bobbin, weft, warp): it refused 45 of them, including this repository's
+  own `std/tests/harness.tw` and `src/eval.tw`, the test harness in every one
+  of the five satellites, warp's `examples/train.tw`, fourteen `testdata/cases`
+  fixtures, and twelve numeric-mode programs under `examples/` whose training
+  loop is written at file level, ten of which are mirrored again under
+  `testdata/examples/`. Making `let` read-only would have refused all of them,
+  so the guarantee is asked for rather than imposed.
 
-  Three limits are deliberate and are written down in `docs/language-guide.md`
-  under **`const`**. It is not a deep freeze: `HEX[0] = ...` is refused but
-  `push(HEX, x)` is not, and neither is a function handed the handle, because
-  `Arr` has reference semantics and nothing tracks where a handle goes. It does
-  not reach through an alias of an alias: `mid.theme.HEX = ...` is not refused,
-  because that name is two aliases deep and the walk collects names rather than
-  modelling a namespace. And the walk stops after nine files, so a `const`
-  reachable only through a chain of ten imports is not found. Entry 28's
-  aliasing half is still open; its binding half, which is what weft reported, is
-  closed.
+  One further limit is deliberate and is written down in
+  `docs/language-guide.md` under **`const`**. It is not a deep freeze:
+  `HEX[0] = ...` is refused but `push(HEX, x)` is not, and neither is a
+  function handed the handle, because `Arr` has reference semantics and nothing
+  tracks where a handle goes.
 
 - **`black_box(x)`, a compiler barrier, and the correction that it was already
   needed.** `docs/roadmap.md` entry 30 is bobbin's, and it was filed with the

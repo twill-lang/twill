@@ -539,21 +539,8 @@ It is written wherever a `let` can be, and the reason it exists is the top
 level. A plain `import` drops a file's top-level definitions into the importing
 scope, and they stay **the one binding**, so a lookup table a library declares
 with `let` can be replaced by anything that imports it, and every other importer
-then reads the replacement. A theme file cannot promise which colour means what
-until the table is a `const`.
-
-So the rule crosses the file boundary. A `const` in a file you import may not be
-assigned to, written through, or bound again:
-
-```rust
-import "theme.tw"
-HEX = other()       # refused: theme.tw declared HEX const
-HEX[0] = "#eee"     # refused
-let HEX = other()   # refused: a plain import brings HEX into this scope
-```
-
-Under a namespace it is the same rule with a longer name, `theme.HEX = ...` and
-`theme.HEX[0] = ...`, and it holds through a chain of plain imports too.
+then reads the replacement. Declaring the table `const` is how a theme file says
+it did not mean that to happen.
 
 A `const` is also the only binding of its name in the scope that declares it. A
 second `let` of the same name there is refused rather than silently taking the
@@ -576,26 +563,26 @@ fn f() -> I64 {
 }
 ```
 
-Three things `const` deliberately does not do.
+Two things `const` deliberately does not do.
 
-It is not a deep freeze. It guards what is written through the name, so
+**It does not cross a file boundary yet.** The checker reads one file, so it
+refuses a write to `HEX` in the file that declares it and accepts the same write
+in a file that imports it:
+
+```rust
+import "theme.tw"
+HEX = other()       # accepted today, though theme.tw declared HEX const
+```
+
+That is the case `const` is eventually for, and it is not done. `docs/roadmap.md`
+entry 28 tracks it.
+
+**It is not a deep freeze.** It guards what is written through the name, so
 `HEX[0] = ...` is refused, but `push(HEX, x)` is not, and neither is a function
 handed the handle: `Arr`, `Dict`, `struct` and `Bytes` have reference semantics
 (see **`struct`, and what a parameter is**) and nothing tracks where a handle
 goes. `const` says this name will not be pointed somewhere else and will not be
 edited here.
-
-It does not reach through an alias of an alias. `mid.theme.HEX = ...`, where the
-declaring file was reached through a namespaced import inside a namespaced
-import, is not refused: that name is two aliases deep and the checker does not
-follow it.
-
-And it does not follow a chain of imports forever. The walk reads at most nine
-files down any one branch, so a `const` that is only reachable through ten is
-not found and the write is not refused. The cap is what keeps a check from
-turning into a directory traversal, and it is the same nine in both checkers:
-they held nine and eight for a while, which meant a program existed that one
-refused and the other called clean.
 
 `let` was left mutable at the top level on purpose. Module-level counters are
 written that way across the ecosystem, including by this repository's own

@@ -108,7 +108,7 @@ fn run_file(c: cp.Caps, path: Str) -> I64 {
   match parse.parse(src) {
     Err(e) => { write_err(render_syntax(c, path, src, e)); return EXIT_ERROR },
     Ok(prog) => {
-      let diags: Arr[check.Diagnostic] = check.check_file(prog, path)
+      let diags: Arr[check.Diagnostic] = check.check(prog)
       if len(diags) > 0 {
         write_err(render_diags(c, path, src, diags))
         return EXIT_ERROR
@@ -141,7 +141,7 @@ fn check_file(c: cp.Caps, path: Str) -> I64 {
   match parse.parse(src) {
     Err(e) => { write_err(render_syntax(c, path, src, e)); return EXIT_ERROR },
     Ok(prog) => {
-      let diags: Arr[check.Diagnostic] = check.check_file(prog, path)
+      let diags: Arr[check.Diagnostic] = check.check(prog)
       if len(diags) == 0 {
         write_out(ansi.paint(c, th.success(), th.mark_ok(c)) + " " +
           ansi.paint(c, th.emphasis(), path) + " " +

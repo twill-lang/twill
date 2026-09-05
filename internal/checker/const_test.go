@@ -24,9 +24,9 @@ import (
 //
 // The corpus and the counts are in CHANGELOG.md under `const`, and they are
 // there rather than here on purpose: this comment carried its own copy of them,
-// the sweep was re-run and corrected in the changelog, and the copy went stale
-// and said 643 files where the sweep read 563. A number worth quoting is worth
-// having one home.
+// the sweep was re-run, the changelog was corrected, and the copy here was left
+// behind saying the old figure. A number worth quoting is worth having one home,
+// so this comment quotes none.
 
 func TestAssigningAConstIsRefused(t *testing.T) {
 	wantOne(t, "mode systems\nconst K: I64 = 1\nfn f() {\n  K = 2\n}\n", "declared const on line 2")

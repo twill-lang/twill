@@ -287,7 +287,7 @@ fn precheck(path: Str, src: Str) -> I64 {
       return EXIT_ERROR
     },
     Ok(prog) => {
-      let diags: Arr[check.Diagnostic] = check.check_file(prog, path)
+      let diags: Arr[check.Diagnostic] = check.check(prog)
       if len(diags) > 0 {
         print_diags(path, src, diags)
         # Only an error refuses. A warning describes the program the author
@@ -326,7 +326,7 @@ fn check_only(path: Str) -> I64 {
       EXIT_ERROR
     },
     Ok(prog) => {
-      let diags: Arr[check.Diagnostic] = check.check_file(prog, path)
+      let diags: Arr[check.Diagnostic] = check.check(prog)
       if len(diags) == 0 {
         write_out(bytes.concat(path, ": no shape problems found\n"))
         return EXIT_OK
