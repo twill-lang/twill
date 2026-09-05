@@ -235,6 +235,10 @@ func gradCases() []gradCase {
 		{name: "square", data: v4, shape: []int{4}, build: Square},
 		{name: "exp", data: v4, shape: []int{4}, build: Exp},
 		{name: "log", data: pos4, shape: []int{4}, build: Log},
+		// log1p is defined for x > -1, so its sample sits inside that and still
+		// crosses zero; expm1 takes the ordinary spread.
+		{name: "log1p", data: []float64{0.7, -0.3, 2.1, -0.4}, shape: []int{4}, build: Log1p},
+		{name: "expm1", data: v4, shape: []int{4}, build: Expm1},
 		{name: "sqrt", data: pos4, shape: []int{4}, build: Sqrt},
 		{name: "sin", data: v4, shape: []int{4}, build: Sin},
 		{name: "cos", data: v4, shape: []int{4}, build: Cos},
@@ -623,7 +627,7 @@ func TestGradientCheckCoversEveryOperator(t *testing.T) {
 	// Operators the cases above exercise, named as the Go functions they call.
 	covered := map[string]bool{}
 	for _, n := range []string{
-		"Add", "Sub", "Mul", "Div", "Mod", "Neg", "Square", "Exp", "Log", "Sqrt",
+		"Add", "Sub", "Mul", "Div", "Mod", "Neg", "Square", "Exp", "Log", "Log1p", "Expm1", "Sqrt",
 		"Sin", "Cos", "Tanh", "Sigmoid", "Relu", "PowScalar", "Clip",
 		"Maximum", "Minimum", "Where",
 		"Sum", "Mean", "MaxAll", "MinAll", "Prod", "Median",

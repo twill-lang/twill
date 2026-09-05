@@ -283,10 +283,22 @@ masking exists so the operation is total and platform-independent, not because
 either is a useful thing to write. Do not rely on it. Where a shift count is
 computed, range-check it.
 
-#### Getting a logical right shift
+#### The logical right shift
 
-There is no `ushr` operator. Build one. `std/float.tw`'s `ushr` is the idiom,
-and it is what every caller in the ecosystem should use or copy:
+`shr` is arithmetic, so `ushr(x, k)` is the logical (zero-filling) one:
+
+```rust
+ushr(0 - 1, 1)   # 9223372036854775807, not -1
+ushr(x, 0)       # x, for every x
+```
+
+It is a call and not an operator: there is no `x ushr k` spelling, because
+`ushr` is not a reserved word and a program is free to use the name for
+something of its own. It masks its count to 0..63 the way `shl` and `shr` mask
+theirs, so every count is defined.
+
+Callers built the shift out of `shr`, `band`, `bnot` and `shl` before there was
+a builtin, and that idiom is still in `std/float.tw`:
 
 ```rust
 let SIGN_BIT: I64 = shl(1, 63)
@@ -302,6 +314,8 @@ Clearing the sign bit makes the value non-negative, where `shr` is already the
 logical shift, and the bit is then put back at the position it would have
 shifted to. The `k == 0` guard is not decoration: without it `shl(1, 63 - k)`
 would be `shl(1, 63)`, which sets the sign bit rather than clearing nothing.
+Note that the hand-rolled form does not mask its count, so it and the builtin
+part company at `k >= 64`; inside 0..63 they agree.
 
 The same construction appears in `std/random.tw` for splitmix64 and xoshiro.
 Anything porting a reference implementation written over `uint64` needs it,
@@ -745,7 +759,7 @@ g[1]   # [1, 2]   d/db
 ```
 
 Differentiable primitives: `+ - * / % @ ^`, `relu`, `sigmoid`, `tanh`, `exp`,
-`log`, `sin`, `cos`, `sqrt`, `sum`, `mean`, `abs`, `pow`.
+`log`, `log1p`, `expm1`, `sin`, `cos`, `sqrt`, `sum`, `mean`, `abs`, `pow`.
 
 `hessian(f)(x)` gives the exact matrix of second partial derivatives of a scalar
 function, by second-order autodiff via forward-mode jets (see `examples/hessian.tw`
@@ -894,8 +908,8 @@ checker applies the natural rules:
 - `+`, `-`, `%`, and comparisons require both sides to share a unit. Adding
   `USD` to `share` is an error.
 - `matmul`/`dot` multiply the operand units; indexing and slicing preserve them.
-- `exp`, `log`, `sin`, `cos`, `tanh`, and `sigmoid` require a dimensionless
-  argument (their result is dimensionless).
+- `exp`, `log`, `log1p`, `expm1`, `sin`, `cos`, `tanh`, and `sigmoid` require a
+  dimensionless argument (their result is dimensionless).
 
 A bare numeric literal is dimensionless. To give a value a unit, annotate the
 `let` that binds it: the literal is adopted into the declared unit:
@@ -1310,7 +1324,15 @@ reads `$TWILL_STD/nn.tw`. Unset it and you are back to the copy in the binary.
 ## Standard library
 
 Elementwise math (differentiable): `relu`, `sigmoid`, `tanh`, `exp`, `log`,
-`sin`, `cos`, `sqrt`, `square`, `abs`, `pow(x, p)`, `clip(x, lo, hi)`.
+`log1p`, `expm1`, `sin`, `cos`, `sqrt`, `square`, `abs`, `pow(x, p)`,
+`clip(x, lo, hi)`.
+
+`log1p(x)` is `log(1 + x)` and `expm1(x)` is `exp(x) - 1`, computed without
+forming the sum or the difference. That is the whole reason they exist: at
+`x = 1e-16` the sum `1 + x` rounds to exactly 1, so `log(1 + x)` answers 0 and
+the input is gone, while `log1p(x)` answers `1e-16`. Their gradients are
+`1/(1 + x)` and `exp(x)`, so a log-likelihood or a rate written through them
+differentiates as well as it evaluates.
 
 Elementwise combine: `maximum(a, b)`, `minimum(a, b)`, `where(cond, a, b)`, and
 the comparisons `greater`, `less`, `greater_equal`, `less_equal`, `equal`

@@ -46,10 +46,10 @@ guessed at.
 
 | | count |
 |---|---|
-| names in the shared table | 248 |
-| implemented by the Go bootstrap | 248 |
-| implemented by the self-hosted evaluator | 150 |
-| **missing from the self-hosted evaluator** | **97** |
+| names in the shared table | 255 |
+| implemented by the Go bootstrap | 255 |
+| implemented by the self-hosted evaluator | 155 |
+| **missing from the self-hosted evaluator** | **99** |
 | missing from the Go bootstrap | 0 |
 | inconclusive (see below) | 1 |
 
@@ -63,28 +63,28 @@ read as the bounded claim it is.
 abort                   all_finite              args                    clock_now_ms
 cwd                     emit_line               env                     exit
 f64_bits                f64_bits_hi             f64_bits_lo             f64_ceil
-f64_cos                 f64_exp                 f64_floor               f64_from_bits
-f64_from_halves         f64_log                 f64_mod                 f64_of_i64
-f64_pow                 f64_round               f64_signbit             f64_sin
-f64_sqrt                f64_tanh                f64_trunc               file_size
-gbm_describe            gpu_alloc               gpu_available           gpu_copy
-gpu_device_close        gpu_device_count        gpu_device_info         gpu_device_info_i64
-gpu_device_open         gpu_finish              gpu_free                gpu_kernel
-gpu_launch              gpu_program_build       gpu_read                gpu_set_arg_buffer
-gpu_set_arg_f64         gpu_set_arg_i64         gpu_set_arg_local       gpu_write
-i64_of_f64              is_same                 is_tty_stdout           list_dir
-load_value              mem_allocs              mem_bytes               mem_counters_available
-mem_live_bytes          mem_tensors             mkdir_all               module_source
-mono_ns                 mtime                   path_base               path_dir
-path_exists             path_ext                path_is_abs             path_is_dir
-path_join               path_normalize          path_stem               quantize
-read_file               read_file_at            read_text_or            remove_all
-remove_dir              remove_file             rename                  resolve_path
-rng_close               rng_f64                 rng_norm                rng_normal
-rng_open                rng_perm                rng_seed                rng_u53
-rng_uniform             run                     save_value              temp_dir
-window_size             write_err               write_file              write_out
-write_text_or
+f64_cos                 f64_exp                 f64_expm1               f64_floor
+f64_from_bits           f64_from_halves         f64_log                 f64_log1p
+f64_mod                 f64_of_i64              f64_pow                 f64_round
+f64_signbit             f64_sin                 f64_sqrt                f64_tanh
+f64_trunc               file_size               gbm_describe            gpu_alloc
+gpu_available           gpu_copy                gpu_device_close        gpu_device_count
+gpu_device_info         gpu_device_info_i64     gpu_device_open         gpu_finish
+gpu_free                gpu_kernel              gpu_launch              gpu_program_build
+gpu_read                gpu_set_arg_buffer      gpu_set_arg_f64         gpu_set_arg_i64
+gpu_set_arg_local       gpu_write               i64_of_f64              is_same
+is_tty_stdout           list_dir                load_value              mem_allocs
+mem_bytes               mem_counters_available  mem_live_bytes          mem_tensors
+mkdir_all               module_source           mono_ns                 mtime
+path_base               path_dir                path_exists             path_ext
+path_is_abs             path_is_dir             path_join               path_normalize
+path_stem               quantize                read_file               read_file_at
+read_text_or            remove_all              remove_dir              remove_file
+rename                  resolve_path            rng_close               rng_f64
+rng_norm                rng_normal              rng_open                rng_perm
+rng_seed                rng_u53                 rng_uniform             run
+save_value              temp_dir                window_size             write_err
+write_file              write_out               write_text_or
 ```
 
 ## Inconclusive
@@ -166,6 +166,7 @@ implementation is broken. The evidence column says what came back.
 | `equal` | yes | yes |
 | `exit` | yes | no |
 | `exp` | yes | yes |
+| `expm1` | yes | yes |
 | `eye` | yes | yes |
 | `f64` | yes | yes |
 | `f64_bits` | yes | no |
@@ -174,11 +175,13 @@ implementation is broken. The evidence column says what came back.
 | `f64_ceil` | yes | no |
 | `f64_cos` | yes | no |
 | `f64_exp` | yes | no |
+| `f64_expm1` | yes | no |
 | `f64_floor` | yes | no |
 | `f64_from_bits` | yes | no |
 | `f64_from_halves` | yes | no |
 | `f64_hex` | yes | yes |
 | `f64_log` | yes | no |
+| `f64_log1p` | yes | no |
 | `f64_mod` | yes | no |
 | `f64_of_i64` | yes | no |
 | `f64_pow` | yes | no |
@@ -243,6 +246,7 @@ implementation is broken. The evidence column says what came back.
 | `load` | yes | yes |
 | `load_value` | yes | no |
 | `log` | yes | yes |
+| `log1p` | yes | yes |
 | `logsumexp` | yes | yes |
 | `map` | yes | yes |
 | `map_leaves` | yes | yes |
@@ -315,6 +319,8 @@ implementation is broken. The evidence column says what came back.
 | `save_value` | yes | no |
 | `scalar` | yes | yes |
 | `seed` | yes | yes |
+| `sha256` | yes | yes |
+| `sha256_bytes` | yes | yes |
 | `shape` | yes | yes |
 | `shl` | yes | yes |
 | `shr` | yes | yes |
@@ -337,6 +343,7 @@ implementation is broken. The evidence column says what came back.
 | `topk` | yes | yes |
 | `transpose` | yes | yes |
 | `unit` | yes | yes |
+| `ushr` | yes | yes |
 | `value_and_grad` | yes | yes |
 | `vjp` | yes | yes |
 | `where` | yes | yes |

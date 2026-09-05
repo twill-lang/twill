@@ -2,6 +2,48 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`ushr(x, k)`, the logical right shift.** `shr` is arithmetic, so a value
+  with its sign bit set smears ones down from the top; `ushr` reads the pattern
+  as unsigned and fills with zeros. `ushr(0 - 1, 1)` is `9223372036854775807`
+  where `shr(0 - 1, 1)` is `-1`. The count is masked to 0..63 the way `shl` and
+  `shr` mask theirs, so `ushr(x, 0)` is `x` and every count is defined. It is a
+  call and not an operator: `ushr` is not a reserved word, and nothing in the
+  lexer, the parser or the formatter changed.
+
+  `std/float.tw` and `std/random.tw` build the shift by hand out of four
+  operations and a sign test, and `docs/language-guide.md` carried that idiom as
+  the answer. Both helpers stay where they are, so nothing importing them
+  breaks; the guide now gives the builtin first.
+
+- **`sha256(s)` and `sha256_bytes(b)`, SHA-256 in lower-case hex.**
+  `std/hash.tw` remains the specification and the vector suite -- it is the same
+  digest written in twill over I64, and it is what says the answer is right --
+  and these are the same digest at machine speed. The two are held together by
+  a test that compares them over every message length from 0 to 70 bytes, which
+  walks both padding boundaries. The digest is a format constant: spool's
+  lockfiles, selvedge's archives and warp's cache keys each store one and read
+  it back later, so a builtin that disagreed with `std/hash.tw` would stop those
+  artefacts verifying.
+
+  Two names rather than one polymorphic builtin, because the argument's type is
+  the thing a caller gets wrong: `sha256` takes a `Str` and `sha256_bytes` a
+  `Bytes`, and neither accepts the other.
+
+- **`log1p` and `expm1`, differentiable elementwise, with `f64_log1p` and
+  `f64_expm1` beside `f64_log` and `f64_exp`.** `log1p(x)` is `log(1 + x)` and
+  `expm1(x)` is `exp(x) - 1` computed without forming the sum or the
+  difference. At `x = 1e-16` the sum rounds to exactly 1, so `log(1 + x)` is 0
+  and the input is gone; `log1p(x)` answers `1e-16`. The gradient rules are
+  `1/(1 + x)` and `exp(x)`, with second derivatives `-1/(1 + x)^2` and `exp(x)`,
+  so they differentiate to second order like the ops they sit beside.
+
+  All three land in both implementations, except the two systems-mode scalars:
+  `f64_log1p` and `f64_expm1` are dispatched by the Go bootstrap and not by
+  `src/eval.tw`, which is exactly where `f64_log` and `f64_exp` already stand.
+  `docs/conformance.md` records it.
+
 ## [1.10.0] - 2026-09-05
 
 ### Added

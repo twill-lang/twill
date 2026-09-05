@@ -2402,7 +2402,7 @@ func (c *checker) inferBuiltinCall(name string, ex *ast.Call, argTypes []Type, d
 		// runtime rejects an out-of-range one, so a constant axis is checked here
 		// the same way the reductions check theirs.
 		return c.axisPreserveResult(ex, argTypes, 1)
-	case "exp", "log", "sin", "cos", "tanh", "sigmoid":
+	case "exp", "log", "log1p", "expm1", "sin", "cos", "tanh", "sigmoid":
 		// Transcendental functions need a dimensionless argument.
 		if len(argTypes) >= 1 {
 			if t, ok := argTypes[0].(tTensor); ok {
@@ -3627,6 +3627,7 @@ var tensorOnlyBuiltins = map[string]bool{
 	"sum": true, "mean": true, "prod": true, "median": true, "max": true, "min": true,
 	"argmax": true, "argmin": true, "exp": true, "log": true, "sin": true, "cos": true,
 	"tanh": true, "sigmoid": true, "sqrt": true, "square": true, "abs": true, "relu": true,
+	"log1p": true, "expm1": true,
 	"softmax": true, "logsumexp": true, "transpose": true, "reshape": true, "shape": true,
 	"matmul": true, "dot": true, "linear": true, "broadcast_to": true, "cumsum": true,
 	"cumprod": true, "flip": true, "roll": true, "diff": true,
@@ -3634,6 +3635,10 @@ var tensorOnlyBuiltins = map[string]bool{
 
 var builtinNames = map[string]bool{
 	"print": true, "relu": true, "exp": true, "log": true, "sin": true,
+	// The accurate-near-zero pair, differentiable like exp and log.
+	"log1p": true, "expm1": true,
+	// SHA-256 of a Str and of a Bytes, lower-case hex.
+	"sha256": true, "sha256_bytes": true,
 	"cos": true, "tanh": true, "sigmoid": true, "sqrt": true, "sum": true, "prod": true, "median": true,
 	"mean": true, "abs": true, "pow": true, "matmul": true, "dot": true, "linear": true, "quantize": true, "nbytes": true, "dtype": true,
 	"grad": true, "grads": true, "stop_grad": true, "value_and_grad": true, "map": true, "zip": true,
@@ -3663,6 +3668,9 @@ var builtinNames = map[string]bool{
 	"read_text_or": true, "write_text_or": true,
 	"and": true, "or": true, "band": true, "bor": true,
 	"xor": true, "shl": true, "shr": true, "bnot": true,
+	// `ushr` is the logical right shift. It is a call and not an operator, so it
+	// is absent from the infix tables in the lexer, the parser and the formatter.
+	"ushr": true,
 	// Built-in Res and Opt cases, and `unit`, the Unit value's name.
 	"Ok": true, "Err": true, "Some": true, "None": true, "unit": true,
 	// Filesystem and paths (internal/interp/fs.go).
@@ -3673,7 +3681,8 @@ var builtinNames = map[string]bool{
 	"path_join": true, "path_base": true, "path_dir": true, "path_ext": true,
 	"path_stem": true, "path_normalize": true, "path_is_abs": true,
 	// Scalar f64 math, conversions and IEEE bit access for the systems dialect.
-	"f64_sqrt": true, "f64_exp": true, "f64_log": true, "f64_sin": true,
+	"f64_sqrt": true, "f64_exp": true, "f64_log": true, "f64_log1p": true,
+	"f64_expm1": true, "f64_sin": true,
 	"f64_cos": true, "f64_floor": true, "f64_trunc": true, "f64_pow": true,
 	"f64_of_i64": true, "i64_of_f64": true, "f64_bits": true,
 	"f64_from_bits": true, "f64_signbit": true,
@@ -3721,7 +3730,8 @@ var builtinArity = map[string]int{
 	"mem_live_bytes": 0, "mem_tensors": 0,
 	"rng_uniform": 0, "window_size": 0, "cwd": 0,
 	// unary -- elementwise math (unaryOp / elemOp) and the rest
-	"relu": 1, "exp": 1, "log": 1, "sin": 1, "cos": 1, "tanh": 1, "sigmoid": 1,
+	"relu": 1, "exp": 1, "log": 1, "log1p": 1, "expm1": 1, "sin": 1, "cos": 1, "tanh": 1, "sigmoid": 1,
+	"sha256": 1, "sha256_bytes": 1, "f64_log1p": 1, "f64_expm1": 1,
 	"sqrt": 1, "square": 1, "floor": 1, "ceil": 1, "round": 1,
 	"abort": 1, "abs": 1, "arr_clear": 1, "bnot": 1, "buf_len": 1, "buf_new": 1,
 	"bytes_to_str": 1, "chr": 1, "columns": 1, "dict_keys": 1, "emit_line": 1,
@@ -3744,7 +3754,7 @@ var builtinArity = map[string]int{
 	"matmul": 2, "dot": 2, "conv2d": 2, "maximum": 2, "minimum": 2, "greater": 2,
 	"less": 2, "greater_equal": 2, "less_equal": 2, "equal": 2,
 	"read_text_or": 2, "write_text_or": 2, "f64_from_halves": 2, "rename": 2,
-	"and": 2, "or": 2, "band": 2, "bor": 2, "xor": 2, "shl": 2, "shr": 2,
+	"and": 2, "or": 2, "band": 2, "bor": 2, "xor": 2, "shl": 2, "shr": 2, "ushr": 2,
 	"append": 2, "arr_push": 2, "buf_get8": 2, "bytes_push": 2, "concat": 2,
 	"dict_del": 2, "dict_get": 2, "dict_has": 2, "dict_must": 2, "f64_mod": 2,
 	"f64_pow": 2, "field": 2, "gather": 2, "is_same": 2, "linear": 2, "map": 2,

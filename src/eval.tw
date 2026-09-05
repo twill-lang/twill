@@ -2393,7 +2393,7 @@ fn in_words(list: Str, name: Str) -> Bool {
   bytes.index_of(hay, needle) >= 0
 }
 
-let ARITY1: Str = "black_box relu exp log sin cos tanh sigmoid sqrt square abs grad grads value_and_grad jacobian hessian jvp vjp hvp tensor scalar seed permutation eye shape len item dtype str int floor ceil round read_csv read_frame load columns nbytes"
+let ARITY1: Str = "black_box relu exp log log1p expm1 sin cos tanh sigmoid sqrt square abs grad grads value_and_grad jacobian hessian jvp vjp hvp tensor scalar seed permutation eye shape len item dtype str int floor ceil round read_csv read_frame load columns nbytes"
 
 let ARITY2: Str = "pow matmul dot linear conv2d maxpool2d gather maximum minimum greater less greater_equal less_equal equal concat map append gbm_predict write_frame save field map_leaves zip_leaves"
 
@@ -2408,7 +2408,7 @@ fn builtin_arity(name: Str) -> I64 {
   # are ported from. `arr` is the one variadic among them, so it is absent here
   # and takes whatever it is given.
   if in_words("arr_new dict_new bytes_new", name) { return 0 }
-  if in_words("pop arr_clear arr_of_tensor numel dict_keys bytes_to_str buf_new buf_len chr str_quote i64_of_str str_to_f64 f64_to_str num_to_text f64_hex", name) { return 1 }
+  if in_words("pop arr_clear arr_of_tensor numel dict_keys bytes_to_str buf_new buf_len chr str_quote i64_of_str str_to_f64 f64_to_str num_to_text f64_hex sha256 sha256_bytes", name) { return 1 }
   if in_words("push arr_push dict_get dict_has dict_must dict_del bytes_push buf_get8", name) { return 2 }
   if in_words("dict_set dict_or slice buf_set8", name) { return 3 }
   # The builtins returned by grad/grads/value_and_grad take whatever the
@@ -2611,7 +2611,7 @@ fn lift_v(r: Res[tensor.Tensor, Str], line: I64) -> Res[Value, RuntimeError] =
 
 # ---- the dispatch ----------------------------------------------------------
 
-let UNARY_MATH: Str = "relu exp log sin cos tanh sigmoid sqrt square"
+let UNARY_MATH: Str = "relu exp log log1p expm1 sin cos tanh sigmoid sqrt square"
 let BIN_TENSOR: Str = "matmul dot conv2d maximum minimum greater less greater_equal less_equal equal"
 let REDUCTIONS: Str = "sum mean max min prod median"
 let SCANS: Str = "cumsum cumprod cummax cummin"
@@ -2635,7 +2635,7 @@ let DICT_OPS: Str = "dict_new dict_set dict_get dict_has dict_must dict_or dict_
 # bytes_* grows a buffer and buf_* indexes a fixed-size one; they are the same
 # value on the Go side and the same value here.
 let BUF_OPS: Str = "bytes_new bytes_push bytes_to_str buf_new buf_get8 buf_set8 buf_len"
-let STR_OPS: Str = "chr slice str_quote i64_of_str str_to_f64 f64_to_str num_to_text f64_hex"
+let STR_OPS: Str = "chr slice str_quote i64_of_str str_to_f64 f64_to_str num_to_text f64_hex sha256 sha256_bytes"
 let FILE_OPS: Str = "read_csv read_frame write_frame save load columns field with_field"
 
 fn call_builtin(b: BuiltinVal, args: Arr[Value], line: I64) -> Res[Value, RuntimeError] {
@@ -2679,7 +2679,7 @@ fn call_builtin(b: BuiltinVal, args: Arr[Value], line: I64) -> Res[Value, Runtim
   if in_words(FILE_OPS, name) { return bi_files(name, args, line) }
   if in_words("gbm_fit gbm_predict", name) { return bi_gbm(name, args, line) }
   if bytes.equal(name, "nbytes") { return bi_nbytes(args, line) }
-  if in_words("and or band bor xor shl shr", name) { return bi_bitwise(name, args, line) }
+  if in_words("and or band bor xor shl shr ushr", name) { return bi_bitwise(name, args, line) }
   if bytes.equal(name, "bnot") { return bi_bnot(args, line) }
   if in_words(ARR_OPS, name) { return bi_arr(name, args, line) }
   if in_words(DICT_OPS, name) { return bi_dict(name, args, line) }
@@ -2909,6 +2909,8 @@ fn bi_unary_math(name: Str, args: Arr[Value], line: I64) -> Res[Value, RuntimeEr
   if bytes.equal(name, "relu") { return Ok(VTensor(tr_unary(tensor.OpRelu, t))) }
   if bytes.equal(name, "exp") { return Ok(VTensor(tr_unary(tensor.OpExp, t))) }
   if bytes.equal(name, "log") { return Ok(VTensor(tr_unary(tensor.OpLog, t))) }
+  if bytes.equal(name, "log1p") { return Ok(VTensor(tr_unary(tensor.OpLog1p, t))) }
+  if bytes.equal(name, "expm1") { return Ok(VTensor(tr_unary(tensor.OpExpm1, t))) }
   if bytes.equal(name, "sin") { return Ok(VTensor(tr_unary(tensor.OpSin, t))) }
   if bytes.equal(name, "cos") { return Ok(VTensor(tr_unary(tensor.OpCos, t))) }
   if bytes.equal(name, "tanh") { return Ok(VTensor(tr_unary(tensor.OpTanh, t))) }
@@ -3376,6 +3378,7 @@ fn bi_bitwise(name: Str, args: Arr[Value], line: I64) -> Res[Value, RuntimeError
   if bytes.equal(name, "xor") { out = xor(a, b) }
   if bytes.equal(name, "shl") { out = shl(a, b) }
   if bytes.equal(name, "shr") { out = shr(a, b) }
+  if bytes.equal(name, "ushr") { out = ushr(a, b) }
   Ok(VInt(out))
 }
 
@@ -5503,6 +5506,25 @@ fn bi_str(name: Str, args: Arr[Value], line: I64) -> Res[Value, RuntimeError] {
   # differential harness compares bit for bit.
   if bytes.equal(name, "f64_hex") {
     return Ok(VStr(f64_hex(scalar_of(args[0], "f64_hex", line)?)))
+  }
+  # SHA-256, lower-case hex. std/hash.tw is the specification and holds the
+  # published vectors; this is the same digest reached through the host.
+  #
+  # These two are the exception to arg_text below. Everything else here takes a
+  # Str or a buffer indifferently, because a Bytes is a string under
+  # construction. A digest is a format constant -- spool's lockfiles, selvedge's
+  # archives and warp's cache keys store one and read it back later -- so
+  # sha256 takes a Str and sha256_bytes a Bytes and neither takes the other,
+  # which is the Go builtin's rule and the Go builtin's wording.
+  if bytes.equal(name, "sha256") {
+    match args[0] {
+      VStr(x) => return Ok(VStr(sha256(x))),
+      _ => return Err(runtime_error(line, "sha256 expects a string")),
+    }
+  }
+  if bytes.equal(name, "sha256_bytes") {
+    let sb: BytesVal = arg_buffer(args[0], "sha256_bytes", "byte buffer", line)?
+    return Ok(VStr(sha256_bytes(sb.buf)))
   }
   let text: Str = ""
   match arg_text(args[0]) {
