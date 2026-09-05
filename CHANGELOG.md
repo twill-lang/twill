@@ -75,6 +75,34 @@
   `HEX[0] = ...` is refused but `push(HEX, x)` is not, and neither is a
   function handed the handle, because `Arr` has reference semantics and nothing
   tracks where a handle goes.
+||||||| fcb32ae
+- **A conformance gate, and what it found when it was first run.** Twill has two
+  implementations and the README said they agree. That is true of the lexer, the
+  parser, the checker and the formatter. It was never true of the evaluator, and
+  nothing in the build said so, because nothing compared them.
+
+  `tools/conformance` is the comparison. `builtins` calls every name in
+  `src/builtins.tw` on both implementations and writes `docs/conformance.md`
+  from what came back, so the table is measured rather than declared; `-check`
+  fails the build if the committed file is not what a run produces. `suites`
+  runs every `std/tests/*_test.tw` twice, once on the Go bootstrap and once on
+  `src/main.tw`, and compares exit code, stdout and stderr exactly.
+  `make conformance-check` is the gate, and it has its own CI job.
+
+  Part of the shared builtin table has no implementation under `src/eval.tw`;
+  `docs/conformance.md` has the count and the names, and is the only file that
+  states either. Most of the standard-library suites diverge,
+  `testdata/conformance/suite-allow.txt` says why for each, and the worst of
+  them is `gradcheck_test.tw`, which errors nowhere and simply gets a different
+  answer.
+
+  The allow-list is keyed to the divergence, not to the file. Each line carries
+  a signature of the disagreement it excuses, so `io_test.tw` cannot stop dying
+  on the builtin its line names, start printing a wrong number, and stay green
+  on the strength of its name still being listed. A suite that runs out of time
+  is keyed on which side ran out and on whether the two agreed over the output
+  both produced, so "too slow" does not also excuse "and wrong". The list may
+  only shrink.
 
 - **`black_box(x)`, a compiler barrier, and the correction that it was already
   needed.** `docs/roadmap.md` entry 30 is bobbin's, and it was filed with the

@@ -43,9 +43,40 @@ Or use the Makefile: `make build`, `make test`, `make check`, `make bench`,
 detector over `internal/tensor` and `internal/interp`, and every example as a
 smoke test.
 
-There is no way to run `src/` yet. Changes there are reviewed by reading, and by
-the differential harness in `tools/diff/` where the corresponding Go component
-exists.
+`src/` does run. The self-hosted CLI is a twill program, so the Go bootstrap can
+execute it, and the path it is given is resolved relative to `src/`:
+
+```bash
+./twill run src/main.tw run "$PWD/examples/hello.tw"   # self-hosted
+./twill run examples/hello.tw                          # bootstrap
+```
+
+That is what the conformance gate automates, and it is the only honest way to
+review a change to `src/`:
+
+```bash
+make conformance         # regenerate docs/conformance.md, then commit it
+make conformance-check   # the table is current, and the std suites still agree
+```
+
+`make conformance-check` runs every suite in `std/tests/` twice, once on each
+implementation, and compares the bytes. The divergences that exist today are
+listed in `testdata/conformance/suite-allow.txt`.
+
+The list does not excuse a file. Each line names one divergence and carries a
+signature of it, so an entry stops covering a suite the moment the suite starts
+failing a different way:
+
+```
+io_test.tw               9786e999b01b   # the signature of the divergence
+```
+
+`conformance suites -list` prints the lines a run would accept, and the gate
+prints the measured signature next to the recorded one when they disagree. The
+list may only shrink. Four things fail: a divergence that is not on the list, a
+divergence that is not the one its line records, a line that no longer diverges,
+and a line that names nothing. Adding a line is a change that has to be argued
+for in the pull request, not a way to get a build green.
 
 ## Layout
 
