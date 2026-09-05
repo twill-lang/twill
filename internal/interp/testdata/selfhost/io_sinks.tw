@@ -1,0 +1,13 @@
+mode systems
+
+# emit_line is the diagnostic printer's unit: a string and a newline, through
+# the interpreter's own output sink, which is why a captured print and a
+# captured emit_line interleave in the order they were written. write_out and
+# write_err go straight to the process's streams instead and are pinned by
+# testdata/conformance/cases/exit.tw, which compares two processes.
+fn main() {
+  emit_line("first, from emit_line")
+  print("second, from print")
+  emit_line("")
+  emit_line("fourth, after an empty line")
+}

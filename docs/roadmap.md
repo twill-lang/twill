@@ -111,11 +111,11 @@ two differences in the file are the blank lines above `fn gflops` and above
 `"builtin ... is named in the builtin table but has no implementation"`. A large
 minority of the names in `src/builtins.tw` still reach it. `docs/BUGS.md` entry
 12 records the port that closed the lists, dictionaries, byte buffers and string
-primitives, and its Open section carries what is left -- the filesystem, the
-clock, the process, the RNG, the `f64_*` scalar intrinsics, the GPU stubs and
-the memory counters -- with the count as measured and the one-line probe that
-re-derives it. That is the place to read it: a split quoted in two documents
-goes stale in one of them.
+primitives, entry 13 the one that closed the filesystem, the clock and the
+process, and the Open section carries what is left -- the RNG, the `f64_*`
+scalar intrinsics, the GPU stubs and the memory counters -- with the count as
+measured and the command that re-derives it. That is the place to read it: a
+split quoted in two documents goes stale in one of them.
 
 What matters here is the shape rather than the count. The missing set is the
 systems half of the language, and the systems half is the dialect `src/` is
@@ -124,13 +124,25 @@ run `src/`:
 
 ```
 $ ./twill run src/main.tw run "$PWD/src/main.tw" run "$PWD/examples/hello.tw"
-<repo>/src/main.tw:47: runtime error: builtin "args" is named in the builtin table but has no implementation
-  47 |   let a: Arr[Str] = drop_first(args())
+<repo>/src/main.tw:341: runtime error: undefined variable "SFn"
+  341 |       if len(diags) == 0 {
 ```
 
+That line moved when the filesystem, clock and process port landed. It used to
+be line 47 and the builtin `args`, which is to say the inner CLI stopped on the
+first statement of its own `main`. It now gets through argument handling and
+into the checker and stops on an enum case that `src/check.tw` uses unqualified
+from `src/ast.tw`, so what is left there is about a module and an enum rather
+than about a missing name. The same two levels answer `--version` correctly.
+The line number is the entry file's rather than the module's, which is the same
+attribution defect the allow-list records for `nn_test.tw`.
+
 (`<repo>` is the checkout's absolute path. The inner paths are absolute because
-the self-hosted CLI resolves a relative one against its own directory rather
-than the caller's. That is the same bug `examples/frames.tw` hits, below.)
+the self-hosted CLI resolves the path it is *given* against its own directory
+rather than the caller's. That is the same bug `examples/frames.tw` hits, below.
+A relative path inside a program being run is a different question and no longer
+has that answer: the evaluator is told which file it is running and resolves
+against the program's directory.)
 
 The compiler is written in the half of the language the compiler cannot
 evaluate. That is the distance left to a Go-free binary, and no count of

@@ -1,0 +1,22 @@
+mode systems
+
+# Where a relative path points, and it is the one fixture in this directory
+# that cannot be a conformance case: a case is staged into the same directory
+# as src/*.tw, so both answers would be that directory and the question could
+# not be asked. Here the fixture and src/ are different directories, so the two
+# implementations part company unless the self-hosted evaluator resolves
+# against the program rather than against its own source.
+#
+# The absolute path is printed and not compared to a golden. Both sides are
+# compared to each other, which is the claim: the same source names the same
+# file whichever implementation is running it.
+fn main() {
+  print(resolve_path("beside.txt"))
+  print(str(path_is_abs(resolve_path("beside.txt"))))
+  print(str(path_base(resolve_path("beside.txt"))))
+  # There is no such file next to this one on either side, and both are asked
+  # about the same absent file rather than about two different ones.
+  print(read_text_or("beside.txt", "no file of that name"))
+  print(str(path_exists("beside.txt")))
+  print(str(file_size("beside.txt")))
+}

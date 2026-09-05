@@ -434,13 +434,25 @@ is that `src/` cannot run `src/`:
 
 ```
 $ ./twill run src/main.tw run "$PWD/src/main.tw" run "$PWD/examples/hello.tw"
-<repo>/src/main.tw:47: runtime error: builtin "args" is named in the builtin table but has no implementation
-  47 |   let a: Arr[Str] = drop_first(args())
+<repo>/src/main.tw:341: runtime error: undefined variable "SFn"
+  341 |       if len(diags) == 0 {
 ```
 
-(The inner paths are absolute because the self-hosted CLI resolves a relative
-one against its own directory rather than the caller's, which is the same bug
-`examples/frames.tw` hits.)
+That line moved when the filesystem, clock and process port landed. It used to
+be line 47 and the builtin `args`, which is to say the inner CLI stopped on the
+first statement of its own `main`. It now gets through argument handling and
+into the checker and stops on an enum case that `src/check.tw` uses unqualified
+from `src/ast.tw`, so what is left there is about a module and an enum rather
+than about a missing name. The same two levels answer `--version` correctly.
+(The line number is the entry
+file's rather than the module's, which is a second defect visible in the same
+report and recorded in `docs/BUGS.md`.)
+
+(The inner paths are absolute because the self-hosted CLI resolves the path it
+is *given* against its own directory rather than the caller's, which is the same
+bug `examples/frames.tw` hits. A relative path inside a program being run is a
+different question and no longer has that answer: the evaluator is told which
+file it is running and resolves against the program's directory.)
 
 The paragraph above is about the front end, and about the example corpus, and
 it is worth being exact about where the agreement stops.
@@ -448,16 +460,21 @@ it is worth being exact about where the agreement stops.
 implementations rather than by reading either, and it says which names in the
 shared builtin table `src/eval.tw` dispatches and which it does not. It has the
 count and the list, and `make conformance` regenerates both, which is why
-neither is repeated here. A program that reaches for `read_file`, `write_out`,
-`path_join`, `rng_open` or any of the `f64_*` scalar functions checks clean on
-both sides, runs on the bootstrap, and is a runtime error self-hosted. The gap
-is not only missing names: most of the suites in `std/tests/` do not produce
-identical bytes under the two implementations, and `gradcheck_test.tw` passes 19
-of 19 on the bootstrap and 17 of 19 self-hosted, with no error on either side.
-Every one of those divergences is on a checked-in allow-list that
-`make conformance-check` enforces, keyed to the divergence it names, so a new
-divergence fails the build, a changed one fails the build, and the list can only
-get shorter.
+neither is repeated here. A program that reaches for `rng_open`, any of the
+`f64_*` scalar functions, the `gpu_*` device intrinsics or the `mem_*` counters
+checks clean on both sides, runs on the bootstrap, and is a runtime error
+self-hosted. The gap is not only missing names: most of the suites in
+`std/tests/` do not produce identical bytes under the two implementations, and
+`gradcheck_test.tw` passes 19 of 19 on the bootstrap and 17 of 19 self-hosted,
+with no error on either side. Every one of those divergences is on a checked-in
+allow-list that `make conformance-check` enforces, keyed to the divergence it
+names, so a new divergence fails the build, a changed one fails the build, and
+the list can only get shorter.
+
+The same gate runs the cases under `testdata/conformance/cases/`, which have no
+allow-list: each is written to pin one builtin and is checked in only once both
+implementations agree on it, so a divergence there is a regression rather than
+an unfinished port.
 
 Designing the subset a compiler needs was the point of doing it. A `.tw` file
 declares its mode on the first line, and `mode systems` turns that subset on: a

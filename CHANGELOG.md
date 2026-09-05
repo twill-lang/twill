@@ -2,6 +2,33 @@
 
 ## [Unreleased]
 
+### Added
+
+- **The filesystem, the clock and the process, in the self-hosted evaluator.**
+  40 more of the names in `src/builtins.tw` are dispatched by `src/eval.tw`,
+  leaving 57 of 248 refused where 97 were before: the three output sinks, the
+  file and path builtins, `temp_dir`, `cwd`, `mtime`, the two clocks, `env`,
+  `args`, `exit`, `abort`, `window_size`, `is_tty_stdout` and `run`. A
+  systems-mode program that did any I/O ran on the bootstrap and refused
+  self-hosted until now; three standard-library suites left the conformance
+  allow-list because of it, and nothing replaced them. `docs/conformance.md` is
+  regenerated and has the list.
+
+  **A relative path in a program now means the same file under both
+  implementations.** The Go interpreter resolves one against the directory of
+  the file doing the reading, which self-hosted was `src/eval.tw` rather than
+  the program, so a delegation that stopped at the syscall would have closed 40
+  refusals by opening a silent wrong answer. `src/main.tw` records the file it
+  is running and the argument vector the bootstrap would have passed, and
+  `src/eval.tw` resolves against those.
+
+- **`make conformance-check` runs the cases under `testdata/conformance/cases/`
+  as well as the standard-library suites.** Each case is a whole program run
+  twice as two processes, with the exit code and both streams compared byte for
+  byte and no allow-list, which is the only way to see `write_out`, `write_err`
+  and `exit`: none of them goes through the interpreter's output sink, so an
+  in-process comparison cannot observe them.
+
 ## [1.10.0] - 2026-09-05
 
 ### Added

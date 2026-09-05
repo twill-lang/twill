@@ -137,6 +137,15 @@ fn run_file(path: Str, do_check: Bool) -> I64 {
 # checked path (precheck already parsed it), but the bare no-check path reaches
 # this too, so the Err arm stays.
 fn eval_program(path: Str, src: Str) -> I64 {
+  # Tell the evaluator which file it is running before any of it runs. Both of
+  # these are things the bootstrap gets from the interpreter it is already
+  # inside and this side has to be told: a relative path in the program is
+  # resolved against the program's directory and not against src/, and args()
+  # is the program's vector and not the CLI's. dump_canonical sets the same two
+  # for the --dump=canonical path, which reaches the evaluator without passing
+  # through here.
+  eval.set_program_base(path)
+  eval.set_program_args(script_args(path))
   match parse.parse(src) {
     Err(e) => {
       report_syntax(path, src, e)
@@ -244,6 +253,8 @@ fn run_file_canonical(path: Str, do_check: Bool) -> I64 {
 # bindings -- builtins resolve through is_builtin, not the scope -- so unlike the
 # Go dumper there is no set of predefined names to subtract.
 fn dump_canonical(path: Str, src: Str) -> I64 {
+  eval.set_program_base(path)
+  eval.set_program_args(script_args(path))
   match parse.parse(src) {
     Err(e) => {
       report_syntax(path, src, e)
@@ -511,6 +522,36 @@ fn drop_first(argv: Arr[Str]) -> Arr[Str] {
   let i: I64 = 1
   while i < len(argv) {
     push(out, argv[i])
+    i = i + 1
+  }
+  out
+}
+
+# What a run program sees through the args builtin, and it is a port of
+# cmd/twill/main.go's scriptArgs rather than an approximation of it: element 0
+# is the program name and the rest are the words after the program's path.
+#
+# The two implementations are handed the same vector by construction. The
+# bootstrap computes this over os.Args[1:]; this file computes it over
+# drop_first(args()), and the process running src/main.tw was itself started
+# with the bootstrap's scriptArgs, so `twill run main.tw run prog.tw a b` leaves
+# drop_first(args()) equal to the `run prog.tw a b` that the bootstrap would
+# have seen for `twill run prog.tw a b`. Searching that for the program's path
+# and keeping what follows therefore gives the same answer on both sides.
+fn script_args(path: Str) -> Arr[Str] {
+  let out: Arr[Str] = arr_new()
+  push(out, "twill")
+  let rest: Arr[Str] = drop_first(args())
+  let i: I64 = 0
+  while i < len(rest) {
+    if bytes.equal(rest[i], path) {
+      let j: I64 = i + 1
+      while j < len(rest) {
+        push(out, rest[j])
+        j = j + 1
+      }
+      return out
+    }
     i = i + 1
   }
   out
