@@ -46,21 +46,26 @@
     2 |   n * fact(n - 1)
   ```
 
-  What it replaced was 424 lines of Go runtime internals and exit code 2, which
-  is twill's code for "you invoked it wrong". A Go stack overflow is a *fatal*
-  error: no recover catches it, so the only way to get a diagnostic at all is to
-  refuse before the stack runs out. `fn fact(n) = n * fact(n - 1)` with the base
-  case forgotten is the most likely first mistake anyone makes in a new
-  language, and it was the most likely first thing they saw. It now exits 1,
-  like any other program that failed.
+  What it replaced was 424 lines of Go runtime traceback on stderr, nothing on
+  stdout, and exit code 2. Not one of those 424 lines named the user's function
+  or the line the recursion was on, and 2 is the status `twill` uses for "you
+  invoked it wrong" (`twill run` with no file exits 2), so the crash was not
+  even distinguishable by status from a typo on the command line. A Go stack
+  overflow is a *fatal* error: no recover catches it, so the only way to get a
+  diagnostic at all is to refuse before the stack runs out. `fn fact(n) = n *
+  fact(n - 1)` with the base case forgotten is the most likely first mistake
+  anyone makes in a new language, and it was the most likely first thing they
+  saw. It now exits 1, like any other program that failed.
 
-  The number is measured, over 1,163 runs of every `.tw` file in `src/`,
+  The number is measured, over 1,201 runs of every `.tw` file in `src/`,
   `examples/`, `std/`, `std/tests/`, `testdata/` and the nine satellites, on
-  both engines. The deepest legitimate recursion anywhere is the self-hosted
-  compiler checking `src/parse.tw`, at 217 nested calls; no user program passes
-  18. The bootstrap's stack survives 150,000 nested calls and dies at 151,562.
-  So 10,000 is about 46x above the deepest real program and about 15x below the
-  crash. `docs/needs.md` NEEDS-30 has the table.
+  both engines, re-taken against this tree after the self-hosted runtime port
+  landed on `main`. The deepest legitimate recursion anywhere is the self-hosted
+  compiler checking `src/parse.tw`, at 217 nested calls; nothing that runs as a
+  program passes 18. A plain recursive frame on the bootstrap survives 150,466
+  nested calls and overflows the stack at 150,467. So 10,000 is about 46x above
+  the deepest real program and about 15x below the crash. `docs/needs.md`
+  NEEDS-30 has the tables.
 
 - **`TWILL_MAX_CALL_DEPTH`, so the two engines can refuse a program with the
   same words.** Running the self-hosted evaluator on the bootstrap puts two
@@ -75,7 +80,7 @@
 
   prints for `prog.tw` exactly the bytes `twill run prog.tw` prints. 100,000 is
   above the 80,013 the self-hosted evaluator needs -- bisected on the shipped
-  CLI, not derived -- and well under the 150,000 where the stack gives out.
+  CLI, not derived -- and under the 150,467 where the stack gives out.
 
 ### Changed
 

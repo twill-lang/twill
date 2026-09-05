@@ -585,11 +585,11 @@ The limit is there because the alternative is not a deeper recursion, it is a
 crash: the evaluator runs on the host's stack, and running out of it takes the
 whole process down with nothing an error handler can catch. 10,000 is about
 forty-six times the deepest recursion measured anywhere in this repository, its
-standard library, its test corpus and its nine satellite projects, where the
-deepest is the self-hosted compiler checking `src/parse.tw` at 217 nested calls
-and no user program passes 18. So a program that reaches 10,000 has almost
-certainly lost its base case. Recursion is not the language's loop; a `while`
-costs no stack at all.
+standard library, its test corpus and its nine satellite projects. Across 1,201
+measured runs the deepest is the self-hosted compiler checking `src/parse.tw`,
+at 217 nested calls; nothing that runs as a program passes 18. So a program
+that reaches 10,000 has almost certainly lost its base case. Recursion is not
+the language's loop; a `while` costs no stack at all.
 
 `TWILL_MAX_CALL_DEPTH` overrides the number for one run. There is exactly one
 reason to reach for it, and it is not "my program needs more stack": an
@@ -603,8 +603,11 @@ TWILL_MAX_CALL_DEPTH=100000 twill run src/main.tw run prog.tw
 
 prints for `prog.tw` exactly what `twill run prog.tw` prints, and why the plain
 form does not: without it the host stops first and reports against a function
-inside `src/eval.tw`. Set it past 150,000 and the stack overflow the limit
-exists to prevent comes back.
+inside `src/eval.tw`. Raise it far enough and the stack overflow the limit
+exists to prevent comes back: on the machine these numbers were taken on, a
+plain recursive frame survives 150,466 nested calls and the process dies at
+150,467, and a frame carrying five parameters and three locals dies at
+110,375.
 
 ## Control flow
 

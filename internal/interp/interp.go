@@ -58,31 +58,36 @@ func CheckLegacyExt(path string) error {
 // interpreter refuses to go further.
 //
 // It exists because a Go stack overflow is a *fatal* error: no recover catches
-// it, the process dies printing several hundred lines of runtime internals, and
-// nothing the interpreter does afterwards runs. A missing base case is the most
-// likely first mistake a newcomer makes, so that crash was the most likely
-// first thing they saw. A counter checked on the way in turns it into an
+// it, the process dies and nothing the interpreter does afterwards runs. With
+// the limit lifted, a three-line runaway recursion prints 424 lines of Go
+// runtime traceback on this machine and exits 2, and not one of those lines
+// names the user's function or the line the recursion is on. See
+// TestRunawayRecursionIsRefused for how that was measured. A missing base case
+// is the most likely first mistake a newcomer makes, so that crash was the most
+// likely first thing they saw. A counter checked on the way in turns it into an
 // ordinary twill error, which is the only way to get one at all.
 //
 // The number is measured, not guessed, and the measurement is written down in
-// docs/needs.md NEEDS-30 with the command that produced it. The deepest
-// legitimate recursion found by running every .tw file in examples/,
-// std/tests/, testdata/ and the nine satellite repositories, and by putting
-// every file in src/, examples/, std/ and the satellites through the
-// self-hosted compiler, is the self-hosted compiler checking src/parse.tw at
-// 217 nested calls. Nothing a user program does comes close: the deepest are
-// selvedge/tests/registry_test.tw at 18 and std/tests/json_test.tw at 14.
+// docs/needs.md NEEDS-30 with the table it came from. It was re-taken against
+// this tree, after the self-hosted runtime port landed on main: 1,201 measured
+// runs, every .tw file in src/, examples/, std/, testdata/ and the nine
+// satellite repositories, put through the self-hosted compiler and, except for
+// src/, run on the bootstrap as well. The deepest anything legitimate reaches
+// is the self-hosted compiler checking src/parse.tw, at 217 nested calls, and
+// nothing that runs as a program comes close: the deepest are
+// selvedge/tests/registry_test.tw at 18 and std/tests/llama_test.tw at 10.
 //
-// The other end was measured by bisection on this machine (macOS arm64, the 1
-// GB default goroutine stack): the bootstrap survives 150,000 nested twill
-// calls and dies at 151,562, and a frame holding five parameters, three locals
-// and a nested expression dies at the same depth, because what fills the stack
-// is the interpreter's own Go frames rather than anything the twill frame
-// holds.
+// The other end was bisected on this machine (macOS arm64, Go 1.27, the 1 GB
+// default goroutine stack). A plain one-parameter recursive frame survives
+// 150,466 nested twill calls and overflows the stack at 150,467. A fat frame --
+// five parameters, three locals, a nested expression -- survives 110,374 and
+// dies at 110,375, so what a twill frame holds is not free, but the
+// interpreter's own Go frames dominate: the fattest frame measured moves the
+// cliff by about a quarter, not by an order of magnitude.
 //
 // So 10,000 is about 46x above the deepest real program and about 15x below the
-// crash, which leaves room on both sides for programs and machines unlike the
-// ones measured.
+// crash (11x below it for the fat frame), which leaves room on both sides for
+// programs and machines unlike the ones measured.
 const DefaultMaxCallDepth = 10000
 
 // maxCallDepthEnv overrides DefaultMaxCallDepth for interpreters made by New.
@@ -106,8 +111,11 @@ func envMaxCallDepth() int {
 
 // callDepthMessage is the refusal, in the one place both engines copy it from.
 // src/eval.tw's call_depth_message is the same text and the two must agree
-// character for character; interp.TestSelfHostedRecursionLimitMessageMatches
-// is what holds them together.
+// character for character; TestSelfHostedRefusalsMatchTheBootstrap, in
+// recursion_test.go, is what holds them together: it runs each shape of runaway
+// recursion on both engines and requires the self-hosted CLI's first stderr
+// line to equal the bootstrap's byte for byte, so a change made here and not in
+// src/eval.tw fails there.
 func callDepthMessage(name string, depth int) string {
 	who := "an anonymous function"
 	if name != "" {

@@ -760,33 +760,52 @@ naming the function, the depth and the call's line. It is checked on the way
 into the frame, because a Go stack overflow is a fatal error that no recover
 catches: past the limit there is nothing left to report with.
 
-The number was measured rather than guessed, and here is the measurement, taken
-on macOS arm64 with the 1 GB default goroutine stack. The interpreter was
-instrumented to record the peak value of `callDepth` and every file below was
-run through it.
+The number was measured rather than guessed. The table below was re-taken on
+2026-09-04, against this branch merged with `main` at `fcb32ae`, so that it
+reflects the self-hosted runtime port rather than the tree the limit was first
+sized on. Machine: macOS arm64, Go 1.27, the 1 GB default goroutine stack. The
+interpreter was instrumented to record the peak value of `callDepth`, and every
+file below was put through it one file per process.
 
-| what was measured | files | deepest |
+Checked by the self-hosted compiler (`src/main.tw check F` on the bootstrap):
+
+| corpus | files | deepest |
 | --- | ---: | ---: |
-| self-hosted compiler checking `src/*.tw` | 11 | **217** (`src/parse.tw`) |
-| self-hosted compiler checking `examples/`, `std/`, `std/tests/` and the nine satellites | 234 | 102 (`bobbin/src/report.tw`) |
-| self-hosted compiler checking `testdata/` | 354 | 47 |
-| bootstrap running the nine satellites' tests and examples | 167 | 18 (`selvedge/tests/registry_test.tw`) |
-| bootstrap running `std/tests/` | 17 | 14 (`json_test.tw`) |
-| bootstrap running `examples/` | 26 | 8 (`llama.tw`) |
-| bootstrap running `testdata/` | 354 | 4 |
+| `src/*.tw` | 11 | **217** (`src/parse.tw`) |
+| the nine satellites | 167 | 102 (`bobbin/src/report.tw`) |
+| `std/`, including `std/tests/` | 48 | 77 (`std/stats.tw`) |
+| `examples/` | 26 | 54 (`examples/patterns.tw`) |
+| `testdata/` | 354 | 47 (`testdata/cases/interp_cumulative_62c7b46b326a4d32.tw`) |
 
-That is the whole of the corpus, 1,163 measured runs, and the deepest anything
-legitimate reaches is 217 -- the self-hosted compiler, not a user program. The
-depth there follows the *nesting* of the file being checked rather than its
-length: a synthetic file of 800 top-level statements peaks at 18, while a single
-120-term `+` chain reaches 245.
+Run on the bootstrap:
 
-The other end was bisected: the bootstrap survives 150,000 nested twill calls
-and dies at 151,562. A fat frame -- five parameters, three locals, a nested
-expression -- dies at the same depth, because what fills the stack is the
-interpreter's own Go frames rather than anything the twill frame holds. So
-10,000 is about 46x above the deepest real program and about 15x below the
-crash.
+| corpus | files | deepest |
+| --- | ---: | ---: |
+| the nine satellites | 167 attempted, 150 ran | 18 (`selvedge/tests/registry_test.tw`) |
+| `std/tests/`, including its two harnesses | 19 | 10 (`std/tests/llama_test.tw`) |
+| `examples/` | 26 | 8 (`examples/llama.tw`) |
+| `std/` modules | 29 | 1 |
+| `testdata/` | 354 | 4 (`testdata/examples/attention.tw`) |
+
+1,201 measured runs. The 17 satellite files that did not run are all `heddle`'s:
+they mix imports resolved against the repository root with imports resolved
+against the file's own directory, so no single working directory loads them
+outside `heddle`'s own runner. All 167 were checked.
+
+The deepest anything legitimate reaches is 217, and it is the self-hosted
+compiler rather than a user program; the deepest thing that runs as a program is
+18. The compiler's depth follows the *nesting* of the file it is checking rather
+than its length: a synthetic file of 800 top-level `let` bindings peaks at 18,
+while a single `print` of a 120-term `+` chain reaches 247.
+
+The other end was bisected on the same machine. A plain one-parameter recursive
+frame survives 150,466 nested twill calls and overflows the Go stack at 150,467
+(both reproduced three times). A fat frame -- five parameters, three locals, a
+nested expression -- survives 110,374 and dies at 110,375. So what the twill
+frame holds is not free, but the interpreter's own Go frames dominate: the
+fattest frame measured moves the cliff by about a quarter, not by an order of
+magnitude. 10,000 is about 46x above the deepest real program and about 15x
+below the crash, 11x below it for the fat frame.
 
 Two counters, one stack: when `src/eval.tw` runs on the bootstrap, the peak
 outer depth for a program that nests `k` calls is `8k + 9` exactly (measured at
@@ -797,17 +816,20 @@ and reports against a function inside `src/eval.tw`.
 No single shared constant can fix that. Reaching L inside costs more than 8L
 outside, which is more than L for every L, so the host has to be given the
 larger number, and `TWILL_MAX_CALL_DEPTH` is how. The number needed was
-bisected on the shipped CLI rather than derived from the slope: at
-`TWILL_MAX_CALL_DEPTH=80012` the host still refuses first, at `80013` the guest
-does. `TWILL_MAX_CALL_DEPTH=100000` is the documented value: above 80,013, well
-under 150,000.
+bisected on the shipped CLI rather than derived from the slope, and re-bisected
+against this tree: at `TWILL_MAX_CALL_DEPTH=80012` the host still refuses first
+and names `push_text`, at `80013` the guest refuses and names the user's own
+function. `TWILL_MAX_CALL_DEPTH=100000` is the documented value: above 80,013,
+under 150,467.
 
 Parsing and checking: still uncounted, and still the exposure this entry was
 opened for. The parser and the checker are recursive descent over user input,
 so their depth is the input's nesting rather than the program's call graph, and
 the call counter does not see them. Measured on the same machine as the numbers
-above: a single expression of 500,000 nested parentheses parses, checks and runs;
-1,000,000 crashes the Go parser with a stack overflow. That is far past what a
+above: `print` of a single expression of 500,000 nested parentheses parses,
+checks and runs, and 1,000,000 crashes the Go parser with a stack overflow --
+the same `runtime: goroutine stack exceeds 1000000000-byte limit` and exit 2 as
+the runaway recursion used to give. That is far past what a
 written program reaches and well within what a hostile input can send, so it is
 an input-validation problem rather than a usability one, and it wants the same
 treatment -- a depth counter in the descent, with a diagnostic.
@@ -3543,9 +3565,12 @@ generics, NEEDS-4, and the pattern language, NEEDS-3 -- are both closed. What
   workarounds whose reason for existing was removed and which are still there.
 - **Blank lines between comments (NEEDS-78).** One case left in the formatter.
 - **`%v` on an axis list (NEEDS-74).** One diagnostic, one decision unmade.
-- **Recursion depth (NEEDS-30).** 10,000-deep nesting parses and 20,000-deep
-  recursion returns; there is still no depth counter and no diagnostic, so what
-  happens past the real limit is undefined rather than reported.
+- **Parse depth (NEEDS-30).** The *call* half is closed: both evaluators refuse
+  a call nested past 10,000 with a diagnostic. The *parse* half is not. The
+  parser and the checker are recursive descent over user input and nothing
+  counts their depth, so a sufficiently nested file still crashes the Go parser
+  with a stack overflow rather than being refused: 500,000 nested parentheses
+  parse, 1,000,000 crash.
 - **Initialiser order between file-level bindings (NEEDS-86).** Runs once and is
   shared, both verified. Order is unspecified and currently does not matter.
 
