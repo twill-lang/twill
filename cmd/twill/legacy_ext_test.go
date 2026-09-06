@@ -23,7 +23,7 @@ func TestLegacyExtensionIsRefusedByEveryCommand(t *testing.T) {
 	cmds := map[string]func(string) int{
 		"run":        func(p string) int { return runFile(p, true) },
 		"check":      checkOnly,
-		"fmt":        func(p string) int { return formatFile(p, false) },
+		"fmt":        func(p string) int { return formatPaths(io.Discard, []string{p}, fmtPrint) },
 		"run --dump": func(p string) int { return runFileCanonical(p, true) },
 	}
 

@@ -51,8 +51,11 @@ func format(prog *ast.Program, comments []lexer.Comment) string {
 			p.b.WriteString("\n")
 		}
 	}
+	prevEnd := -1
 	for _, s := range prog.Body {
+		p.maybeBlank(prevEnd, s)
 		p.stmt(s, 0)
+		prevEnd = ast.StmtEndLine(s)
 	}
 	p.emitLeading(0, 1<<30) // flush trailing own-line comments at end of file
 	out := p.b.String()
@@ -95,6 +98,34 @@ func (p *printer) emitLeading(indent, beforeLine int) {
 	for p.ownIdx < len(p.own) && p.own[p.ownIdx].Line < beforeLine {
 		p.line(indent, commentText(p.own[p.ownIdx].Text))
 		p.ownIdx++
+	}
+}
+
+// maybeBlank re-emits one blank line where the source had a paragraph break
+// between two statements. The gap is measured from the previous statement's
+// last line to the leading edge of this one, which is its first own-line
+// comment if it has one and the statement itself otherwise, so a comment
+// sitting directly under the previous statement is not mistaken for a break. A
+// gap of two or more source lines becomes one blank line, however many the
+// author left. prevEnd below zero means this is the first statement of a block,
+// which never takes a leading blank.
+//
+// This is src/fmt.tw's maybe_blank, ported here. Until it was, the two printers
+// disagreed on every file with a paragraph break in it: the self-hosted one kept
+// the break and this one deleted it, so `twill fmt --write` reflowed a function
+// into one undifferentiated run and the divergence was recorded rather than
+// fixed (docs/needs.md NEEDS-78). The rule is the self-hosted file's, down to
+// the measurement, because the two are compared byte for byte.
+func (p *printer) maybeBlank(prevEnd int, s ast.Stmt) {
+	if prevEnd < 0 {
+		return
+	}
+	edge := s.Pos()
+	if p.ownIdx < len(p.own) && p.own[p.ownIdx].Line < edge {
+		edge = p.own[p.ownIdx].Line
+	}
+	if edge-prevEnd >= 2 {
+		p.b.WriteString("\n")
 	}
 }
 
@@ -190,8 +221,11 @@ func (p *printer) stmt(s ast.Stmt, indent int) {
 	case *ast.ExprStmt:
 		p.lineC(indent, p.expr(st.X), st.Line)
 	case *ast.Block:
+		prevEnd := -1
 		for _, inner := range st.Body {
+			p.maybeBlank(prevEnd, inner)
 			p.stmt(inner, indent)
+			prevEnd = ast.StmtEndLine(inner)
 		}
 	}
 }
@@ -209,8 +243,11 @@ func (p *printer) fnDecl(fn *ast.FnDecl, indent int) {
 // comments that fall inside the block.
 func (p *printer) blockStmt(indent int, header string, blk *ast.Block, headerLine int) {
 	p.lineC(indent, header+" {", headerLine)
+	prevEnd := -1
 	for _, s := range blk.Body {
+		p.maybeBlank(prevEnd, s)
 		p.stmt(s, indent+1)
+		prevEnd = ast.StmtEndLine(s)
 	}
 	p.emitLeading(indent+1, blk.EndLine) // comments before the closing brace
 	p.line(indent, "}")
@@ -515,11 +552,27 @@ func (p *printer) inlineStmt(s ast.Stmt) string {
 	}
 	sub := &printer{}
 	sub.stmt(s, 0)
-	lines := strings.Split(strings.TrimRight(sub.b.String(), "\n"), "\n")
-	for i := range lines {
-		lines[i] = strings.TrimSpace(lines[i])
+	return strings.Join(splitTrimmedLines(sub.b.String()), "; ")
+}
+
+// splitTrimmedLines flattens a sub-printer's output into the pieces an inline
+// form joins with "; ". Every line it wrote is indented from column zero, so
+// trimming the leading spaces is what flattens the nesting onto one line.
+//
+// An empty line is dropped rather than kept as an empty piece, because the
+// joiners put "; " between pieces and an empty one would render as "; ; ".
+// This is where blank-line preservation stops: a paragraph break inside a
+// block that is being flattened onto one line has nowhere to go, and a blank
+// line has no meaning once the block is one line long. src/fmt.tw's
+// split_trimmed_lines is the same function and says the same thing.
+func splitTrimmedLines(s string) []string {
+	var out []string
+	for _, line := range strings.Split(strings.TrimRight(s, "\n"), "\n") {
+		if piece := strings.TrimSpace(line); piece != "" {
+			out = append(out, piece)
+		}
 	}
-	return strings.Join(lines, "; ")
+	return out
 }
 
 // inlineBlock renders a block as `{ ... }`. Statements are separated by `;` so
@@ -532,11 +585,7 @@ func (p *printer) inlineBlock(blk *ast.Block) string {
 	for _, s := range blk.Body {
 		sub.stmt(s, 0)
 	}
-	lines := strings.Split(strings.TrimRight(sub.b.String(), "\n"), "\n")
-	for i := range lines {
-		lines[i] = strings.TrimSpace(lines[i])
-	}
-	return "{ " + strings.Join(lines, "; ") + " }"
+	return "{ " + strings.Join(splitTrimmedLines(sub.b.String()), "; ") + " }"
 }
 
 // formatNumberLit prints a numeric literal, from its digits when it has them.

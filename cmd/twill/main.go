@@ -35,17 +35,23 @@ func main() {
 	case "-h", "--help", "help":
 		usage()
 	case "check":
-		if len(args) < 2 {
-			fmt.Fprintln(os.Stderr, "usage: twill check <file>")
-			os.Exit(2)
-		}
-		os.Exit(checkOnly(args[1]))
+		os.Exit(checkPaths(sourceArgs(args, "check <path ...>", checkFlags)))
 	case "fmt":
-		if len(args) < 2 {
-			fmt.Fprintln(os.Stderr, "usage: twill fmt <file> [--write]")
-			os.Exit(2)
+		mode := fmtPrint
+		switch {
+		case hasFlag(args, "--check"):
+			// --check and --write are opposite answers to "what should happen to
+			// a file that is not formatted", so asking for both is a mistake
+			// rather than a precedence question.
+			if hasFlag(args, "--write") || hasFlag(args, "-w") {
+				fmt.Fprintln(os.Stderr, "twill: fmt --check and --write do opposite things; pick one")
+				os.Exit(2)
+			}
+			mode = fmtCheck
+		case hasFlag(args, "--write") || hasFlag(args, "-w"):
+			mode = fmtWrite
 		}
-		os.Exit(formatFile(args[1], hasFlag(args, "--write") || hasFlag(args, "-w")))
+		os.Exit(formatPaths(os.Stdout, sourceArgs(args, "fmt <path ...> [--write | --check]", fmtFlags), mode))
 	case "run":
 		if len(args) < 2 {
 			fmt.Fprintln(os.Stderr, "usage: twill run <file>")
@@ -67,6 +73,15 @@ func main() {
 	default:
 		if strings.HasPrefix(args[0], "-") {
 			fmt.Fprintf(os.Stderr, "twill: unknown flag %q\n", args[0])
+			os.Exit(2)
+		}
+		// A bare word that is not a command, has no extension, has no separator
+		// in it and names nothing on disk is a misspelled command. Running it
+		// reported `cannot read file "chekc"`, which reads as a missing file and
+		// sends the reader looking for one.
+		if !looksLikeAPath(args[0]) {
+			fmt.Fprintf(os.Stderr, "twill: unknown command %q\n", args[0])
+			fmt.Fprintln(os.Stderr, "run 'twill help' for the list of commands")
 			os.Exit(2)
 		}
 		if hasFlag(args, canonicalDumpFlag) {
@@ -187,30 +202,51 @@ func printDiags(path, src string, diags []checker.Diagnostic) {
 	}
 }
 
-func formatFile(path string, write bool) int {
-	if err := interp.CheckLegacyExt(path); err != nil {
-		fmt.Fprintf(os.Stderr, "twill: %s\n", err)
-		return 1
+// sourceArgs resolves the paths for a command that works on source files: it
+// rejects a flag nobody knows, expands directories, and exits 2 with the given
+// usage line when nothing is left to work on. usage is the one-line form shown
+// for an invocation with no paths at all.
+func sourceArgs(args []string, usage string, known map[string]bool) []string {
+	if bad := unknownFlag(args[1:], known); bad != "" {
+		fmt.Fprintf(os.Stderr, "twill: unknown flag %q\n", bad)
+		os.Exit(2)
 	}
-	src, err := os.ReadFile(path)
+	given := nonFlagArgs(args[1:])
+	if len(given) == 0 {
+		fmt.Fprintf(os.Stderr, "usage: twill %s\n", usage)
+		os.Exit(2)
+	}
+	files, err := expandSourcePaths(given)
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "twill: %s\n", err)
+		os.Exit(2)
+	}
+	if len(files) == 0 {
+		fmt.Fprintln(os.Stderr, "twill: no .tw files found")
+		os.Exit(2)
+	}
+	return files
+}
+
+// formatOne returns a file's formatted text alongside the text it started with,
+// so a caller can tell whether formatting would change it without formatting it
+// twice. An error has already been reported when it comes back.
+func formatOne(path string) (out, src string, err error) {
+	if lerr := interp.CheckLegacyExt(path); lerr != nil {
+		fmt.Fprintf(os.Stderr, "twill: %s\n", lerr)
+		return "", "", lerr
+	}
+	b, rerr := os.ReadFile(path)
+	if rerr != nil {
 		fmt.Fprintf(os.Stderr, "twill: cannot read file %q\n", path)
-		return 1
+		return "", "", rerr
 	}
-	out, ferr := format.Source(string(src))
+	formatted, ferr := format.Source(string(b))
 	if ferr != nil {
-		reportError(path, string(src), ferr)
-		return 1
+		reportError(path, string(b), ferr)
+		return "", "", ferr
 	}
-	if write {
-		if err := os.WriteFile(path, []byte(out), 0o644); err != nil {
-			fmt.Fprintf(os.Stderr, "twill: cannot write file %q\n", path)
-			return 1
-		}
-		return 0
-	}
-	fmt.Print(out)
-	return 0
+	return formatted, string(b), nil
 }
 
 func repl() {
@@ -287,7 +323,11 @@ func needsMoreInput(src string) bool {
 	return depth > 0
 }
 
-// reportError prints an error with a source-line excerpt and a caret.
+// reportError prints an error against the file it came from: a source-line
+// excerpt and a caret where the error carries a position, and the file's name
+// in front of the message where it does not. src/main.tw's report_syntax and
+// report_format_error are the same function and the two must agree character
+// for character.
 func reportError(path, src string, err error) {
 	switch e := err.(type) {
 	case *lexer.SyntaxError:
@@ -297,7 +337,11 @@ func reportError(path, src string, err error) {
 		fmt.Fprintf(os.Stderr, "%s:%d: runtime error: %s\n", path, e.Line, e.Msg)
 		showContext(src, e.Line, 0)
 	default:
-		fmt.Fprintln(os.Stderr, "error:", err.Error())
+		// An error with no position in it still belongs to a file, and it says
+		// so. While one invocation meant one file the caller knew which file a
+		// bare `error: ...` was about; over a directory they do not, and
+		// `twill fmt --check .` in this repository writes ten of these.
+		fmt.Fprintf(os.Stderr, "%s: error: %s\n", path, err.Error())
 	}
 }
 
@@ -401,9 +445,10 @@ Usage:
   twill run <file.tw>        Same as above
   twill run <file> --no-check   Run without the static shape check
   twill run <file> --dump=canonical   Run, then dump top-level bindings exactly
-  twill check <file.tw>      Shape-check only, no execution
-  twill fmt <file.tw>        Print canonically formatted source
-  twill fmt <file> --write   Format the file in place
+  twill check <path ...>     Shape-check only, no execution
+  twill fmt <path ...>       Print canonically formatted source
+  twill fmt <paths> --write  Format the files in place
+  twill fmt <paths> --check  Name the files that would change; exit 1 if any
   twill test [path ...]      Run every *_test.tw under the paths (default: .)
   twill test <paths> -v      Show each suite's output, not only failures'
   twill test --filter <sub>  Run only the suites whose path contains <sub>

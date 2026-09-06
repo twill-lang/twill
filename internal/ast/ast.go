@@ -487,6 +487,37 @@ func (e *Match) Pos() int { return e.Line }
 // can appear where statements are expected.
 func (e *Block) stmt() {}
 
+// StmtEndLine is the last source line a statement occupies, which the formatter
+// needs to tell a paragraph break from a statement that simply spans several
+// lines. A statement with a block body ends at the block's closing brace; a
+// single-line statement ends where it starts.
+//
+// This is src/ast.tw's stmt_end_line, and the two have to answer the same
+// question the same way: the blank lines the formatter re-emits are decided
+// from it, and the two implementations are compared byte for byte.
+func StmtEndLine(s Stmt) int {
+	switch st := s.(type) {
+	case *While:
+		return st.Body.EndLine
+	case *For:
+		return st.Body.EndLine
+	case *Block:
+		return st.EndLine
+	case *FnDecl:
+		return fnEndLine(st)
+	}
+	return s.Pos()
+}
+
+// fnEndLine is where a function declaration stops. A body that is an expression
+// is on the declaration's own line; a body that is a block ends at its brace.
+func fnEndLine(fn *FnDecl) int {
+	if blk, ok := fn.Body.(*Block); ok {
+		return blk.EndLine
+	}
+	return fn.Line
+}
+
 // TupleLit is a fixed-arity positional group written `(a, b)`. The comma is
 // what makes it one: `(x)` is x in parentheses and stays grouping, and `(x,)`
 // is refused by the parser rather than read as a one-element tuple, because a

@@ -12,8 +12,16 @@ twill fmt path/to/program.tw     # canonically format (add --write to edit in pl
 twill                             # REPL
 ```
 
-`twill fmt` reprints a program in a canonical style, preserving comments. It
-refuses rather than move a comment it can't place.
+`twill check` and `twill fmt` take any number of paths, and a directory means
+every `.tw` file under it. `twill fmt --check` writes nothing, names the files
+that would change and exits 1 if there are any, which is the form a CI step
+wants. `twill run` takes one path on purpose: everything after it is the
+program's own arguments, which the `args` builtin hands back.
+
+`twill fmt` reprints a program in a canonical style, preserving comments and the
+blank lines between paragraphs of statements. It refuses rather than move a
+comment it can't place, and the refusal names the file it refused, so a run over
+a directory can be read.
 
 Pass `--no-check` to run without the static shape check. In the REPL, each line's
 value is printed; `:help` and `:quit` do the obvious things.

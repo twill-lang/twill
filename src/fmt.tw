@@ -21,10 +21,10 @@ mode systems
 #     to break, and that decision is not in the Go file to copy.
 #   - A blank line between two statements is preserved, as one blank line
 #     however many the author left, so paragraph breaks inside a function
-#     survive a format. This is the one place this printer deliberately diverges
-#     from internal/format/format.go, which drops them: the owner chose the
-#     better behaviour over byte-agreement with a bootstrap that is being
-#     retired. maybe_blank does it and NEEDS-78 records the decision.
+#     survive a format. This printer had the rule first and diverged from
+#     internal/format/format.go, which dropped them; the Go file has since been
+#     given the same rule, so the two agree again. maybe_blank does it and
+#     NEEDS-78 records it.
 #
 # Comments are the part a formatter usually gets wrong, so this file does not
 # try to be clever about them. A comment on its own line is re-emitted, at the
@@ -222,11 +222,11 @@ fn emit_leading(p: Printer, indent: I64, before_line: I64) {
 # lines becomes one blank line, however many the author left. prev_end below zero
 # means this is the first statement of a block, which never takes a leading blank.
 #
-# This is a deliberate divergence from internal/format/format.go, which emits one
-# line per statement and drops the blanks. The owner chose to let twill's
-# formatter be the better one here rather than reproduce the bootstrap's gap; the
-# two therefore disagree on this point until the bootstrap is retired, and the
-# fmt goldens are regenerated from twill when it can run. See the entry.
+# internal/format/format.go emitted one line per statement and dropped the
+# blanks, so this rule was a deliberate divergence when it landed. It is not one
+# any more: the Go printer's maybeBlank is this function, measuring the same gap
+# from the same two line numbers, and the two agree byte for byte over the whole
+# corpus again. See the entry.
 fn maybe_blank(p: Printer, prev_end: I64, s: ast.Stmt) {
   if prev_end < 0 {
     return
@@ -816,11 +816,12 @@ fn inline_block(blk: ast.Block) -> Str {
 # leading spaces is what flattens the nesting onto one line.
 #
 # An empty line is dropped rather than kept as an empty piece. The joiners above
-# put "; " between pieces, so an empty one would render as "; ; ". Go's inlineBlock
-# never hits this because the bootstrap formatter does not preserve blank lines;
-# twill's does (NEEDS-78), and a paragraph break inside a nested block would leak
-# a blank line into the sub-printer here. A blank line has no meaning once a block
-# is flattened onto one line, so this is where that preservation stops.
+# put "; " between pieces, so an empty one would render as "; ; ". A paragraph
+# break inside a nested block leaks a blank line into the sub-printer here, since
+# both printers preserve breaks now (NEEDS-78), and a blank line has no meaning
+# once a block is flattened onto one line: this is where that preservation stops.
+# Go's splitTrimmedLines drops it for the same reason, which is what keeps the
+# two agreeing on an inlined block.
 fn split_trimmed_lines(s: Str) -> Arr[Str] {
   let out: Arr[Str] = arr_new()
   let end: I64 = len(s)
