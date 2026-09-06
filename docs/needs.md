@@ -2020,13 +2020,16 @@ let twill's formatter be the better one rather than reproduce
 the same rule, ported from that file rather than re-invented, along with
 `ast.StmtEndLine` and the empty-piece drop in `splitTrimmedLines` that keeps a
 flattened inline block from rendering `; ; `. Formatting every `.tw` file in the
-corpus under both implementations and comparing bytes went from 119 divergences
-to none.
+corpus under both implementations and comparing bytes went from 120 divergences
+of 469 files to none, with the same 10 files refused by both before and after.
 
-One case is left: a blank line between two consecutive own-line comments is not
-preserved, because `emit_leading` emits comments back to back. Both sides drop
-it, so it is a shared gap rather than a disagreement; the entry's target, breaks
-between statements, is done.
+Two cases are left, and both sides drop both, so they are shared gaps rather
+than disagreements; the entry's target, breaks between statements, is done. A
+blank line between two consecutive own-line comments is not preserved, because
+`emit_leading` emits comments back to back. Neither is a blank line between a
+file's opening comment and the first statement it precedes: nothing precedes
+that statement, so there is no gap for `maybe_blank` to measure and the comment
+comes out attached to it. `examples/hello.tw` is the visible instance.
 
 *(Original: open, cosmetic. `src/fmt.tw`, and `internal/format/format.go`
 equally.)*

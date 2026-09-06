@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -193,5 +194,51 @@ func TestCheckPathsVisitsEveryFileAndFailsIfAnyDoes(t *testing.T) {
 	}
 	if code := checkPaths([]string{ok1, bad, ok2}); code != 1 {
 		t.Errorf("check with one bad file = %d, want 1", code)
+	}
+}
+
+// An error that carries no position in the file still has to say which file it
+// came from. One invocation used to mean one file and the caller knew; over a
+// directory it does not. `twill fmt --check .` in this repository refuses ten
+// files whose comments the formatter will not move, and the ten lines it wrote
+// were identical and named none of them.
+func TestFormatRefusalNamesItsFile(t *testing.T) {
+	dir := t.TempDir()
+	// A comment inside a multi-line list literal is one the formatter refuses
+	// to move rather than silently drop.
+	refusing := writeFile(t, filepath.Join(dir, "refuses.tw"), "let a = [\n  1,  # one\n  2,  # two\n]\n")
+	clean := writeFile(t, filepath.Join(dir, "clean.tw"), "let b = 1\n")
+
+	code, stderr := captureStderr(t, func() int {
+		return formatPaths(io.Discard, []string{refusing, clean}, fmtCheck)
+	})
+	if code != 1 {
+		t.Errorf("fmt --check over a file it refuses = %d, want 1", code)
+	}
+	want := refusing + ": error: cannot format: "
+	if !strings.HasPrefix(stderr, want) {
+		t.Errorf("refusal = %q, want it to start with %q", stderr, want)
+	}
+	if strings.Contains(stderr, clean) {
+		t.Errorf("refusal = %q, want it to name only the file it refused", stderr)
+	}
+}
+
+// The two positioned forms keep the file, the line and (for a syntax error) the
+// column they have always had: the fix above adds a file to the third form, it
+// does not restyle the two that had one.
+func TestPositionedErrorsKeepTheirFileAndLine(t *testing.T) {
+	dir := t.TempDir()
+	bad := writeFile(t, filepath.Join(dir, "bad.tw"), "let a = (\n")
+
+	code, stderr := captureStderr(t, func() int { return checkPaths([]string{bad}) })
+	if code != 1 {
+		t.Errorf("check over a file that does not parse = %d, want 1", code)
+	}
+	if !strings.HasPrefix(stderr, bad+":") {
+		t.Errorf("syntax error = %q, want it to start with %q", stderr, bad+":")
+	}
+	if !strings.Contains(stderr, "syntax error:") {
+		t.Errorf("syntax error = %q, want it to say so", stderr)
 	}
 }

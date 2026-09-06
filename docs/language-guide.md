@@ -20,7 +20,8 @@ program's own arguments, which the `args` builtin hands back.
 
 `twill fmt` reprints a program in a canonical style, preserving comments and the
 blank lines between paragraphs of statements. It refuses rather than move a
-comment it can't place.
+comment it can't place, and the refusal names the file it refused, so a run over
+a directory can be read.
 
 Pass `--no-check` to run without the static shape check. In the REPL, each line's
 value is printed; `:help` and `:quit` do the obvious things.

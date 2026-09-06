@@ -323,7 +323,11 @@ func needsMoreInput(src string) bool {
 	return depth > 0
 }
 
-// reportError prints an error with a source-line excerpt and a caret.
+// reportError prints an error against the file it came from: a source-line
+// excerpt and a caret where the error carries a position, and the file's name
+// in front of the message where it does not. src/main.tw's report_syntax and
+// report_format_error are the same function and the two must agree character
+// for character.
 func reportError(path, src string, err error) {
 	switch e := err.(type) {
 	case *lexer.SyntaxError:
@@ -333,7 +337,11 @@ func reportError(path, src string, err error) {
 		fmt.Fprintf(os.Stderr, "%s:%d: runtime error: %s\n", path, e.Line, e.Msg)
 		showContext(src, e.Line, 0)
 	default:
-		fmt.Fprintln(os.Stderr, "error:", err.Error())
+		// An error with no position in it still belongs to a file, and it says
+		// so. While one invocation meant one file the caller knew which file a
+		// bare `error: ...` was about; over a directory they do not, and
+		// `twill fmt --check .` in this repository writes ten of these.
+		fmt.Fprintf(os.Stderr, "%s: error: %s\n", path, err.Error())
 	}
 }
 

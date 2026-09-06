@@ -26,11 +26,13 @@
   too: silently ignoring `--chekc` would have made the new gate un-runnable in
   precisely the case it matters.
 
-  The CI step is **not** switched on in this change. 386 of the repository's 499
-  `.tw` files are not in canonical form, and almost none of that is whitespace:
-  the formatter normalises `3.0` to `3` and flattens every block-structured
-  expression onto one line, so turning the gate on means reflowing the tree
-  first. That is a separate change with a separate diff to read.
+  The CI step is **not** switched on in this change, and the reason is not the
+  blank lines the same branch fixes. 391 of the repository's 517 `.tw` files are
+  not in canonical form, and almost none of that is whitespace: the formatter
+  normalises `3.0` to `3` and flattens a multi-line list literal onto one line,
+  so `examples/hello.tw` changes on seven lines and `examples/mlp.tw` loses the
+  aligned rows of its `X` matrix. Turning the gate on means reflowing the tree
+  first, which is a separate change with a separate diff to read.
 
 ### Changed
 
@@ -46,7 +48,19 @@
   blank lines the author left, one comes out.
 
   Formatting every `.tw` file in the corpus under both implementations and
-  comparing bytes went from **119 divergences of 468 files to none**.
+  comparing bytes went from **120 divergences of 469 files to none**, the same
+  10 files being refused by both before and after.
+
+- **An error with no position in it names its file.** `reportError`'s two
+  positioned forms have always led with `path:line:` and its third did not: an
+  error carrying no position printed `error: <msg>` and nothing else. That was
+  survivable while one invocation meant one file, because the caller knew which
+  file they had named. It is not survivable in the mode this change adds:
+  `twill fmt --check .` in this repository refuses ten files whose comments the
+  formatter will not move rather than drop, and wrote ten identical lines that
+  named none of them. The form is now `path: error: <msg>`, and
+  `src/main.tw`'s `report_format_error` is changed with it so the two CLIs still
+  print the same bytes.
 
 - **An unrecognised subcommand says so.** `twill chekc x.tw` reported `cannot
   read file "chekc"`, which reads as a missing file and sends the reader looking
