@@ -1245,6 +1245,211 @@ let HEX: I64 = 2
 	}
 }
 
+// The rank-preserving flag is a shape change, and a shape change is exactly the
+// kind of thing the two implementations can transcribe differently: one of them
+// composes reduce-then-reshape in the interpreter and the other in the tensor
+// kernel. Printing the result compares the shape, the values, the dtype tag and
+// the diagnostics in one go.
+func TestSelfHostedKeepdimsMatches(t *testing.T) {
+	src := "let m = tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])\n" +
+		"print(sum(m, 1, true))\nprint(sum(m, 1, false))\nprint(sum(m, 1, 1))\n" +
+		"print(mean(m, 0, true))\nprint(max(m, -1, true))\nprint(min(m, 1, true))\n" +
+		"print(prod(m, 1, true))\nprint(median(m, 1, true))\n" +
+		"print(argmax(m, 1, true))\nprint(argmin(m, 0, true))\n" +
+		"print(logsumexp(m, 1, true))\n" +
+		"print(m - sum(m, 1, true) / 3.0)\n" +
+		"print(grad(fn(v) = sum(sum(v, 1, true)))(m))\n"
+	goOut, selfOut := runBothWays(t, src)
+	if goOut != selfOut {
+		t.Fatalf("keepdims differs:\n Go   %q\n self %q", goOut, selfOut)
+	}
+	if !strings.Contains(goOut, "shape=[2, 1]") {
+		t.Fatalf("expected a kept axis in the output, got %q", goOut)
+	}
+}
+
+// --- tuples ----------------------------------------------------------------
+
+// Tuple returns and destructuring `let` (docs/roadmap.md entry 1) touch the
+// parser, the checker, the evaluator and the formatter on both sides. The
+// harness below is the reason they cannot drift: the exit code says the two
+// checkers reached the same verdict, and the captured diagnostic says they
+// reached it for the same stated reason, which is the half an exit code cannot
+// see. `(F64, F64, F64)` against `(F64, F64)` and `(F64, F64)` against a
+// three-name binding are different sentences, and both are written twice.
+func TestSelfHostedCheckTuples(t *testing.T) {
+	bad := map[string]string{
+		"mode systems\nfn f() -> (F64, F64) = (1.0, 2.0, 3.0)\n":                                            "returns (F64, F64, F64) but its signature declares (F64, F64)",
+		"mode systems\nfn f() -> (I64, Str) = (1, 2)\n":                                                     "but its signature declares (I64, Str)",
+		"mode systems\nfn f() -> (F64, F64) = (1.0, 2.0)\nlet (a, b, c) = f()\n":                            "this let binds 3 names, but the value is (F64, F64), which has 2",
+		"mode systems\nlet (a, b) = 5\n":                                                                    "this let destructures a tuple of 2 values, but the value is F64",
+		"mode systems\nlet t: (I64, Str) = (1, 2)\n":                                                        `"t" is declared (I64, Str) but the value is (F64, F64)`,
+		"mode systems\nlet t: (I64, I64) = (1, 2)\nlet u = t + 1\n":                                         "numbers/tensors",
+		"mode systems\nlet t: (I64, I64) = (1, 2)\nlet b = t < 1\n":                                         "cannot order (I64, I64)",
+		"let t = (1.0, 2.0)\nlet y = t.first\n":                                                             "cannot read field",
+		"mode systems\nstruct Pair[T] { span: (T, T) }\nlet p: Pair[I64] = Pair { span: (\"a\", \"b\") }\n": `"p" is declared Pair[I64] but the value is Pair[Str]`,
+	}
+	for src, want := range bad {
+		code, out := runSelfHostedCheckOut(t, src)
+		if code != 1 {
+			t.Errorf("self-hosted check of %q exited %d, want 1", src, code)
+		}
+		if !strings.Contains(out, want) {
+			t.Errorf("self-hosted check of %q said %q, want it to contain %q", src, out, want)
+		}
+	}
+	good := []string{
+		"mode systems\nfn f() -> (I64, Str) = (1, \"a\")\nlet (n, s) = f()\nlet ok: Str = s\n",
+		"mode systems\nlet t: (I64, Str) = (1, \"a\")\n",
+		"mode systems\nfn take(p: (I64, Str), q: fn(I64) -> (I64, I64)) -> (I64, I64) = q(1)\n",
+		"mode systems\nstruct Pair[T] { span: (T, T) }\nlet p: Pair[I64] = Pair { span: (1, 2) }\n",
+		"mode systems\nlet xs: Arr[(I64, Str)] = arr_new()\n",
+		"let (a, _, c) = (1.0, 2.0, 3.0)\nprint(a + c)\n",
+	}
+	for _, src := range good {
+		if code := runSelfHostedCheck(t, src); code != 0 {
+			t.Errorf("self-hosted check of %q exited %d, want 0", src, code)
+		}
+	}
+}
+
+// The two holes a destructuring `let` had in the checker, across the seam.
+//
+// Both were silent and both implementations agreed on the wrong answer, which
+// is exactly the shape of defect the conformance gate cannot see: `const A`
+// followed by `let (A, b) = ...` rebound A and printed 2 under each, and
+// `let (a, a) = ...` bound a twice under each and let the last position win.
+// Agreement is not correctness, so these are asserted against the Go checker's
+// own text rather than against each other, the same way
+// TestSelfHostedRefusesRebindingAConst is.
+func TestSelfHostedRefusesADestructuringLetThatRebindsOrRepeats(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		src  string
+		want string
+	}{
+		{
+			name: "a destructuring let is a second binding of a const",
+			src:  "mode systems\nconst A: I64 = 1\nlet (A, b) = (2, 3)\n",
+			want: "cannot be bound a second time",
+		},
+		{
+			name: "a name may not be bound twice by one destructuring",
+			src:  "mode systems\nlet (a, a) = (1.0, 2.0)\n",
+			want: "binds a twice",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prog, err := parser.Parse(tc.src)
+			if err != nil {
+				t.Fatalf("parse error: %v", err)
+			}
+			diags := checker.Check(prog)
+			if len(diags) != 1 {
+				t.Fatalf("the Go checker reported %d diagnostics, want 1: %v", len(diags), diags)
+			}
+			if !strings.Contains(diags[0].Msg, tc.want) {
+				t.Fatalf("the Go checker reported something else: %s", diags[0].Msg)
+			}
+			code, out := runSelfHostedCheckOut(t, tc.src)
+			if code != 1 {
+				t.Errorf("self-hosted check exited %d, want 1", code)
+			}
+			if !strings.Contains(out, diags[0].Msg) {
+				t.Errorf("the two checkers disagree.\n  go:   %s\n  self: %s", diags[0].Msg, out)
+			}
+		})
+	}
+	// The two that must stay legal, again on both sides: `_` binds nothing, so
+	// it is neither a rebinding nor a repeat, and an inner scope is a different
+	// statement list, so shadowing is untouched.
+	for _, src := range []string{
+		"mode systems\nconst A: I64 = 1\nlet (_, b) = (2, 3)\n",
+		"mode systems\nlet (_, _) = (1.0, 2.0)\n",
+		"mode systems\nconst A: I64 = 1\nfn f() {\n  let (A, b) = (2, 3)\n}\n",
+	} {
+		prog, err := parser.Parse(src)
+		if err != nil {
+			t.Fatalf("parse error for %q: %v", src, err)
+		}
+		if diags := checker.Check(prog); len(diags) != 0 {
+			t.Errorf("the Go checker refused %q: %v", src, diags)
+		}
+		if code := runSelfHostedCheck(t, src); code != 0 {
+			t.Errorf("self-hosted check of %q exited %d, want 0", src, code)
+		}
+	}
+}
+
+// The three refusals the tuple syntax makes are parser errors, so they are the
+// same bytes on both sides or the differential harness is comparing two
+// different languages. A one-element tuple is refused rather than invented; a
+// ninth element is refused rather than allowed to become an unreadable
+// positional record; and `const` does not destructure.
+func TestSelfHostedTupleSyntaxRefusals(t *testing.T) {
+	cases := map[string]string{
+		"let x = (1.0,)\n":       "a tuple holds at least two values",
+		"let (a) = (1.0, 2.0)\n": "a tuple holds at least two values",
+		"let x = (1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0)\n": "a tuple holds at most 8 values",
+		"const (a, b) = (1.0, 2.0)\n":                             "and nothing yet asks to declare several at once. The name a destructuring let binds is still refused when a const in the same scope already binds it.",
+		"let (a, 3) = (1.0, 2.0)\n":                               "expected a name in a destructuring let",
+		"mode systems\nfn f() -> (F64,) = 1.0\n":                  "a tuple holds at least two values",
+	}
+	for src, want := range cases {
+		code, out := runSelfHostedCheckOut(t, src)
+		if code != 1 {
+			t.Errorf("self-hosted check of %q exited %d, want 1", src, code)
+		}
+		if !strings.Contains(out, want) {
+			t.Errorf("self-hosted check of %q said %q, want it to contain %q", src, out, want)
+		}
+	}
+}
+
+// The evaluator half. A tuple prints as `(1, 2)` and compares structurally, and
+// a destructuring binding that does not fit says so in the same words -- the
+// bootstrap and src/eval.tw are compared byte for byte here.
+func TestSelfHostedTupleEvaluationMatches(t *testing.T) {
+	for _, src := range []string{
+		"print((1.0, 2.0))",
+		`print((1.0, "two", true))`,
+		"print(((1.0, 2.0), (3.0, 4.0)))",
+		"fn span(xs) = (xs[0], xs[2])\nlet (lo, hi) = span([1.0, 2.0, 5.0])\nprint(hi - lo)",
+		"let (a, _, c) = (1.0, 99.0, 2.0)\nprint(a + c)",
+		"print((1.0, 2.0) == (1.0, 2.0))",
+		"print((1.0, 2.0) == (1.0, 3.0))",
+		"print((1.0, 2.0) == (1.0, 2.0, 3.0))",
+		`print((1.0, 2.0) == ["a", "b"])`,
+		"let (a, b, c, d, e, f, g, h) = (1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0)\nprint(h)",
+	} {
+		goOut, selfOut := runBothWays(t, src+"\n")
+		if goOut != selfOut {
+			t.Fatalf("tuple output diverged for %q:\n  go:   %q\n  self: %q", src, goOut, selfOut)
+		}
+	}
+}
+
+// A type argument is a full type under both front ends. `Arr[fn(I64) -> I64]`
+// was a syntax error to the Go parser and clean to src/parse.tw before this
+// change: parseTypeArgs read a type reference where parse_type_args read a type
+// expression. That is a parser divergence older than tuples, and putting a
+// tuple into type-argument position is what found it.
+func TestSelfHostedTypeArgumentIsAFullType(t *testing.T) {
+	for _, src := range []string{
+		"mode systems\nlet f: Arr[fn(I64) -> I64] = arr_new()\n",
+		"mode systems\nlet xs: Arr[(I64, Str)] = arr_new()\n",
+		"mode systems\nlet d: Dict[Str, (I64, I64)] = {}\n",
+	} {
+		if code := runSelfHostedCheck(t, src); code != 0 {
+			t.Errorf("self-hosted check of %q exited %d, want 0", src, code)
+		}
+		ip := interp.New(func(string) {})
+		if _, err := ip.Run(src); err != nil {
+			t.Errorf("the bootstrap refused %q: %v", src, err)
+		}
+	}
+}
+
 // The record update across the seam. `{ ..base, f: v }` is parsed, checked,
 // printed and evaluated by two implementations, and the conformance gate
 // compares their output byte for byte, so every one of those has to agree. The
@@ -1385,5 +1590,53 @@ let c = { ..base }
 	}
 	if got != want {
 		t.Errorf("the two formatters disagree.\n  go:\n%s\n  self:\n%s", want, got)
+	}
+}
+
+// docs/language-guide.md tells the reader what a third argument to the three
+// shape-preserving ops does, and it does not do the same thing for all three.
+// `flip` and `diff` refuse it; `softmax` has never counted its arguments and
+// ignores it, so a `keepdims` written on a softmax is silently nothing. That
+// asymmetry is older than the flag and is documented rather than fixed, which
+// only works if it is pinned: this is the test that turns the paragraph red if
+// either half of it stops being true, on either implementation.
+func TestSelfHostedThirdArgumentToShapePreservingOps(t *testing.T) {
+	const m = "let m = tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])\n"
+
+	// softmax ignores it, and both implementations ignore it identically: the
+	// answer is the two-argument one, shape and all.
+	plainGo, plainSelf := runBothWays(t, m+"print(softmax(m, 1))\n")
+	if plainGo != plainSelf {
+		t.Fatalf("softmax(m, 1) differs:\n Go   %q\n self %q", plainGo, plainSelf)
+	}
+	for _, src := range []string{
+		m + "print(softmax(m, 1, true))\n",
+		m + "print(softmax(m, 1, true, 9))\n",
+	} {
+		goOut, selfOut := runBothWays(t, src)
+		if goOut != selfOut {
+			t.Errorf("%q differs:\n Go   %q\n self %q", src, goOut, selfOut)
+		}
+		if goOut != plainGo {
+			t.Errorf("%q should be softmax(m, 1) ignoring the extra argument, got %q want %q",
+				src, goOut, plainGo)
+		}
+	}
+
+	// flip and diff refuse it, on both implementations, with the arity message.
+	for _, tc := range []struct{ src, msg string }{
+		{m + "print(flip(m, 1, true))\n", "flip expects (tensor[, axis])"},
+		{m + "print(diff(m, 1, true))\n", "diff expects (tensor[, axis])"},
+	} {
+		ip := interp.New(func(string) {})
+		_, err := ip.Run(tc.src)
+		if err == nil {
+			t.Errorf("the bootstrap accepted %q instead of refusing it", tc.src)
+		} else if !strings.Contains(err.Error(), tc.msg) {
+			t.Errorf("the bootstrap refused %q with %q, want it to contain %q", tc.src, err, tc.msg)
+		}
+		if code := runSelfHostedRun(t, tc.src); code == 0 {
+			t.Errorf("the self-hosted evaluator accepted %q instead of refusing it", tc.src)
+		}
 	}
 }

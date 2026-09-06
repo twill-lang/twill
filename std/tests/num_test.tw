@@ -67,8 +67,46 @@ fn sign_any_all_and_tile_do_what_they_say() {
           h.shaped(sh.tile(zeros(2, 3), 4, 0), list(8, 3)))
 }
 
+fn a_reduction_keeps_the_axis_it_reduced_when_asked() {
+  h.test("a reduction keeps the axis it reduced when asked")
+  let m = [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]
+  # Reducing axis 1 of a [2, 3] drops it to a [2]; the flag leaves it at 1.
+  h.check("sum drops the axis by default", h.shaped(sum(m, 1), list(2)))
+  h.check("and keeps it at length 1 when asked", h.shaped(sum(m, 1, true), list(2, 1)))
+  h.check("a false flag is the dropping form", h.shaped(sum(m, 1, false), list(2)))
+  # The flags on sort and topk are numbers, so this one takes a number too.
+  h.check("a number reads as a flag", h.shaped(sum(m, 1, 1), list(2, 1)))
+  h.check("and zero is false", h.shaped(sum(m, 1, 0), list(2)))
+  h.check("the numbers are the dropping form's",
+          h.near_all(reshape(sum(m, 1, true), list(2)), sum(m, 1)))
+  # Reducing axis 0 keeps its place at the front, not at the end.
+  h.check("axis 0 keeps its own position", h.shaped(mean(m, 0, true), list(1, 3)))
+  h.check("a negative axis counts from the end", h.shaped(max(m, -1, true), list(2, 1)))
+  h.check("min keeps the axis", h.near_all(min(m, 1, true), [[1.0], [4.0]]))
+  h.check("prod keeps the axis", h.near_all(prod(m, 1, true), [[6.0], [120.0]]))
+  h.check("median keeps the axis", h.near_all(median(m, 1, true), [[2.0], [5.0]]))
+  h.check("logsumexp keeps the axis", h.shaped(logsumexp(m, 1, true), list(2, 1)))
+  # An index reduction removes an axis like any other reduction, so the flag
+  # means the same thing there: the index, left where it was taken.
+  h.check("argmax keeps the axis", h.shaped(argmax(m, 1, true), list(2, 1)))
+  h.check("argmax's values are unchanged",
+          h.near_all(reshape(argmax(m, 1, true), list(2)), argmax(m, 1)))
+  h.check("argmin keeps the axis", h.shaped(argmin(m, 0, true), list(1, 3)))
+  # What the flag is for. A [2, 1] lines back up against a [2, 3] and a [2]
+  # does not, because broadcasting aligns from the right.
+  h.check("the kept result broadcasts back against the input",
+          h.near_all(m - sum(m, 1, true) / 3.0,
+                     [[-1.0, 0.0, 1.0], [-1.0, 0.0, 1.0]]))
+  h.check("which is num.var_axis without the helper",
+          h.near_all(mean(square(m - mean(m, 1, true)), 1), num.var_axis(m, 1)))
+  # It is a reduction followed by a reshape, so the gradient still flows.
+  h.check("a kept reduction is differentiable",
+          h.near_all(grad(fn(v) = sum(sum(v, 1, true)))(m), ones(2, 3)))
+}
+
 linspace_and_arange_construct_the_sequences_they_name()
 the_outer_product_is_every_pairwise_product()
 the_diagonal_helpers_agree_with_their_definitions()
 sign_any_all_and_tile_do_what_they_say()
+a_reduction_keeps_the_axis_it_reduced_when_asked()
 h.report("num_test")

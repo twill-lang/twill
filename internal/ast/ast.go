@@ -486,3 +486,43 @@ func (e *Match) Pos() int { return e.Line }
 // Block is also usable as a statement body; it satisfies Stmt too so blocks
 // can appear where statements are expected.
 func (e *Block) stmt() {}
+
+// TupleLit is a fixed-arity positional group written `(a, b)`. The comma is
+// what makes it one: `(x)` is x in parentheses and stays grouping, and `(x,)`
+// is refused by the parser rather than read as a one-element tuple, because a
+// language that has to explain a trailing comma has bought nothing.
+//
+// A tuple is destructured or passed on whole. There is deliberately no `.0`
+// and no named tuple type: a value that wants to be stored and read by name
+// stays a struct, which is what keeps this from becoming a second, worse
+// record. See docs/roadmap.md entry 1.
+type TupleLit struct {
+	Elements []Expr
+	Line     int
+}
+
+func (e *TupleLit) Pos() int { return e.Line }
+func (e *TupleLit) expr()    {}
+
+// LetTuple is destructuring: `let (lo, hi) = span(xs)`. It is a separate
+// statement from Let rather than a field on it, so that every consumer of the
+// tree has to say what it does with one instead of quietly binding nothing.
+//
+// Names has at least two entries, and `_` is written for a position the
+// program does not want; those bind nothing. A name may not appear twice: the
+// checker refuses `let (a, a) = ...` rather than let the last position win.
+//
+// There is no `const` form: `const (a, b) = ...` is refused at the parser. That
+// is only about which shapes may *declare* a const, though. The rule that a
+// const name is not bound a second time in its scope is enforced by walking the
+// statements of a block, and this statement is one of the bindings that walk
+// counts, so `const A = 1.0` followed by `let (A, b) = ...` is refused with the
+// same message `let A = ...` gets.
+type LetTuple struct {
+	Names []string
+	Value Expr
+	Line  int
+}
+
+func (s *LetTuple) Pos() int { return s.Line }
+func (s *LetTuple) stmt()    {}

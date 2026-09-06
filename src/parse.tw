@@ -193,6 +193,24 @@ fn token_text(t: lex.Token) -> Str {
   "?"
 }
 
+# A tuple holds between two and eight values. Two because one is the value
+# itself and the comma would be decoration; eight because past that the
+# positions stop being readable and the thing wanted a struct, which is the same
+# judgement docs/roadmap.md entry 1 makes about naming them.
+fn max_tuple_arity() -> I64 = 8
+
+# The two refusals a tuple can earn, spelled once so the expression form and the
+# type form say the same thing. internal/parser prints these same bytes.
+fn one_element_tuple_msg() -> Str =
+  "a tuple holds at least two values: (x,) is not a one-element tuple, and (x) is x in parentheses"
+
+fn tuple_arity_msg(n: I64) -> Str =
+  bytes.concat("a tuple holds at most ",
+    bytes.concat(str(max_tuple_arity()),
+      bytes.concat(" values, but this one has ",
+        bytes.concat(str(n),
+          "; a value with that many parts wants a struct, whose fields have names"))))
+
 # A `;` is an optional statement separator and never carries meaning, so it is
 # skipped wherever a statement may start.
 fn skip_separators(p: Parser) {
@@ -306,6 +324,15 @@ fn parse_let(p: Parser) -> Res[ast.Stmt, lex.SyntaxError] {
   let kw: lex.Token = next_tok(p)
   let line: I64 = kw.line
   let is_const: Bool = bytes.equal(kw.value, "const")
+  # `let (lo, hi) = span(xs)` destructures a tuple. The names are positional and
+  # `_` drops the one it stands for; there is no annotation, because the thing
+  # being annotated would be the tuple and the binding is the parts.
+  if check(p, "(") {
+    if is_const {
+      return Err(err_at(kw, "a destructuring binding is written with let, not const: const declares a guarantee about a single name, and nothing yet asks to declare several at once. The name a destructuring let binds is still refused when a const in the same scope already binds it."))
+    }
+    return parse_let_tuple(p, line)
+  }
   let name: Str = expect_ident(p)?
   # An annotation on a `let` introduces a unit: `let px: USD/share = ...`. It is
   # not a type annotation today, and in systems mode it has to become one, which
@@ -318,6 +345,8 @@ fn parse_let(p: Parser) -> Res[ast.Stmt, lex.SyntaxError] {
   if accept(p, ":") {
     if at_fn_type(p) {
       type_name = parse_fn_type(p)?
+    } else if check(p, "(") {
+      type_name = parse_tuple_type(p)?
     } else {
       let u: ast.UnitAnno = parse_unit_expr(p)?
       if (check(p, ".") or check(p, "[")) and len(u.factors) == 1 and u.factors[0].exp == 1 {
@@ -330,6 +359,35 @@ fn parse_let(p: Parser) -> Res[ast.Stmt, lex.SyntaxError] {
   expect(p, "=")?
   let v: ast.Expr = parse_expr(p)?
   Ok(ast.let_stmt(p.ids, name, unit, type_name, v, is_const, line))
+}
+
+# parse_let_tuple reads the `(a, b) = value` half of a destructuring binding.
+# The cursor is on the `(`.
+fn parse_let_tuple(p: Parser, line: I64) -> Res[ast.Stmt, lex.SyntaxError] {
+  next_tok(p)
+  let names: Arr[Str] = arr_new()
+  while true {
+    if check(p, ")") {
+      return Err(err_at(peek(p, 0), one_element_tuple_msg()))
+    }
+    let t: lex.Token = peek(p, 0)
+    if t.kind != lex.KIND_IDENT {
+      return Err(err_at(t, bytes.concat("expected a name in a destructuring let but found ", quoted(token_text(t)))))
+    }
+    next_tok(p)
+    push(names, t.value)
+    if not accept(p, ",") { break }
+  }
+  expect(p, ")")?
+  if len(names) < 2 {
+    return Err(err_at(peek(p, 0), one_element_tuple_msg()))
+  }
+  if len(names) > max_tuple_arity() {
+    return Err(err_at(peek(p, 0), tuple_arity_msg(len(names))))
+  }
+  expect(p, "=")?
+  let v: ast.Expr = parse_expr(p)?
+  Ok(ast.let_tuple_stmt(p.ids, names, v, line))
 }
 
 fn parse_fn_decl(p: Parser) -> Res[ast.Stmt, lex.SyntaxError] {
@@ -719,12 +777,32 @@ fn parse_primary(p: Parser) -> Res[ast.Expr, lex.SyntaxError] {
   # expressed by the tree's shape, so `(a + b)` and a `+` node are the same
   # thing and the formatter re-inserts parentheses from precedence.
   if check(p, "(") {
-    next_tok(p)
+    let open: lex.Token = next_tok(p)
     p.group_depth = p.group_depth + 1
     let inner: ast.Expr = parse_expr(p)?
+    # The comma is what decides. Without one this is grouping and has been since
+    # the first parser; with one it is a tuple, and the elements after it are
+    # ordinary expressions.
+    if not check(p, ",") {
+      p.group_depth = p.group_depth - 1
+      expect(p, ")")?
+      return Ok(inner)
+    }
+    let elements: Arr[ast.Expr] = arr_new()
+    push(elements, inner)
+    while accept(p, ",") {
+      if check(p, ")") {
+        p.group_depth = p.group_depth - 1
+        return Err(err_at(peek(p, 0), one_element_tuple_msg()))
+      }
+      push(elements, parse_expr(p)?)
+    }
     p.group_depth = p.group_depth - 1
     expect(p, ")")?
-    return Ok(inner)
+    if len(elements) > max_tuple_arity() {
+      return Err(err_at(open, tuple_arity_msg(len(elements))))
+    }
+    return Ok(ast.tuple_lit(p.ids, elements, open.line))
   }
   if check(p, "[") {
     p.group_depth = p.group_depth + 1
@@ -1059,6 +1137,8 @@ fn parse_signature(p: Parser) -> Res[Signature, lex.SyntaxError] {
       ret = Some(parse_shape_anno(p)?)
     } else if at_fn_type(p) {
       ret_type = parse_fn_type(p)?
+    } else if check(p, "(") {
+      ret_type = parse_tuple_type(p)?
     } else {
       let u: ast.UnitAnno = parse_unit_expr(p)?
       if (check(p, ".") or check(p, "[")) and len(u.factors) == 1 and u.factors[0].exp == 1 {
@@ -1119,7 +1199,32 @@ fn at_fn_type(p: Parser) -> Bool {
 # alongside an ordinary name.
 fn parse_type_expr(p: Parser) -> Res[Str, lex.SyntaxError] {
   if at_fn_type(p) { return parse_fn_type(p) }
+  if check(p, "(") { return parse_tuple_type(p) }
   parse_type_ref(p)
+}
+
+# parse_tuple_type reads `(T, U, ...)` in type position and returns it as text,
+# the way every other systems-mode type annotation is carried. The checker
+# parses the text back into a type; the formatter prints it as written. It
+# assumes the current token is `(`.
+fn parse_tuple_type(p: Parser) -> Res[Str, lex.SyntaxError] {
+  let open: lex.Token = next_tok(p)
+  let parts: Arr[Str] = arr_new()
+  while true {
+    if check(p, ")") {
+      return Err(err_at(peek(p, 0), one_element_tuple_msg()))
+    }
+    push(parts, parse_type_expr(p)?)
+    if not accept(p, ",") { break }
+  }
+  expect(p, ")")?
+  if len(parts) < 2 {
+    return Err(err_at(open, one_element_tuple_msg()))
+  }
+  if len(parts) > max_tuple_arity() {
+    return Err(err_at(open, tuple_arity_msg(len(parts))))
+  }
+  Ok(bytes.concat("(", bytes.concat(bytes.join(parts, ", "), ")")))
 }
 
 # parse_fn_type parses a function-type annotation `fn(T, ...) -> R`. Each
@@ -1151,8 +1256,12 @@ fn parse_fn_type(p: Parser) -> Res[Str, lex.SyntaxError] {
 }
 
 # parse_type_args reads `[T, U, ...]` after a type name, each T a full type
-# reference, and returns the bracketed text, e.g. "[Str, Arr[I64]]". It assumes
+# expression, and returns the bracketed text, e.g. "[Str, Arr[I64]]". It assumes
 # the current token is "[".
+#
+# This side always read an expression. The Go parser read a reference until the
+# tuple work, which is why `Arr[fn(I64) -> I64]` was a syntax error there and
+# clean here.
 fn parse_type_args(p: Parser) -> Res[Str, lex.SyntaxError] {
   next_tok(p)
   let out: Str = "["
@@ -1200,6 +1309,8 @@ fn parse_param(p: Parser) -> Res[ast.Param, lex.SyntaxError] {
     } else if at_fn_type(p) {
       # A function-typed parameter, e.g. `step: fn(Tree, Tensor) -> Tree`.
       param.type_name = parse_fn_type(p)?
+    } else if check(p, "(") {
+      param.type_name = parse_tuple_type(p)?
     } else {
       let u: ast.UnitAnno = parse_unit_expr(p)?
       if len(u.factors) == 1 and u.factors[0].exp == 1 {

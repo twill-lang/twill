@@ -310,3 +310,39 @@ func TestConcatSaysNothingWhenAPieceIsUnknown(t *testing.T) {
 		t.Fatalf("an unknowable concat was reported: %v", diags)
 	}
 }
+
+// The rank-preserving flag on a reduction is a claim about shape, so the checker
+// has to fold it: a kept axis lines back up against the input and a dropped one
+// does not. Both halves matter -- the second is the diagnostic this feature
+// exists to remove, and the first is the guarantee that removing it did not also
+// remove the real one.
+func TestKeepdimsIsFoldedIntoTheShape(t *testing.T) {
+	// Reducing axis 1 of a [2, 3] gives a [2], and broadcasting aligns from the
+	// right, so [2] against [2, 3] is a mismatch.
+	wantOne(t, "let m = zeros(2, 3)\nlet r = m + sum(m, 1)", "shape mismatch")
+	// Kept, it is a [2, 1], which does align.
+	wantNone(t, "let m = zeros(2, 3)\nlet r = m + sum(m, 1, true)")
+	wantNone(t, "let m = zeros(2, 3)\nlet r = m + mean(m, 1, true)")
+	wantNone(t, "let m = zeros(2, 3)\nlet r = m + logsumexp(m, 1, true)")
+	// A false flag is the dropping form, and still reports.
+	wantOne(t, "let m = zeros(2, 3)\nlet r = m + sum(m, 1, false)", "shape mismatch")
+	// A zero is false and a non-zero is true, matching the runtime's rule for a
+	// flag written as a number.
+	wantOne(t, "let m = zeros(2, 3)\nlet r = m + sum(m, 1, 0)", "shape mismatch")
+	wantNone(t, "let m = zeros(2, 3)\nlet r = m + sum(m, 1, 1)")
+	// An index reduction removes an axis like any other, so the flag means the
+	// same thing there.
+	wantOne(t, "let m = zeros(2, 3)\nlet r = m + argmax(m, 1)", "shape mismatch")
+	wantNone(t, "let m = zeros(2, 3)\nlet r = m + argmax(m, 1, true)")
+	wantNone(t, "let m = zeros(2, 3)\nlet r = m + argmin(m, 0, true)")
+	// The axis is still checked when the flag is present, and it is still
+	// checked when the flag is not a literal.
+	wantOne(t, "let m = zeros(2, 3)\nlet r = sum(m, 5, true)", "axis out of range")
+	wantOne(t, "let m = zeros(2, 3)\nlet r = argmax(m, 5, true)", "axis out of range")
+	// A flag the checker cannot fold leaves the rank unknown rather than
+	// guessing one of the two shapes and reporting against it.
+	wantNone(t, "fn f(m, k) = m + sum(m, 1, k)")
+	// And `sum()` is an arity error the runtime names; the checker used to
+	// index argument 0 of an empty argument list and panic.
+	wantNone(t, "let r = sum()")
+}

@@ -222,13 +222,25 @@ func (c *checker) prelude(prog *ast.Program) *checkEnv {
 	// `examples/train.tw` has exactly that shape: `train_step` writes `STEPS`
 	// several lines above the `let STEPS` that binds it.
 	for _, s := range prog.Body {
-		if lt, ok := s.(*ast.Let); ok {
+		switch lt := s.(type) {
+		case *ast.Let:
 			if _, seen := env.get(lt.Name); !seen {
 				env.define(lt.Name, tUnknown{})
 			}
 			if lt.Const {
 				if _, already := env.consts[lt.Name]; !already {
 					env.consts[lt.Name] = lt.Line
+				}
+			}
+		case *ast.LetTuple:
+			// Each name a destructuring binding introduces is a top-level name
+			// too, so a function written above it may refer to one.
+			for _, name := range lt.Names {
+				if name == "_" {
+					continue
+				}
+				if _, seen := env.get(name); !seen {
+					env.define(name, tUnknown{})
 				}
 			}
 		}
@@ -719,6 +731,8 @@ func (c *checker) inferStmt(s ast.Stmt, env *checkEnv) {
 		if st.Const {
 			env.consts[st.Name] = st.Line
 		}
+	case *ast.LetTuple:
+		c.checkLetTuple(st, env)
 	case *ast.FnDecl:
 		env.define(st.Name, tFn{node: st, params: st.Params, ret: st.Ret, retUnit: st.RetUnit, retType: st.RetType, body: st.Body, env: env})
 		// Check the body once at definition using the parameter annotations, so
@@ -827,6 +841,12 @@ func (c *checker) inferBlock(b *ast.Block, env *checkEnv) Type {
 // reported, whichever side of it they sit on. Two plain `let`s of one name stay
 // legal, because that is an idiom this language allows and this rule is about
 // `const`. An inner scope is not this list, so shadowing is untouched.
+//
+// A destructuring `let` is a binding too, and it is counted here for the same
+// reason a plain one is. The first cut of tuples looked only at *ast.Let, so
+// `const A = 1.0` followed by `let (A, b) = (2.0, 3.0)` rebound A with nothing
+// said while `let A = 2.0` on the same line was refused with the full message.
+// A rule that a second shape of binding walks around is not a rule.
 func (c *checker) reportConstRebinds(body []ast.Stmt) {
 	// Indices rather than lines: two statements can share a line, so a line
 	// number cannot tell the const's own binding apart from a second one.
@@ -841,17 +861,99 @@ func (c *checker) reportConstRebinds(body []ast.Stmt) {
 	if len(first) == 0 {
 		return
 	}
-	for i, s := range body {
-		lt, ok := s.(*ast.Let)
-		if !ok {
-			continue
-		}
-		at, isConst := first[lt.Name]
-		if !isConst || at == i {
-			continue
-		}
+	// A const's own binding is the one at `first[name]`, and only a *ast.Let can
+	// be it: there is no `const (a, b) = ...`. So a LetTuple naming a const name
+	// is always a second binding, with no index to excuse it.
+	rebind := func(name string, line, at int) {
 		decl := body[at].(*ast.Let)
-		c.report(lt.Line, "%s is declared const on line %d, so the name cannot be bound a second time in the same scope: a second binding would take its place and everything after it would be assignable again. Rename one of them, or declare line %d with let if the name is meant to change.", lt.Name, decl.Line, decl.Line)
+		c.report(line, "%s is declared const on line %d, so the name cannot be bound a second time in the same scope: a second binding would take its place and everything after it would be assignable again. Rename one of them, or declare line %d with let if the name is meant to change.", name, decl.Line, decl.Line)
+	}
+	for i, s := range body {
+		switch b := s.(type) {
+		case *ast.Let:
+			at, isConst := first[b.Name]
+			if !isConst || at == i {
+				continue
+			}
+			rebind(b.Name, b.Line, at)
+		case *ast.LetTuple:
+			for _, name := range b.Names {
+				if name == "_" {
+					continue
+				}
+				at, isConst := first[name]
+				if !isConst {
+					continue
+				}
+				rebind(name, b.Line, at)
+			}
+		}
+	}
+}
+
+// reportRepeatedTupleNames refuses `let (a, a) = (1.0, 2.0)`.
+//
+// Positional binding has no way to say what a repeat means. Nothing merges the
+// two values and nothing reads them apart, so the second `define` simply lands
+// on top of the first and the last position wins, which is a typo answered with
+// a number rather than a diagnostic. `_` repeats freely, because `_` binds
+// nothing and is the written way to skip a position.
+//
+// It runs before the value is inferred so that a program with both faults reads
+// in the order it was written: the names are wrong on their own terms, whatever
+// the right-hand side turns out to be.
+func (c *checker) reportRepeatedTupleNames(st *ast.LetTuple) {
+	seen := map[string]bool{}
+	for _, name := range st.Names {
+		if name == "_" {
+			continue
+		}
+		if seen[name] {
+			c.report(st.Line, "this let binds %s twice, and the later position would take the earlier one's place with nothing said. Rename one of them, or write _ for a position whose value the program does not want.", name)
+			continue
+		}
+		seen[name] = true
+	}
+}
+
+// checkLetTuple judges `let (lo, hi) = span(xs)`. The names are bound whatever
+// happens, so a mistake here reports once rather than once more for every use
+// of a name the destructuring did not manage to bind.
+func (c *checker) checkLetTuple(st *ast.LetTuple, env *checkEnv) {
+	c.reportRepeatedTupleNames(st)
+	rhs := c.inferExpr(st.Value, env)
+	bind := func(t Type) {
+		for _, name := range st.Names {
+			if name == "_" {
+				continue
+			}
+			env.define(name, t)
+		}
+	}
+	tup, ok := rhs.(tTuple)
+	if !ok {
+		// Only a definite mismatch is reported. An unknown right-hand side --
+		// a call into a module this single-file checker never read -- says
+		// nothing about how many values come back, so it binds unknowns and
+		// stays quiet, which is the policy everywhere else in this file.
+		if !isUnknownType(rhs) {
+			c.report(st.Line, "this let destructures a tuple of %d values, but the value is %s",
+				len(st.Names), c.typeString(rhs))
+		}
+		bind(tUnknown{})
+		return
+	}
+	if len(tup.elems) != len(st.Names) {
+		c.report(st.Line, "this let binds %d names, but the value is %s, which has %d",
+			len(st.Names), c.typeString(tup), len(tup.elems))
+		bind(tUnknown{})
+		return
+	}
+	for i, name := range st.Names {
+		if name == "_" {
+			continue
+		}
+		env.define(name, tup.elems[i])
 	}
 }
 
@@ -964,6 +1066,12 @@ func (c *checker) inferExpr(e ast.Expr, env *checkEnv) Type {
 			elems[i] = c.inferExpr(el, env)
 		}
 		return tList{elems: elems}
+	case *ast.TupleLit:
+		elems := make([]Type, len(ex.Elements))
+		for i, el := range ex.Elements {
+			elems[i] = c.inferExpr(el, env)
+		}
+		return tTuple{elems: elems}
 	case *ast.Lambda:
 		return tFn{node: ex, params: ex.Params, ret: ex.Ret, retUnit: ex.RetUnit, retType: ex.RetType, body: ex.Body, env: env}
 	case *ast.Unary:
@@ -1762,7 +1870,7 @@ func (c *checker) inferCall(ex *ast.Call, env *checkEnv) Type {
 		return fn.ret
 	case tUnknown:
 		return tUnknown{}
-	case tList, tBool, tStr, tUnit, tRecord, tInt, tArr, tDict, tEnum, tBytes:
+	case tList, tBool, tStr, tUnit, tRecord, tInt, tArr, tDict, tEnum, tBytes, tTuple:
 		c.report(ex.Line, "value is not callable")
 		return tUnknown{}
 	}
@@ -1973,6 +2081,8 @@ func hasValueReturn(e ast.Expr) bool {
 		case *ast.ExprStmt:
 			walkExpr(st.X)
 		case *ast.Let:
+			walkExpr(st.Value)
+		case *ast.LetTuple:
 			walkExpr(st.Value)
 		case *ast.Assign:
 			walkExpr(st.Value)
@@ -3222,6 +3332,12 @@ func plural(n int, one, many string) string {
 }
 
 func (c *checker) reduceResult(name string, ex *ast.Call, argTypes []Type) Type {
+	// `sum()` with no arguments reached the index below and panicked the
+	// checker. It is an arity error the runtime already names, so there is
+	// nothing to say here beyond declining to guess a type.
+	if len(argTypes) == 0 {
+		return tUnknown{}
+	}
 	var u unitMap // reductions preserve the input's unit
 	rdt := dtUnknown
 	if t, ok := argTypes[0].(tTensor); ok {
@@ -3237,17 +3353,23 @@ func (c *checker) reduceResult(name string, ex *ast.Call, argTypes []Type) Type 
 	if len(argTypes) == 1 {
 		return tTensor{dims: []int{}, unit: u}.withDType(rdt)
 	}
-	if len(argTypes) == 2 {
+	if len(argTypes) == 2 || len(argTypes) == 3 {
 		if c.rank0Axis(ex, argTypes) {
 			return tUnknown{}
 		}
+		keep, known := constKeepdims(ex.Args, 2)
 		if t, ok := argTypes[0].(tTensor); ok && len(t.dims) > 0 {
 			if ax, ok := constInt(ex.Args[1]); ok {
 				if ax < 0 {
 					ax += len(t.dims)
 				}
 				if ax >= 0 && ax < len(t.dims) {
-					return tTensor{dims: removeDim(t.dims, ax), unit: u}.withDType(rdt)
+					// The axis is checked either way; only the shape depends on
+					// a flag the checker may not be able to fold.
+					if !known {
+						return tUnknown{}
+					}
+					return tTensor{dims: reducedDims(t.dims, ax, keep), unit: u}.withDType(rdt)
 				}
 				c.reportAxis(ex, t)
 			}
@@ -3282,15 +3404,18 @@ func (c *checker) axisPreserveResult(ex *ast.Call, argTypes []Type, axisArg int)
 	return t
 }
 
-// axisReduceResult handles argmax/logsumexp, which always reduce one axis
-// (default: the last).
+// axisReduceResult handles argmax/argmin/logsumexp, which always reduce one axis
+// (default: the last) and take the rank-preserving flag in the third position.
 func (c *checker) axisReduceResult(ex *ast.Call, argTypes []Type) Type {
+	if len(argTypes) == 0 {
+		return tUnknown{}
+	}
 	t, ok := argTypes[0].(tTensor)
 	if !ok || len(t.dims) == 0 {
 		return tUnknown{}
 	}
 	axis := len(t.dims) - 1
-	if len(ex.Args) == 2 {
+	if len(ex.Args) >= 2 {
 		ax, ok := constInt(ex.Args[1])
 		if !ok {
 			return tUnknown{}
@@ -3304,7 +3429,11 @@ func (c *checker) axisReduceResult(ex *ast.Call, argTypes []Type) Type {
 		c.reportAxis(ex, t)
 		return tUnknown{}
 	}
-	return tTensor{dims: removeDim(t.dims, axis)}
+	keep, known := constKeepdims(ex.Args, 2)
+	if !known {
+		return tUnknown{}
+	}
+	return tTensor{dims: reducedDims(t.dims, axis, keep)}
 }
 
 func (c *checker) broadcastTwo(ex *ast.Call, argTypes []Type) Type {
@@ -3352,6 +3481,40 @@ func (c *checker) broadcastWhere(ex *ast.Call, argTypes []Type) Type {
 		}
 	}
 	return res
+}
+
+// reducedDims is the input's shape with the reduced axis dropped, or left in at
+// length 1 when the rank-preserving flag is set. One place decides what
+// `keepdims` does to a shape, so the reductions and the index reductions cannot
+// drift apart on it.
+func reducedDims(dims []int, axis int, keep bool) []int {
+	if !keep {
+		return removeDim(dims, axis)
+	}
+	out := append([]int(nil), dims...)
+	out[axis] = 1
+	return out
+}
+
+// constKeepdims folds a rank-preserving flag argument: absent is false, and a
+// literal `true`, `false` or number is what it says, matching flagOf's rule at
+// runtime that a non-zero number is set.
+//
+// The second result is false when the argument is there but is not a literal.
+// The result's rank then depends on a value the checker cannot see, and there is
+// no answer to give: guessing either shape would report mismatches against a
+// shape the program may never have.
+func constKeepdims(args []ast.Expr, idx int) (bool, bool) {
+	if len(args) <= idx {
+		return false, true
+	}
+	if b, ok := args[idx].(*ast.BoolLit); ok {
+		return b.Value, true
+	}
+	if n, ok := constInt(args[idx]); ok {
+		return n != 0, true
+	}
+	return false, false
 }
 
 func removeDim(dims []int, axis int) []int {
@@ -3507,7 +3670,7 @@ func join(a, b Type) Type {
 // is judged on a guess.
 func (c *checker) unorderable(t Type) (string, bool) {
 	switch v := t.(type) {
-	case tEnum, tArr, tDict, tRecord, tList, tBytes, tUnit, tBool, tCtor, tFnType, tFn, tBuiltin:
+	case tEnum, tArr, tDict, tRecord, tList, tBytes, tUnit, tBool, tCtor, tFnType, tFn, tBuiltin, tTuple:
 		return c.typeString(t), true
 	case tTensor:
 		// Ordering is scalar-only, so a tensor of known rank above 0 cannot be
@@ -3527,7 +3690,7 @@ func (c *checker) unorderable(t Type) (string, bool) {
 // is left out on purpose: `t.to(f32)` is a field access syntactically.
 func isDefiniteNonRecord(t Type) bool {
 	switch t.(type) {
-	case tInt, tStr, tBool, tBytes, tUnit, tArr, tDict, tEnum, tList:
+	case tInt, tStr, tBool, tBytes, tUnit, tArr, tDict, tEnum, tList, tTuple:
 		return true
 	}
 	return false
@@ -3535,7 +3698,7 @@ func isDefiniteNonRecord(t Type) bool {
 
 func isDefiniteNonTensor(t Type) bool {
 	switch t.(type) {
-	case tBool, tStr, tUnit, tList, tRecord, tFn, tBuiltin, tArr, tDict, tEnum, tBytes, tCtor, tFnType:
+	case tBool, tStr, tUnit, tList, tRecord, tFn, tBuiltin, tArr, tDict, tEnum, tBytes, tCtor, tFnType, tTuple:
 		return true
 	}
 	return false

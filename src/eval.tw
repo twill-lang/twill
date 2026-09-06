@@ -66,6 +66,15 @@ struct ListVal {
   items: Arr[Value],
 }
 
+# A fixed-arity positional group, `(lo, hi)`. It is immutable: there is no set,
+# nothing indexes it, and no part of it has a name, so the only things a program
+# can do with one are destructure it and pass it on. That is deliberate -- a
+# value meant to be stored and read by name is a record, and a tuple that grew
+# accessors would be a second, worse one.
+struct TupleVal {
+  items: Arr[Value],
+}
+
 # A record keeps its keys in insertion order, so printing or iterating a
 # namespace gives the same result on every run. internal/value/value.go carries
 # a Keys slice for exactly this reason; a Dict with insertion order gives it for
@@ -164,6 +173,7 @@ enum Value {
   VBool(Bool),
   VStr(Str),
   VList(ListVal),
+  VTuple(TupleVal),
   VRecord(RecordVal),
   # A dictionary and a byte buffer are reference values, the way a list and a
   # record are: the payload holds the same underlying Dict or Bytes, so a store
@@ -188,6 +198,7 @@ fn type_name(v: Value) -> Str {
     VBool(_) => "bool",
     VStr(_) => "string",
     VList(_) => "list",
+    VTuple(_) => "tuple",
     VRecord(_) => "record",
     VDict(_) => "dict",
     VBytes(_) => "bytes",
@@ -432,6 +443,37 @@ fn assign_to(target: ast.Expr, v: Value, env: Env, line: I64) -> Res[Unit, Runti
   }
 }
 
+# exec_let_tuple runs `let (lo, hi) = span(xs)`: the value has to be a tuple of
+# exactly as many parts as there are names, and each name takes its own part.
+# `_` stands for a position the program does not want and binds nothing, the way
+# it does in a pattern.
+fn exec_let_tuple(st: ast.LetTuple, env: Env) -> Res[Flow, RuntimeError] {
+  let v: Value = eval_expr(st.value, env)?
+  let tup: TupleVal = match v {
+    VTuple(t) => t,
+    _ => return Err(runtime_error(st.line,
+      bytes.concat("a destructuring let needs a tuple of ",
+      bytes.concat(str(len(st.names)),
+      bytes.concat(" values on the right, but the value is ", format_value(v)))))),
+  }
+  if len(tup.items) != len(st.names) {
+    return Err(runtime_error(st.line,
+      bytes.concat("a destructuring let of ",
+      bytes.concat(str(len(st.names)),
+      bytes.concat(" names needs a tuple of ",
+      bytes.concat(str(len(st.names)),
+      bytes.concat(" values, but the value has ", str(len(tup.items)))))))))
+  }
+  let i: I64 = 0
+  while i < len(st.names) {
+    if not bytes.equal(st.names[i], "_") {
+      env_define(env, st.names[i], tup.items[i])
+    }
+    i = i + 1
+  }
+  Ok(Normal(VUnit))
+}
+
 # ---- statements ------------------------------------------------------------
 
 fn exec_stmt(s: ast.Stmt, env: Env) -> Res[Flow, RuntimeError] {
@@ -446,6 +488,7 @@ fn exec_stmt(s: ast.Stmt, env: Env) -> Res[Flow, RuntimeError] {
       env_define(env, st.name, coerce_scalar_anno(st.type_name, st.unit, v, st.line)?)
       Ok(Normal(VUnit))
     },
+    SLetTuple(st) => exec_let_tuple(st, env),
     SFn(st) => {
       # A declaration binds before its body can run, so a function can call
       # itself. It captures the environment it is declared in, which is the same
@@ -781,6 +824,18 @@ fn canonical(v: Value, depth: I64) -> Str {
         i = i + 1
       }
       bytes.push_text(out, "]")
+      bytes.to_str(out)
+    },
+    VTuple(t) => {
+      let out: Bytes = bytes.new()
+      bytes.push_text(out, "tuple (")
+      let i: I64 = 0
+      while i < len(t.items) {
+        if i > 0 { bytes.push_text(out, ", ") }
+        bytes.push_text(out, canonical(t.items[i], depth + 1))
+        i = i + 1
+      }
+      bytes.push_text(out, ")")
       bytes.to_str(out)
     },
     VRecord(r) => {
@@ -1406,6 +1461,15 @@ fn eval_expr(e: ast.Expr, env: Env) -> Res[Value, RuntimeError] {
       }
       Ok(VList(ListVal { items: items }))
     },
+    ETuple(x) => {
+      let items: Arr[Value] = arr_new()
+      let i: I64 = 0
+      while i < len(x.elements) {
+        push(items, eval_expr(x.elements[i], env)?)
+        i = i + 1
+      }
+      Ok(VTuple(TupleVal { items: items }))
+    },
     ELambda(x) => Ok(VClosure(Closure { params: x.params, body: x.body, env: env, name: "",
       ret_unit: x.ret_unit, ret_type: x.ret_type })),
     EUnary(x) => eval_unary(x, env),
@@ -1985,6 +2049,15 @@ fn deep_equal(l: Value, r: Value) -> Bool {
         _ => false,
       }
     },
+    # Structural, and by arity first: a 2-tuple and a 3-tuple are never equal,
+    # and a tuple is never equal to a list that happens to hold the same values,
+    # because they are not the same kind of thing.
+    VTuple(a) => {
+      match r {
+        VTuple(b) => tuple_equal(a, b),
+        _ => false,
+      }
+    },
     VRecord(a) => {
       match r {
         VRecord(b) => record_equal(a, b),
@@ -2052,6 +2125,16 @@ fn tensor_equal(a: tensor.Tensor, b: tensor.Tensor) -> Bool {
 }
 
 fn list_equal(a: ListVal, b: ListVal) -> Bool {
+  if len(a.items) != len(b.items) { return false }
+  let i: I64 = 0
+  while i < len(a.items) {
+    if not deep_equal(a.items[i], b.items[i]) { return false }
+    i = i + 1
+  }
+  true
+}
+
+fn tuple_equal(a: TupleVal, b: TupleVal) -> Bool {
   if len(a.items) != len(b.items) { return false }
   let i: I64 = 0
   while i < len(a.items) {
@@ -2554,6 +2637,22 @@ fn scalar_of(v: Value, who: Str, line: I64) -> Res[F64, RuntimeError] {
 fn int_of(v: Value, who: Str, line: I64) -> Res[I64, RuntimeError] =
   Ok(i64_of_f64(f64_trunc(scalar_of(v, who, line)?)))
 
+# A boolean flag argument, written either way.
+#
+# The flags that came before this one -- sort's descending, topk's smallest --
+# are numbers, because a comparison in twill already yields 1 and 0, and
+# `sort(t, 0, true)` is a runtime error today for want of a Bool case here. A new
+# flag does not have to inherit that. Both spellings are accepted, so `keepdims`
+# can be written the way anybody would write it, and nothing that worked before
+# means anything different.
+fn flag_of(v: Value, who: Str, line: I64) -> Res[Bool, RuntimeError] {
+  match v {
+    VBool(b) => return Ok(b),
+    _ => unit,
+  }
+  Ok(scalar_of(v, who, line)? != 0.0)
+}
+
 # Whether v is a single number as opposed to a sequence of them. Used where a
 # scalar and a one-element sequence have to mean different things, which is
 # `split` and only `split`.
@@ -2755,7 +2854,8 @@ fn call_builtin(b: BuiltinVal, args: Arr[Value], line: I64) -> Res[Value, Runtim
   if in_words("topk argtopk", name) { return bi_topping(name, args, line) }
   if in_words(LAST_AXIS, name) { return bi_last_axis(name, args, line) }
   if bytes.equal(name, "roll") { return bi_roll(args, line) }
-  if in_words("softmax logsumexp", name) { return bi_last_axis_op(name, args, line) }
+  if bytes.equal(name, "softmax") { return bi_softmax(args, line) }
+  if bytes.equal(name, "logsumexp") { return bi_logsumexp(args, line) }
   if in_words("reshape broadcast_to", name) { return bi_reshaping(name, args, line) }
   if bytes.equal(name, "transpose") { return bi_transpose(args, line) }
   if bytes.equal(name, "linear") { return bi_linear(args, line) }
@@ -2831,6 +2931,7 @@ fn format_value(v: Value) -> Str {
     VBool(b) => { if b { "true" } else { "false" } },
     VStr(s) => s,
     VList(l) => format_list(l),
+    VTuple(t) => format_tuple(t),
     VRecord(r) => format_record(r),
     # A dictionary renders like a record, `{key: value, ...}`, in insertion
     # order rather than sorted -- internal/value.Format walks the Keys slice.
@@ -2945,6 +3046,16 @@ fn format_list(l: ListVal) -> Str {
     i = i + 1
   }
   bytes.concat("[", bytes.concat(bytes.join(parts, ", "), "]"))
+}
+
+fn format_tuple(t: TupleVal) -> Str {
+  let parts: Arr[Str] = arr_new()
+  let i: I64 = 0
+  while i < len(t.items) {
+    push(parts, format_value(t.items[i]))
+    i = i + 1
+  }
+  bytes.concat("(", bytes.concat(bytes.join(parts, ", "), ")"))
 }
 
 # Keys in insertion order, the same order deep_equal walks them, which is the
@@ -3114,26 +3225,36 @@ fn bi_clip(args: Arr[Value], line: I64) -> Res[Value, RuntimeError] {
 # A constant axis is refused by the checker before any of this, so the message
 # is only reachable when the axis is computed.
 
+# A third argument is the rank-preserving flag, which leaves the reduced axis in
+# at length 1 instead of dropping it. It is positional because twill has no named
+# arguments (docs/roadmap.md entry 29) and it is a Bool or a number because
+# flag_of takes either.
 fn bi_reduce(name: Str, args: Arr[Value], line: I64) -> Res[Value, RuntimeError] {
-  if len(args) == 0 or len(args) > 2 {
-    return Err(runtime_error(line, bytes.concat(name, " expects (tensor) or (tensor, axis)")))
+  if len(args) == 0 or len(args) > 3 {
+    return Err(runtime_error(line, bytes.concat(name, " expects (tensor) or (tensor, axis[, keepdims])")))
   }
   let t: tensor.Tensor = arg_tensor(args[0], name, line)?
+  let op: tensor.Op = reduce_op(name)
   if len(args) == 1 {
-    if bytes.equal(name, "sum") { return lift_v(tr_reduce_all(tensor.OpSum, t), line) }
-    if bytes.equal(name, "mean") { return lift_v(tr_reduce_all(tensor.OpMean, t), line) }
-    if bytes.equal(name, "max") { return lift_v(tr_reduce_all(tensor.OpMax, t), line) }
-    if bytes.equal(name, "min") { return lift_v(tr_reduce_all(tensor.OpMin, t), line) }
-    if bytes.equal(name, "prod") { return lift_v(tr_reduce_all(tensor.OpProd, t), line) }
-    return lift_v(tr_reduce_all(tensor.OpMedian, t), line)
+    return lift_v(tr_reduce_all(op, t), line)
   }
   let ax: I64 = int_of(args[1], name, line)?
-  if bytes.equal(name, "sum") { return lift_v(tr_reduce_axis(tensor.OpSum, t, ax), line) }
-  if bytes.equal(name, "mean") { return lift_v(tr_reduce_axis(tensor.OpMean, t, ax), line) }
-  if bytes.equal(name, "max") { return lift_v(tr_reduce_axis(tensor.OpMax, t, ax), line) }
-  if bytes.equal(name, "min") { return lift_v(tr_reduce_axis(tensor.OpMin, t, ax), line) }
-  if bytes.equal(name, "prod") { return lift_v(tr_reduce_axis(tensor.OpProd, t, ax), line) }
-  lift_v(tr_reduce_axis(tensor.OpMedian, t, ax), line)
+  let keep: Bool = false
+  if len(args) == 3 { keep = flag_of(args[2], name, line)? }
+  if keep { return lift_v(tr_reduce_axis_keep(op, t, ax), line) }
+  lift_v(tr_reduce_axis(op, t, ax), line)
+}
+
+# The Op a reduction's name stands for. One place, so the whole-tensor form, the
+# axis form and the keepdims form cannot drift into three different six-way
+# branches that agree only by inspection.
+fn reduce_op(name: Str) -> tensor.Op {
+  if bytes.equal(name, "sum") { return tensor.OpSum }
+  if bytes.equal(name, "mean") { return tensor.OpMean }
+  if bytes.equal(name, "max") { return tensor.OpMax }
+  if bytes.equal(name, "min") { return tensor.OpMin }
+  if bytes.equal(name, "prod") { return tensor.OpProd }
+  tensor.OpMedian
 }
 
 # sort/argsort take an optional axis and an optional "desc" flag, so `sort(t)`,
@@ -3364,17 +3485,42 @@ fn bi_topping(name: Str, args: Arr[Value], line: I64) -> Res[Value, RuntimeError
 }
 
 # argmax/argmin/flip/diff all take an optional axis and default to the last one.
+# argmax and argmin remove that axis, so they take the rank-preserving flag as
+# well; flip keeps the rank it was given and diff only shortens the axis, so for
+# those a third argument is the arity error it always was.
 fn bi_last_axis(name: Str, args: Arr[Value], line: I64) -> Res[Value, RuntimeError] {
-  if len(args) == 0 or len(args) > 2 {
-    return Err(runtime_error(line, bytes.concat(name, " expects (tensor[, axis])")))
+  let indexing: Bool = in_words("argmax argmin", name)
+  let usage: Str = bytes.concat(name, " expects (tensor[, axis])")
+  let max_args: I64 = 2
+  if indexing {
+    usage = bytes.concat(name, " expects (tensor[, axis[, keepdims]])")
+    max_args = 3
+  }
+  if len(args) == 0 or len(args) > max_args {
+    return Err(runtime_error(line, usage))
   }
   let t: tensor.Tensor = arg_tensor(args[0], name, line)?
   let axis: I64 = len(t.shape) - 1
-  if len(args) == 2 { axis = int_of(args[1], name, line)? }
-  if bytes.equal(name, "argmax") { return lift_v(tensor.argmax_axis(t, axis), line) }
-  if bytes.equal(name, "argmin") { return lift_v(tensor.argmin_axis(t, axis), line) }
+  if len(args) >= 2 { axis = int_of(args[1], name, line)? }
+  let keep: Bool = false
+  if len(args) == 3 { keep = flag_of(args[2], name, line)? }
+  if bytes.equal(name, "argmax") { return lift_v(keep_reduced(tensor.argmax_axis(t, axis), t, axis, keep), line) }
+  if bytes.equal(name, "argmin") { return lift_v(keep_reduced(tensor.argmin_axis(t, axis), t, axis, keep), line) }
   if bytes.equal(name, "flip") { return lift_v(tr_flip_axis(t, axis), line) }
   lift_v(tr_diff_axis(t, axis), line)
+}
+
+# The rank-preserving form of an index reduction. argmax and argmin stay on the
+# pure kernel even under a tape, for the reason bi_sorting gives -- a position
+# has no derivative -- so putting the axis back is a plain reshape with nothing
+# to record. The reduction has already run when this is called, so an
+# out-of-range axis has been reported by the kernel, in the kernel's words,
+# exactly as it is without the flag.
+fn keep_reduced(r: Res[tensor.Tensor, Str], t: tensor.Tensor, axis: I64, keep: Bool) -> Res[tensor.Tensor, Str] {
+  let out: tensor.Tensor = r?
+  if not keep { return Ok(out) }
+  let ax: I64 = tensor.normalize_axis(axis, len(t.shape))?
+  tensor.reshape(out, tensor.keep_axis(t.shape, ax))
 }
 
 # roll takes the shift first, since that is the argument nobody omits.
@@ -3389,18 +3535,36 @@ fn bi_roll(args: Arr[Value], line: I64) -> Res[Value, RuntimeError] {
   lift_v(tr_roll_axis(t, shift, axis), line)
 }
 
-# softmax and logsumexp default to the last axis. They have no count check on
-# the Go side and none here: a third argument is ignored rather than refused,
-# and that is transcribed rather than tightened, because tightening it would
-# turn a silently-accepted call into an error the corpus has never seen.
-fn bi_last_axis_op(name: Str, args: Arr[Value], line: I64) -> Res[Value, RuntimeError] {
+# softmax defaults to the last axis. It has no count check on the Go side and
+# none here: a third argument is ignored rather than refused, and that is
+# transcribed rather than tightened, because tightening it would turn a
+# silently-accepted call into an error the corpus has never seen. It preserves
+# the shape it was given, so there is no axis for a keepdims flag to keep.
+fn bi_softmax(args: Arr[Value], line: I64) -> Res[Value, RuntimeError] {
   if len(args) == 0 {
-    return Err(runtime_error(line, bytes.concat(name, " expects (tensor[, axis])")))
+    return Err(runtime_error(line, "softmax expects (tensor[, axis])"))
   }
-  let t: tensor.Tensor = arg_tensor(args[0], name, line)?
+  let t: tensor.Tensor = arg_tensor(args[0], "softmax", line)?
   let axis: I64 = len(t.shape) - 1
-  if len(args) == 2 { axis = int_of(args[1], name, line)? }
-  if bytes.equal(name, "softmax") { return lift_v(tr_softmax(t, axis), line) }
+  if len(args) == 2 { axis = int_of(args[1], "softmax", line)? }
+  lift_v(tr_softmax(t, axis), line)
+}
+
+# logsumexp reduces the axis it works on rather than preserving it, so it takes
+# the rank-preserving flag and no longer shares softmax's dispatch. It keeps
+# softmax's laxity about the argument count -- neither ever refused a trailing
+# argument -- so the third position gains a meaning it did not have and no call
+# that ran before stops running.
+fn bi_logsumexp(args: Arr[Value], line: I64) -> Res[Value, RuntimeError] {
+  if len(args) == 0 {
+    return Err(runtime_error(line, "logsumexp expects (tensor[, axis[, keepdims]])"))
+  }
+  let t: tensor.Tensor = arg_tensor(args[0], "logsumexp", line)?
+  let axis: I64 = len(t.shape) - 1
+  if len(args) >= 2 { axis = int_of(args[1], "logsumexp", line)? }
+  let keep: Bool = false
+  if len(args) >= 3 { keep = flag_of(args[2], "logsumexp", line)? }
+  if keep { return lift_v(tr_reduce_axis_keep(tensor.OpLogSumExp, t, axis), line) }
   lift_v(tr_logsumexp_axis(t, axis), line)
 }
 

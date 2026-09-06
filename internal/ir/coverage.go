@@ -143,6 +143,11 @@ func (c *Coverage) stmt(s ast.Stmt) {
 		c.reject("declaration")
 	case *ast.Break, *ast.Continue:
 		c.reject("loop control")
+	case *ast.LetTuple:
+		// A destructuring binding is not compilable here for the same reason a
+		// tuple literal is not: this stage has one value per node.
+		c.reject("destructuring let")
+		c.expr(st.Value)
 	default:
 		c.reject(fmt.Sprintf("%T", s))
 	}
@@ -216,6 +221,8 @@ func (c *Coverage) expr(e ast.Expr) {
 		c.reject("string")
 	case *ast.ListLit:
 		c.reject("list")
+	case *ast.TupleLit:
+		c.reject("tuple")
 	case *ast.RecordLit:
 		c.reject("record")
 	case *ast.Field:
