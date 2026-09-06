@@ -57,7 +57,7 @@ European call, S0=100 K=100 r=5% vol=20% T=1y, MC paths: 200000
 landed on the closed-form Greeks. No tape object, no `requires_grad`, no
 `.backward()`. The full program is [`examples/montecarlo_option.tw`](examples/montecarlo_option.tw).
 
-This is an early prototype; the current release is v1.11.0, and as of v1.4.0
+This is an early prototype; the current release is v1.12.0, and as of v1.4.0
 the twill compiler written in twill runs on the Go bootstrap and reproduces the
 reference across every stage (see [twill is being written in
 twill](#twill-is-being-written-in-twill)). The reference implementation is a
