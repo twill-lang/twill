@@ -1,0 +1,7 @@
+mode systems
+
+# The path is read first and the content second, so a call that is wrong in
+# both places reports the content only after the path has been accepted.
+fn main() {
+  print(str(write_file("somewhere.txt", 5)))
+}

@@ -836,7 +836,8 @@ func systemsBuiltinResult(name string, args []Type) (Type, bool) {
 		return tInt{}, true
 	case "f64", "f64_of_i64":
 		return scalar(), true
-	case "chr", "str_quote", "f64_to_str", "bytes_to_str", "read_text_or", "resolve_path", "f64_hex", "num_to_text":
+	case "chr", "str_quote", "f64_to_str", "bytes_to_str", "read_text_or", "resolve_path", "f64_hex", "num_to_text",
+		"sha256", "sha256_bytes":
 		return tStr{}, true
 	case "black_box":
 		// The barrier hands back exactly what it was given, and the type says

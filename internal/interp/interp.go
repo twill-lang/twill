@@ -855,6 +855,25 @@ func (ip *Interp) evalExpr(e ast.Expr, env *value.Env) value.Value {
 		return ip.evalSlice(ex, env)
 	case *ast.RecordLit:
 		rec := value.NewRecord()
+		// `{ ..base, x: 1 }` starts from a copy of the base and then lets the
+		// fields written out replace what they name. The copy is shallow: a field
+		// holding a list hands over the same list, which is what `{ x: base.x }`
+		// written out by hand already does, and making this one case deep would
+		// be a second rule for the same syntax.
+		//
+		// The copy carries the base's struct name, so an update of a `Point` is
+		// still a `Point` for the purpose of a later field assignment's coercion.
+		// A type name on the literal itself wins, and is set below.
+		if ex.Base != nil {
+			base, ok := ip.evalExpr(ex.Base, env).(*value.Record)
+			if !ok {
+				ip.panicf(ex.Line, "the base of a record update must be a record")
+			}
+			rec.TypeName = base.TypeName
+			for _, name := range base.Keys {
+				rec.Set(name, base.Fields[name])
+			}
+		}
 		// A typed literal reads its declared field types, so `Catalog { versions:
 		// {} }` gets a dictionary at a Dict-typed field, the same rule a `let`
 		// annotation follows. The name is looked up unqualified: `resolve.Catalog`

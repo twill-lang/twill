@@ -499,17 +499,154 @@ of a builtin's behaviour as its answer, and half the fixtures exist to pin one.
 
 ---
 
+## 13. The self-hosted evaluator could not read a file, read a clock or start a process
+
+**Symptom.** The same shape as entry 12, one tranche further in. A
+systems-mode program that did any I/O at all ran on the bootstrap and refused
+self-hosted:
+
+```
+runtime error: builtin "write_out" is named in the builtin table but has no
+implementation
+```
+
+Three of the standard library's own suites failed on exactly that line. The
+verdict a systems-mode suite prints goes through `write_out` in
+`std/tests/systems_harness.tw`, so `io_test.tw`, `json_test.tw` and
+`text_test.tw` each got as far as running every assertion and then fell over on
+the way out, and all three were on the conformance allow-list for it.
+
+**Root cause.** The same one as entry 12, and not a new discovery: the port had
+stopped at the values and had not reached the effects. 40 names -- the
+filesystem, the path operations, the two clocks, the process interface and the
+three output sinks -- were in `src/builtins.tw`, typed by `src/check.tw`, and in
+no dispatch in `src/eval.tw`.
+
+There was a second fault underneath it that the missing dispatch had been
+hiding, and it is the reason this entry is not one line long. **A relative path
+in a program meant a different file under each implementation.** The Go
+interpreter resolves a relative path against the directory of the twill file
+doing the reading. Run a program directly and that is the program's own
+directory; run it through `src/eval.tw` and the file doing the reading is
+`src/eval.tw`, so `read_file("in.txt")` would have meant `<program dir>/in.txt`
+on one side and `src/in.txt` on the other. That is a wrong answer and not a
+refusal, so a port that delegated to the host builtin and stopped there would
+have closed 40 refusals by opening a silent one.
+
+The same is true of `args()`. The self-hosted CLI's own argument vector is
+`twill run main.tw run prog.tw`, and a program asking what it was called with
+must not be handed the two words that got the interpreter started.
+
+**How it was caught.** The dispatch by `make conformance-check`, which named
+all three suites and the builtin each died on. The path rule by asking, before
+writing the delegation, what the host would resolve the path against -- and
+then by a fixture that fails without the answer, which is the only part of that
+worth trusting.
+
+**Fix.** This commit. `bi_io`, `bi_path` and `bi_proc` in `src/eval.tw`
+dispatch the 40 names, and each body delegates to the host builtin of the same
+name for the reason entry 12 gives: this evaluator runs on the bootstrap, so
+delegating makes the answer identical by construction rather than by
+inspection. What is not delegated is the argument coercion, whose wording is
+most of the error surface, and the path resolution.
+
+`PROGRAM_BASE` and `PROGRAM_ARGS` are the two facts the bootstrap gets from the
+interpreter it is already inside and this side has to be told. `src/main.tw`
+records the file it is about to run and the argument vector the bootstrap would
+have passed -- `script_args` is a port of `cmd/twill/main.go`'s `scriptArgs`,
+not an approximation of it -- and every path builtin resolves against the
+program's directory rather than against `src/`.
+
+Three builtins deliberately do not resolve anything, because the Go bodies do
+not: `list_dir`, `save_value` and `load_value` hand the operating system the
+path they were given. Passing those through the same resolution would be a
+tidier rule and a divergence.
+
+`save_value` is the one body that is not a straight delegation. The host writes
+`value.Format` of what it is given, and what it would be given here is this
+evaluator's `Value` wrapper -- `VNum`, `VTensor`, `VStr` -- rather than the
+twill value inside it, so the text is produced by this file's own
+`format_value` first. The host formats a `Str` as itself, so the bytes on disk
+and the message on a failure are the Go body's exactly.
+
+**Regression test.** Two harnesses, because the two halves of the behaviour are
+visible to different instruments.
+
+`make conformance-check` grew a third mode, `conformance cases`, which runs
+each program under `testdata/conformance/cases/` twice as two *processes* and
+compares the exit code, stdout and stderr byte for byte, with no allow-list.
+That is the only way to see `write_out`, `write_err` and `exit`: none of them
+goes through the interpreter's output sink, so an in-process comparison cannot
+observe them at all. Five cases cover the paths, a whole filesystem round trip,
+the two clocks, the process interface and `exit(3)`.
+
+Ten more fixtures joined `internal/interp/testdata/selfhost/`, where the
+in-process harness compares the runtime error line. Eight pin a diagnostic, one
+pins the ordering of `emit_line` against `print`, and `relative_path.tw` is the
+one that cannot be a conformance case: a case is staged into the same directory
+as `src/*.tw`, so both answers would be that directory and the question could
+not be asked. There the fixture and `src/` differ, and with the resolution rule
+removed it fails with a self-hosted answer under `src/` against a bootstrap
+answer under `internal/interp/testdata/selfhost/`.
+
+The allow-list lost three lines. Nothing replaced them, which is the claim
+worth reading: those three suites had no second divergence waiting behind the
+first.
+
+---
+
 ## Open
 
-**The self-hosted evaluator still refuses 97 of the 248 builtin names.** Entry
+**The self-hosted evaluator still refuses 99 of the 255 builtin names.** Entry
 12 above ported 31 of them and closed divergences 1 and 2 of the three recorded
 here. What is left is the filesystem, the clock, the process, the RNG, the
 `f64_*` scalar intrinsics, the GPU stubs and the memory counters, each of which
 still ends at "named in the builtin table but has no implementation". The count
 is measurable rather than estimated: run each remaining name through
-`src/main.tw run` and read the first stderr line. Re-measured that way on
-2026-09-04, against this branch merged with `main`: 248 names in `src/builtins.tw`,
-151 dispatched, 97 refused.
+`src/main.tw run` and read the first stderr line, which is what
+`make conformance` does for every name at once. Measured that way on
+2026-09-04 it was 248 names, 151 dispatched, 97 refused. Re-measured on
+2026-09-05 after `ushr`, `sha256`, `sha256_bytes`, `log1p`, `expm1`,
+`f64_log1p` and `f64_expm1` landed: 255 names in `src/builtins.tw`, 155
+dispatched and answering, 1 dispatched and broken (`clip`), 99 refused. Five of
+the seven new names went into both implementations; the two that did not,
+`f64_log1p` and `f64_expm1`, joined `f64_log` and `f64_exp`, which the
+self-hosted evaluator did not dispatch either.
+**The self-hosted evaluator still refuses 57 of the 248 builtin names.** Entry
+12 ported 31 of them and closed divergences 1 and 2 of the three recorded here;
+entry 13 ported 40 more. What is left is the RNG, the `f64_*` scalar
+intrinsics, the GPU stubs, the memory counters, `is_same`, `all_finite`,
+`gbm_describe` and `quantize`, each of which still ends at "named in the
+builtin table but has no implementation". The count is measured rather than
+estimated -- `make conformance` calls every name on both implementations and
+writes `docs/conformance.md` from what came back -- and the number above is
+this branch's generated file, not a claim beside it.
+
+The next tranche to take is the `f64_*` intrinsics, and the reason is on the
+allow-list rather than in the count: `linalg_test.tw` and `stats_test.tw` are
+excused there for dying on `f64_of_i64`, and they are the only two lines whose
+cause is a single name.
+
+**`src/` still cannot run `src/`, and the reason moved.** Before entry 13 the
+inner CLI stopped on the first statement of its own `main`, on the builtin
+`args`. Measured on this branch, it gets through argument handling and into the
+checker and stops there instead:
+
+```
+$ ./twill run src/main.tw run "$PWD/src/main.tw" run "$PWD/examples/hello.tw"
+<repo>/src/main.tw:341: runtime error: undefined variable "SFn"
+  341 |       if len(diags) == 0 {
+```
+
+`SFn` is a case of the `Stmt` enum declared in `src/ast.tw` and used unqualified
+by `src/check.tw`, which imports it, so what is left at that point is about a
+module and an enum rather than about a missing builtin. The mechanism has not
+been traced and no claim is made about it here beyond the line that reproduces
+it. The same
+two levels answer `--version` correctly, which is the CLI's argument handling
+and `write_out` working through two interpreters. The line number in that report
+is the entry file's and not the module's, which is the attribution defect the
+allow-list already records against `nn_test.tw`.
 
 **`src/cli/main.tw` does not call a systems-mode program's `main`.** This is
 divergence 3 of the three, and it is still open. `src/main.tw` grew a `run_main`
@@ -546,12 +683,26 @@ right fix is to decide once what a non-boolean condition means in twill and make
 both evaluators agree; until then this is a refusal where the other side runs,
 which is exactly what the conformance allow-list is for.
 
-**Nested assignment through a tensor is silently dropped self-hosted.** Out of
-scope for this port and recorded so it is not lost: `let m: Tensor = [[1.0,
+**Nested assignment through a tensor is silently dropped self-hosted.** Still
+open, and still the most serious item on this page. It was out of scope for the
+strings, Arr and Dict port and it is out of scope for the filesystem, clock and
+process one: neither touched `assign_nested`, and neither should be read as
+having looked at it. Recorded again so it is not lost: `let m: Tensor = [[1.0,
 2.0], [3.0, 4.0]]  m[0][1] = 9.0` mutates on the bootstrap and does nothing at
 all self-hosted, with no error. That is a wrong answer rather than a refusal,
 and it is the most serious item on this page. `src/eval.tw` has no port of the
 Go `assignNested` path.
+
+**A relative path in `read_csv`, `read_frame`, `write_frame`, `save` and `load`
+still resolves against `src/` self-hosted.** These five are the file builtins
+entry 13 did not touch, and they each call `resolve_path` with the base
+implicit, which for `src/eval.tw` means `src/`. Entry 13's `base_resolve` is the
+answer and switching them to it is a one-word edit each; it was left out
+because `save` and `load` have a second and larger problem behind the path --
+`save` hands the host its own `Value` wrapper to format, so what it writes
+self-hosted is not what the bootstrap writes -- and a change that fixed the
+path without fixing that would make the wrong answer harder to see rather than
+easier.
 
 **The `einsum` gradient panics for a bare summed axis.** Reproduced 2026-09-04
 against this branch merged with `main`. The backward pass of an einsum whose

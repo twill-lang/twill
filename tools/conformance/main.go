@@ -11,10 +11,13 @@
 //	                       implementations and write docs/conformance.md
 //	conformance suites     run the standard library's own test suites under both
 //	                       and fail on any disagreement not on the allow-list
+//	conformance cases      run the checked-in conformance cases under both and
+//	                       fail on any disagreement at all
 //
-// Both modes work by running the two implementations rather than by reading
-// their source, because a table scraped out of src/eval.tw would be a second
-// copy of the dispatch and would rot the first time someone restructured it.
+// All three modes work by running the two implementations rather than by
+// reading their source, because a table scraped out of src/eval.tw would be a
+// second copy of the dispatch and would rot the first time someone
+// restructured it.
 // Running the thing is the only claim that cannot go stale.
 package main
 
@@ -40,6 +43,8 @@ func main() {
 		os.Exit(builtinsMain(os.Args[2:]))
 	case "suites":
 		os.Exit(suitesMain(os.Args[2:]))
+	case "cases":
+		os.Exit(casesMain(os.Args[2:]))
 	default:
 		usage()
 		os.Exit(2)
@@ -47,7 +52,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: conformance builtins|suites [flags]")
+	fmt.Fprintln(os.Stderr, "usage: conformance builtins|suites|cases [flags]")
 }
 
 // --- shared plumbing --------------------------------------------------------
@@ -56,14 +61,15 @@ func usage() {
 // the self-hosted compiler's own sources, and whatever the case under test
 // needs next to it.
 //
-// The copy is not tidiness. The self-hosted evaluator resolves a path passed to
-// `run` relative to the directory of the twill file doing the reading, which is
-// src/, while the Go bootstrap resolves it relative to the working directory.
-// Handing the two sides different paths would put different text in every
-// diagnostic and make the whole corpus look divergent for a reason that is not
-// about the language. With src/*.tw and the case in the same directory, both
-// sides are given the bare file name, both print the bare file name, and a
-// difference in the output is a difference in behaviour.
+// The copy is not tidiness. The self-hosted CLI reads the file it is pointed at
+// with its own read_file, and a twill file's relative path is resolved against
+// its own directory, which for src/main.tw is src/; the Go bootstrap resolves
+// the same argument against the working directory. Handing the two sides
+// different paths would put different text in every diagnostic and make the
+// whole corpus look divergent for a reason that is not about the language. With
+// src/*.tw and the case in the same directory, both sides are given the bare
+// file name, both print the bare file name, and a difference in the output is a
+// difference in behaviour.
 func stage(root, extraDir string, extraFilter func(string) bool) (string, error) {
 	dir, err := os.MkdirTemp("", "twillconf")
 	if err != nil {

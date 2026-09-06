@@ -326,8 +326,14 @@ type RecordLit struct {
 	// "". Records are structural, so it is advisory: the value is the same record
 	// `{ ... }` builds, and the name is kept only so the printer can reproduce it.
 	TypeName string
-	Fields   []RecordField
-	Line     int
+	// Base is the `..expr` of a record update, `{ ..base, x: 1 }`, and nil for a
+	// plain literal. The value is a copy of Base with Fields replacing the fields
+	// they name. The copy is shallow: a field holding a list or a record holds
+	// the same one the base does, exactly as writing `{ x: base.x }` out by hand
+	// already does.
+	Base   Expr
+	Fields []RecordField
+	Line   int
 }
 
 type RecordField struct {

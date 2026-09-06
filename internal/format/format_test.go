@@ -197,3 +197,32 @@ func TestConstSurvivesFormatting(t *testing.T) {
 		}
 	}
 }
+
+// A record update's base is part of the literal, not a field, so it is the one
+// piece of a `{ ... }` the printer can silently drop: nothing else in the node
+// is missing, the output still parses, and the program means something else.
+// The count test in corpus_test.go counts statements, not expressions, so this
+// is where that loss would show.
+func TestRecordUpdateSurvivesFormatting(t *testing.T) {
+	cases := map[string]string{
+		"let m = {..base}":              "let m = { ..base }\n",
+		"let m = {..base,b:2.5}":        "let m = { ..base, b: 2.5 }\n",
+		"let m = P{..base,b:2.5}":       "let m = P { ..base, b: 2.5 }\n",
+		"let m = {..outer.inner,b:2.5}": "let m = { ..outer.inner, b: 2.5 }\n",
+		"let m = {..mk(2.5),b:2.5}":     "let m = { ..mk(2.5), b: 2.5 }\n",
+		"let m = {..{a: 2.5},b:2.5}":    "let m = { ..{ a: 2.5 }, b: 2.5 }\n",
+	}
+	for in, want := range cases {
+		got, err := format.Source(in)
+		if err != nil {
+			t.Fatalf("%q: %v", in, err)
+		}
+		if got != want {
+			t.Errorf("format(%q) = %q, want %q", in, got, want)
+		}
+		// What it prints has to parse back, or `twill fmt --write` breaks the file.
+		if _, err := parser.Parse(got); err != nil {
+			t.Errorf("formatted %q does not re-parse: %v", got, err)
+		}
+	}
+}

@@ -92,8 +92,9 @@ Three things check it, and they are not the same thing:
   programs, not a corpus, so a divergence that only a real program reaches is
   not in their range.
 - `./twill test std/tests` is the twill-level suite: every `*_test.tw` under
-  that directory, about half a second. `harness.tw` and `systems_harness.tw`
-  are helpers rather than suites and are imported by the rest.
+  that directory, about half a second. The systems-mode suites assert through
+  `std/test`; `harness.tw` is the numeric-mode harness, a helper rather than a
+  suite, and is imported by the rest.
 
 `tools/diff/` is a fourth thing and answers a different question: it compares
 two Go binaries over the fixture corpus in `testdata/`, so it never looks at
@@ -126,6 +127,17 @@ make conformance-check   # the table is current, and the std suites still agree
 `make conformance-check` runs every suite in `std/tests/` twice, once on each
 implementation, and compares the bytes. The divergences that exist today are
 listed in `testdata/conformance/suite-allow.txt`.
+
+It also runs every program under `testdata/conformance/cases/` the same way,
+and that half has no allow-list and is not getting one. The two are different
+instruments on purpose. A suite is code written to test the standard library,
+so most of what it finds is a port nobody has finished and the list is how that
+is admitted. A case is written to pin one builtin's behaviour and is checked in
+only once both implementations already agree, so a divergence there is a
+regression in the change that caused it. A case is also two processes rather
+than two evaluators in one, which is the only way to see `write_out`,
+`write_err` and `exit`: none of those goes through the interpreter's output
+sink, so an in-process comparison cannot observe them at all.
 
 The list does not excuse a file. Each line names one divergence and carries a
 signature of it, so an entry stops covering a suite the moment the suite starts
