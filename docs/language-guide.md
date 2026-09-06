@@ -679,7 +679,8 @@ bare `return f(n - 1)` survives 233,013 nested calls before the host stack gives
 out; `f(n - 1) + 1` survives 147,815; thirty layers of arithmetic survive 12,739,
 and three hundred survive 1,340. Because nothing bounds how deep an expression
 may be, no fixed limit can be below the crash for every program. What 10,000
-covers is a runaway call nested inside up to 38 layers of arithmetic, which
+covers is a runaway call nested inside up to 38 layers of flat arithmetic,
+`1 + 1 + ... + f(n)`, which
 survives 10,174 calls, or 24 layers of `[x][0]`, the most expensive layer
 measured, which survives 10,357. The deepest call site written anywhere in this
 repository is nested 14 deep. Write a recursion whose call sits deeper inside its
@@ -688,6 +689,12 @@ the host's stack the way it did before the limit existed. Binding the call to a
 `let` and using the name afterwards puts it back in reach of the diagnostic:
 with 39 layers applied to a bound name rather than to the call, the depth goes
 back out to 232,993.
+
+The shape matters as much as the count, which is why the number above names
+one. Right-nested arithmetic costs slightly more per layer than the flat form:
+`(1 + (1 + ... f(n)))` is caught at 37 layers and overflows at 38, where the
+flat `1 + 1 + ... + f(n)` is still caught at 38. Both were measured the same
+way, on this machine.
 
 Those numbers are this machine's, measured on macOS arm64 with Go's 1 GB
 goroutine stack. Another host will put the cliff somewhere else. What does not

@@ -40,7 +40,8 @@
   `+ 1` around it, 12,739 with thirty layers and 1,340 with three hundred.
   Because expression nesting has no upper bound, **no fixed call limit is below
   the crash for every program**, and 10,000 is not an exception. What it does
-  cover was bisected: a runaway nested inside up to 38 layers of arithmetic,
+  cover was bisected, and it depends on the shape as well as the count: a
+  runaway nested inside up to 38 layers of flat arithmetic (`1 + 1 + ... + f(n)`),
   which survives 10,174 calls, or 24 layers of `[x][0]`, the most expensive
   layer measured, which survives 10,357. Deeper than that and the fatal overflow
   is back, which is no worse than before this change but is not what the limit
