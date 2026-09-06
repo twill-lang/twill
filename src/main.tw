@@ -447,14 +447,17 @@ fn report_syntax(path: Str, src: Str, e: lex.SyntaxError) {
   show_context(src, e.line, e.col)
 }
 
-# A formatter refusal is not a position in the file, so it gets the plain
-# `error: ...` form rather than the file:line:col treatment. Go reaches the same
-# two shapes through a type switch on `error`; here the enum makes the two cases
-# the signature.
+# A formatter refusal is not a position in the file, so it gets the `path:
+# error: ...` form rather than the file:line:col treatment. It still names the
+# file: `twill fmt --check <dir>` refuses one file at a time and a bare
+# `error: ...` per refusal names none of them. Go reaches the same two shapes
+# through a type switch on `error`; here the enum makes the two cases the
+# signature.
 fn report_format_error(path: Str, src: Str, e: fmt.FormatError) {
   match e {
     FSyntax(s) => report_syntax(path, src, s),
-    FRefused(m) => write_err(bytes.concat("error: ", bytes.concat(m, "\n"))),
+    FRefused(m) => write_err(bytes.concat(path,
+      bytes.concat(": error: ", bytes.concat(m, "\n")))),
   }
 }
 

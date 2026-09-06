@@ -2216,21 +2216,31 @@ other single-line statement uses.
 
 ## NEEDS-78: the formatter does not preserve blank lines
 
-**Status:** done in `src/fmt.tw`, as a deliberate divergence from the bootstrap.
-`maybe_blank` re-emits one blank line wherever the source had a gap of two or
-more lines between consecutive statements, measured from the previous
-statement's `stmt_end_line` to the leading edge of the next (its first own-line
-comment, or the statement itself), so a comment sitting directly under a
-statement is not mistaken for a break and a multi-line statement's own span is
-not either. The three statement lists, the program body, an inline `{ }` block,
-and a braced block body, all go through it.
+**Status:** done on both sides, and no longer a divergence. `maybe_blank`
+re-emits one blank line wherever the source had a gap of two or more lines
+between consecutive statements, measured from the previous statement's
+`stmt_end_line` to the leading edge of the next (its first own-line comment, or
+the statement itself), so a comment sitting directly under a statement is not
+mistaken for a break and a multi-line statement's own span is not either. The
+three statement lists, the program body, an inline `{ }` block, and a braced
+block body, all go through it.
 
-The owner chose to let twill's formatter be the better one here rather than
-reproduce `internal/format/format.go`, which drops the blanks, so the two
-disagree on this point until the bootstrap is retired and the fmt goldens are
-regenerated from twill when it can run. One case is left: a blank line between
-two consecutive own-line comments is not preserved, because `emit_leading`
-emits comments back to back; the entry's target, breaks between statements, is.
+It landed in `src/fmt.tw` first, as a deliberate divergence: the owner chose to
+let twill's formatter be the better one rather than reproduce
+`internal/format/format.go`, which dropped the blanks. `internal/format` now has
+the same rule, ported from that file rather than re-invented, along with
+`ast.StmtEndLine` and the empty-piece drop in `splitTrimmedLines` that keeps a
+flattened inline block from rendering `; ; `. Formatting every `.tw` file in the
+corpus under both implementations and comparing bytes went from 120 divergences
+of 469 files to none, with the same 10 files refused by both before and after.
+
+Two cases are left, and both sides drop both, so they are shared gaps rather
+than disagreements; the entry's target, breaks between statements, is done. A
+blank line between two consecutive own-line comments is not preserved, because
+`emit_leading` emits comments back to back. Neither is a blank line between a
+file's opening comment and the first statement it precedes: nothing precedes
+that statement, so there is no gap for `maybe_blank` to measure and the comment
+comes out attached to it. `examples/hello.tw` is the visible instance.
 
 *(Original: open, cosmetic. `src/fmt.tw`, and `internal/format/format.go`
 equally.)*

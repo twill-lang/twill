@@ -180,7 +180,10 @@ go build -o twill ./cmd/twill
 ```bash
 twill examples/autodiff.tw      # run a program
 twill check examples/shapes.tw  # shape-check without running
+twill check src std             # ...or several paths, and directories
 twill fmt examples/hello.tw     # print canonically formatted source
+twill fmt src --write           # format every .tw file under a directory
+twill fmt src --check           # name what would change; exit 1 if any would
 twill test std/tests            # run every *_test.tw under a path
 twill                           # start the REPL (multi-line aware)
 ```
@@ -415,11 +418,11 @@ the Go bootstrap.
 
 What is finished is the front end. Running both sides over every `.tw` file
 `git ls-files '*.tw'` reports -- the whole tree, read recursively -- `twill
-check` agrees with the Go command on every one, and `twill fmt` agrees on every
-one once blank lines are set aside: most are byte-identical and the rest differ
-only in a by-design blank-line rule, with no token differing anywhere. Budget
-minutes rather than seconds: `src/eval.tw` takes minutes through the self-hosted
-checker against well under a second on the bootstrap.
+check` agrees with the Go command on every one, and `twill fmt` now agrees on
+every one byte for byte: the blank-line rule the two used to disagree about has
+been ported into `internal/format`, so the claim no longer carries an "except".
+Budget minutes rather than seconds: `src/eval.tw` takes minutes through the
+self-hosted checker against well under a second on the bootstrap.
 
 This paragraph carries no file count on purpose. Two earlier versions of it
 carried one and both were wrong, in opposite directions: one quoted a v1.4.0
