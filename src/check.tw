@@ -132,6 +132,15 @@ struct FnTypeAnno {
   ret: Type,
 }
 
+# TupleType is `(F64, F64)`: a fixed-arity positional group. Its arity is part
+# of its identity -- a 2-tuple is not a 3-tuple -- and so is the order of its
+# elements, since nothing names them. There is no nominal tuple type and no
+# field access, so this is the whole of what the checker can know about one: how
+# many values, and what each is. See docs/roadmap.md entry 1.
+struct TupleType {
+  elems: Arr[Type],
+}
+
 # node_id rather than a node handle: the recursion guard needs identity and
 # serial numbers give it without making heap identity a language feature. See
 # NEEDS-21 and the comment in ast.tw.
@@ -168,6 +177,7 @@ enum Type {
   TEnum(EnumType),
   TCtor(CtorType),
   TFnType(FnTypeAnno),
+  TTuple(TupleType),
   # A declaration's type parameter -- the T in `struct Box[T]` -- standing for a
   # type the declaration does not name. It survives only inside the declaration
   # it belongs to: at a use site the parameters are substituted for the
@@ -246,6 +256,7 @@ fn is_definite_non_tensor(t: Type) -> Bool {
     TBytes => true,
     TCtor(_) => true,
     TFnType(_) => true,
+    TTuple(_) => true,
     _ => false,
   }
 }
@@ -874,6 +885,18 @@ fn check(prog: ast.Program) -> Arr[Diagnostic] {
           dict_set(env.consts, st.name, st.line)
         }
       },
+      # Each name a destructuring binding introduces is a top-level name too, so
+      # a function written above it may refer to one.
+      SLetTuple(st) => {
+        for name in st.names {
+          if not bytes.equal(name, "_") {
+            match env_get(env, name) {
+              Some(_) => unit,
+              None => env_define(env, name, TUnknown),
+            }
+          }
+        }
+      },
       _ => unit,
     }
   }
@@ -1094,6 +1117,26 @@ fn tp_parse(c: Checker, p: TypeParser) -> Type {
     if tp_accept(p, "->") { ret = tp_parse(c, p) }
     return TFnType(FnTypeAnno { params: params, ret: ret })
   }
+  if tp_accept(p, "(") {
+    # A tuple type, `(F64, F64)`. The source parser has already refused a
+    # one-element one, so anything with fewer than two elements arriving here
+    # came from text this checker did not write, and is not a type.
+    let elems: Arr[Type] = arr_new()
+    while true {
+      push(elems, tp_parse(c, p))
+      if tp_accept(p, ",") { continue }
+      if not tp_accept(p, ")") {
+        p.err = true
+        return TUnknown
+      }
+      break
+    }
+    if len(elems) < 2 {
+      p.err = true
+      return TUnknown
+    }
+    return TTuple(TupleType { elems: elems })
+  }
   let name: Str = tp_ident(p)
   if len(name) == 0 {
     p.err = true
@@ -1217,6 +1260,14 @@ fn subst_params(t: Type, binding: Dict[Str, Type]) -> Type {
         None => t,
       }
     },
+    TTuple(v) => {
+      # A tuple inside a generic still judges: `struct Pair[T] { span: (T, T) }`
+      # at Pair[I64] has an (I64, I64) field, not a pair of unsubstituted
+      # parameters that judge nothing.
+      let elems: Arr[Type] = arr_new()
+      for e in v.elems { push(elems, subst_params(e, binding)) }
+      TTuple(TupleType { elems: elems })
+    },
     TArr(v) => TArr(ArrType { elem: subst_params_opt(v.elem, binding) }),
     TDict(v) => TDict(DictType { key: subst_params_opt(v.key, binding),
                                  val: subst_params_opt(v.val, binding) }),
@@ -1262,6 +1313,20 @@ fn infer_params(declared: Type, actual: Type, binding: Dict[Str, Type]) {
   match declared {
     TParam(d) => {
       if not dict_has(binding, d.name) { dict_set(binding, d.name, actual) }
+    },
+    TTuple(d) => {
+      match actual {
+        TTuple(a) => {
+          if len(a.elems) == len(d.elems) {
+            let i: I64 = 0
+            while i < len(d.elems) {
+              infer_params(d.elems[i], a.elems[i], binding)
+              i = i + 1
+            }
+          }
+        },
+        _ => unit,
+      }
     },
     TArr(d) => {
       match actual {
@@ -1497,6 +1562,19 @@ fn assignable(want: Type, got: Type) -> Bool {
       }
       true
     },
+    TTuple(w) => {
+      let g: TupleType = match got {
+        TTuple(x) => x,
+        _ => return false,
+      }
+      if len(g.elems) != len(w.elems) { return false }
+      let i: I64 = 0
+      while i < len(w.elems) {
+        if not assignable(w.elems[i], g.elems[i]) { return false }
+        i = i + 1
+      }
+      true
+    },
     # Every function-valued got was answered above, so anything reaching here is
     # not one.
     TFnType(_) => false,
@@ -1617,6 +1695,7 @@ fn unorderable(c: Checker, t: Type) -> Str {
     TFnType(_) => type_text(c, t),
     TFn(_) => type_text(c, t),
     TBuiltin(_) => type_text(c, t),
+    TTuple(_) => type_text(c, t),
     TTensor(v) => {
       # Ordering is scalar-only, so a tensor of known rank above 0 cannot be
       # ordered and the runtime refuses it. A masking `where(A > 0.0, A, B)` is
@@ -1642,6 +1721,7 @@ fn is_definite_non_record(t: Type) -> Bool {
     TDict(_) => true,
     TEnum(_) => true,
     TList(_) => true,
+    TTuple(_) => true,
     _ => false,
   }
 }
@@ -1922,6 +2002,7 @@ fn hvr_stmt(s: ast.Stmt) -> Bool {
     SFor(st) => hvr_block(st.body),
     SExpr(st) => has_value_return(st.x),
     SLet(st) => has_value_return(st.value),
+    SLetTuple(st) => has_value_return(st.value),
     SAssign(st) => has_value_return(st.value),
     _ => false,
   }
@@ -2032,6 +2113,12 @@ fn systems_builtin_result(name: Str, args: Arr[Type]) -> Opt[Type] {
 # reported, whichever side of it they sit on. Two plain `let`s of one name stay
 # legal, because that is an idiom this language allows and this rule is about
 # `const`. An inner scope is not this list, so shadowing is untouched.
+#
+# A destructuring `let` is a binding too, and it is counted here for the same
+# reason a plain one is. The first cut of tuples looked only at SLet, so
+# `const A = 1.0` followed by `let (A, b) = (2.0, 3.0)` rebound A with nothing
+# said while `let A = 2.0` on the same line was refused with the full message. A
+# rule that a second shape of binding walks around is not a rule.
 fn report_const_rebinds(c: Checker, body: Arr[ast.Stmt]) {
   # Indices rather than lines: two statements can share a line, so a line number
   # cannot tell the const's own binding apart from a second one.
@@ -2051,6 +2138,9 @@ fn report_const_rebinds(c: Checker, body: Arr[ast.Stmt]) {
     i = i + 1
   }
   if not any { return }
+  # A const's own binding is the one at first[name], and only an SLet can be it:
+  # there is no `const (a, b) = ...`. So an SLetTuple naming a const name is
+  # always a second binding, with no index to excuse it.
   let j: I64 = 0
   while j < len(body) {
     match body[j] {
@@ -2058,21 +2148,38 @@ fn report_const_rebinds(c: Checker, body: Arr[ast.Stmt]) {
         match dict_get(first, st.name) {
           Some(at) => {
             if at != j {
-              let decl_line: I64 = stmt_line(body[at])
-              report(c, st.line, bytes.concat(st.name,
-                bytes.concat(" is declared const on line ",
-                bytes.concat(str(decl_line),
-                bytes.concat(", so the name cannot be bound a second time in the same scope: a second binding would take its place and everything after it would be assignable again. Rename one of them, or declare line ",
-                bytes.concat(str(decl_line), " with let if the name is meant to change."))))))
+              report_const_rebind(c, st.name, st.line, stmt_line(body[at]))
             }
           },
           None => unit,
+        }
+      },
+      SLetTuple(st) => {
+        let k: I64 = 0
+        while k < len(st.names) {
+          if not bytes.equal(st.names[k], "_") {
+            match dict_get(first, st.names[k]) {
+              Some(at) => report_const_rebind(c, st.names[k], st.line, stmt_line(body[at])),
+              None => unit,
+            }
+          }
+          k = k + 1
         }
       },
       _ => unit,
     }
     j = j + 1
   }
+}
+
+# The one message, written once, so the two shapes of binding cannot drift apart
+# in their wording the way they drifted apart in whether they were checked.
+fn report_const_rebind(c: Checker, name: Str, line: I64, decl_line: I64) {
+  report(c, line, bytes.concat(name,
+    bytes.concat(" is declared const on line ",
+    bytes.concat(str(decl_line),
+    bytes.concat(", so the name cannot be bound a second time in the same scope: a second binding would take its place and everything after it would be assignable again. Rename one of them, or declare line ",
+    bytes.concat(str(decl_line), " with let if the name is meant to change."))))))
 }
 
 # The line a statement was written on, for the one caller that has a statement in
@@ -2098,6 +2205,82 @@ fn lvalue_base(target: ast.Expr) -> Opt[Str] {
     }
   }
   None
+}
+
+# check_let_tuple judges `let (lo, hi) = span(xs)`. The names are bound whatever
+# happens, so a mistake here reports once rather than once more for every use of
+# a name the destructuring did not manage to bind.
+# report_repeated_tuple_names refuses `let (a, a) = (1.0, 2.0)`.
+#
+# Positional binding has no way to say what a repeat means. Nothing merges the
+# two values and nothing reads them apart, so the second define simply lands on
+# top of the first and the last position wins, which is a typo answered with a
+# number rather than a diagnostic. `_` repeats freely, because `_` binds nothing
+# and is the written way to skip a position.
+#
+# It runs before the value is inferred so that a program with both faults reads
+# in the order it was written: the names are wrong on their own terms, whatever
+# the right-hand side turns out to be.
+fn report_repeated_tuple_names(c: Checker, st: ast.LetTuple) {
+  let seen: Dict[Str, Bool] = dict_new()
+  let i: I64 = 0
+  while i < len(st.names) {
+    let name: Str = st.names[i]
+    if not bytes.equal(name, "_") {
+      if dict_has(seen, name) {
+        report(c, st.line, bytes.concat("this let binds ",
+          bytes.concat(name, " twice, and the later position would take the earlier one's place with nothing said. Rename one of them, or write _ for a position whose value the program does not want.")))
+      } else {
+        dict_set(seen, name, true)
+      }
+    }
+    i = i + 1
+  }
+}
+
+fn check_let_tuple(c: Checker, st: ast.LetTuple, env: CheckEnv) {
+  report_repeated_tuple_names(c, st)
+  let rhs: Type = infer_expr(c, st.value, env)
+  let tup: TupleType = match rhs {
+    TTuple(t) => t,
+    _ => {
+      # Only a definite mismatch is reported. An unknown right-hand side -- a
+      # call into a module this single-file checker never read -- says nothing
+      # about how many values come back, so it binds unknowns and stays quiet,
+      # which is the policy everywhere else in this file.
+      if not is_unknown_type(rhs) {
+        report(c, st.line, bytes.concat("this let destructures a tuple of ",
+          bytes.concat(str(len(st.names)),
+          bytes.concat(" values, but the value is ", type_text(c, rhs)))))
+      }
+      bind_tuple_names(st, env, TUnknown)
+      return
+    },
+  }
+  if len(tup.elems) != len(st.names) {
+    report(c, st.line, bytes.concat("this let binds ",
+      bytes.concat(str(len(st.names)),
+      bytes.concat(" names, but the value is ",
+      bytes.concat(type_text(c, TTuple(tup)),
+      bytes.concat(", which has ", str(len(tup.elems))))))))
+    bind_tuple_names(st, env, TUnknown)
+    return
+  }
+  let i: I64 = 0
+  while i < len(st.names) {
+    if not bytes.equal(st.names[i], "_") {
+      env_define(env, st.names[i], tup.elems[i])
+    }
+    i = i + 1
+  }
+}
+
+# bind_tuple_names binds every name of a destructuring to one type, for the two
+# paths where the value did not say what each part is.
+fn bind_tuple_names(st: ast.LetTuple, env: CheckEnv, t: Type) {
+  for name in st.names {
+    if not bytes.equal(name, "_") { env_define(env, name, t) }
+  }
 }
 
 # ---- statements ------------------------------------------------------------
@@ -2158,6 +2341,7 @@ fn infer_stmt(c: Checker, s: ast.Stmt, env: CheckEnv) {
         dict_set(env.consts, st.name, st.line)
       }
     },
+    SLetTuple(st) => check_let_tuple(c, st, env),
     SFn(st) => {
       env_define(env, st.name, TFn(FnType {
         node_id: st.id, params: st.params, ret: st.ret, ret_unit: st.ret_unit,
@@ -2354,6 +2538,15 @@ fn infer_expr(c: Checker, e: ast.Expr, env: CheckEnv) -> Type {
         i = i + 1
       }
       TList(ListType { elems: Some(elems) })
+    },
+    ETuple(ex) => {
+      let elems: Arr[Type] = arr_new()
+      let i: I64 = 0
+      while i < len(ex.elements) {
+        push(elems, infer_expr(c, ex.elements[i], env))
+        i = i + 1
+      }
+      TTuple(TupleType { elems: elems })
     },
     ELambda(ex) => TFn(FnType {
       node_id: ex.id, params: ex.params, ret: ex.ret, ret_unit: ex.ret_unit,
@@ -4141,6 +4334,7 @@ fn definite_non_tensor(t: Type) -> Bool {
     TBytes => true,
     TCtor(_) => true,
     TFnType(_) => true,
+    TTuple(_) => true,
     # An I64 is a number, so it is not a definite non-tensor: it stands where a
     # scalar is wanted, the same softness the Go checker keeps. A type parameter
     # is whatever the use site chose, so it is not definitely anything.
@@ -4211,6 +4405,11 @@ fn type_text(c: Checker, t: Type) -> Str {
         }
       }
       bytes.concat(v.name, bytes.concat("[", bytes.concat(bytes.join(parts, ", "), "]")))
+    },
+    TTuple(v) => {
+      let parts: Arr[Str] = arr_new()
+      for e in v.elems { push(parts, type_text(c, e)) }
+      bytes.concat("(", bytes.concat(bytes.join(parts, ", "), ")"))
     },
     TParam(v) => v.name,
     TFn(_) => "a function",

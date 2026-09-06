@@ -210,7 +210,7 @@ names, which is the part a test can hold.
 
 | # | Feature | Callers | Repos | Delivered |
 |---|---|---|---|---|
-| 1 | `Res[T, E]`, `Opt[T]`, or any way to return two values | 6 | twill, spool, loom, bobbin, weft, warp | 1.3.0, checked in 1.6.0 |
+| 1 | `Res[T, E]`, `Opt[T]`, or any way to return two values | 6 | twill, spool, loom, bobbin, weft, warp | 1.3.0, checked in 1.6.0; tuple returns unreleased |
 | 2 | Function values with a declared type, as parameters and struct fields | 6 | twill, spool, loom, bobbin, weft, warp | 1.5.0 spelled, 1.7.0 as values |
 | 3 | `enum` with payloads and exhaustive `match` | 5 | twill, spool, loom, bobbin, warp | 1.3.0, exhaustive 1.6.0, patterns 1.7.0 |
 | 4 | The bitwise operators, spelled, and `shr` on a negative `I64` defined | 5 | twill, spool, loom, weft, warp | 1.3.0, infix in 1.5.0 |
@@ -252,6 +252,17 @@ names, which is the part a test can hold.
 > function or in a function that does not return one of them is a checker error
 > rather than a runtime surprise. The three workarounds below are no longer
 > forced; each satellite carries its own until it adopts the replacement.
+>
+> **The third workaround is answered separately, by tuple returns (unreleased).**
+> `Res` addressed failure, and a struct declared for one call site is not a
+> failure: `fn span(xs) -> (F64, F64)` and `let (lo, hi) = span(xs)` are what
+> `Batch`, `StepResult` and weft's four span types were standing in for. A tuple
+> holds two to eight values, is destructured or passed on whole, and has no `.0`
+> and no name -- a value that wants to be stored and read by name stays a
+> struct, which is the distinction the workaround was blurring. A destructuring
+> `let` is a binding like any other: it goes through entry 28's const-rebinding
+> rule, and it may not write one name twice. See `docs/language-guide.md`,
+> "Tuples".
 
 **Six callers.** twill `docs/needs.md` NEEDS-10 (`src/lex.tw:294`, `tokenize`)
 and NEEDS-22 (every environment lookup in `src/check.tw`). spool entry 10

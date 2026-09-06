@@ -150,6 +150,15 @@ func canonical(v value.Value, depth int) string {
 			out += canonical(item, depth+1)
 		}
 		return out + "]"
+	case *value.Tuple:
+		out := "tuple ("
+		for i, item := range t.Items {
+			if i > 0 {
+				out += ", "
+			}
+			out += canonical(item, depth+1)
+		}
+		return out + ")"
 	case *value.Record:
 		keys := make([]string, len(t.Keys))
 		copy(keys, t.Keys)
