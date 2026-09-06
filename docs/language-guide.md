@@ -1414,8 +1414,19 @@ about the shape and not about the numbers in it: `argmax(t, 1, true)` on a
 `[2, 3]` is a `[2, 1]` of positions, which is the shape you need to compare
 against the input the positions were taken from. Ops that do not remove an axis
 do not take it: `softmax` and `flip` preserve the shape they were given, and
-`diff` shortens its axis rather than removing it, so a third argument to any of
-those is still an error.
+`diff` shortens its axis rather than removing it, so there is no axis for the
+flag to keep.
+
+What a third argument to those three does today is not uniform, and the
+difference is older than the flag. `flip(t, 1, true)` and `diff(t, 1, true)`
+are refused, with `flip expects (tensor[, axis])` and
+`diff expects (tensor[, axis])`. `softmax(t, 1, true)` is **not** refused: it
+runs and returns the ordinary `softmax(t, 1)`, ignoring the third argument, as
+it ignores a fourth. That is how `softmax` has always behaved on both
+implementations, it is unchanged here, and it is worth knowing because it is a
+trap: a `keepdims` written on a `softmax` is silently nothing rather than an
+error. Tightening it is a separate change, because it would turn calls the
+corpus has always accepted into failures.
 
 All of them are differentiable, including the two order-based ones, though what
 that means is worth being clear about. `median` routes the whole gradient to

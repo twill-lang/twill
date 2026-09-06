@@ -27,7 +27,12 @@
   is a `[2, 1]` of indices, which is the shape you need to compare against the
   input those indices point into. `softmax` and `flip` preserve the shape they
   were given and `diff` shortens an axis rather than removing one, so none of
-  those three takes the flag.
+  those three takes the flag. What they do with a third argument is not uniform
+  and is unchanged here: `flip(t, 1, true)` and `diff(t, 1, true)` are refused,
+  while `softmax(t, 1, true)` runs and ignores it, as `softmax` has always
+  ignored a trailing argument on both implementations. That is documented in
+  `docs/language-guide.md` and pinned by a test rather than tightened, because
+  tightening it would turn calls the corpus has always accepted into failures.
 
   The flag is positional, because twill has no named arguments (roadmap entry
   29). Unlike `sort`'s `descending` and `topk`'s `smallest`, which are numbers,
