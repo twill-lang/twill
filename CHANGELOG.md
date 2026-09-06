@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.12.0] - 2026-09-05
+
 ### Added
 
 - **A recursion limit, so a missing base case is a twill error and not a Go
