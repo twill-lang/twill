@@ -71,36 +71,38 @@ func CheckLegacyExt(path string) error {
 // tables. Depths here are counted in nested twill calls, which is what
 // callDepth counts, so f(n) reaches n+1 of them.
 //
-// The low end: over every .tw file in this repository, run on this interpreter
-// and put through the self-hosted checker running on top of it, the deepest
-// call depth anything reaches is 217, and that is the self-hosted checker on
-// src/parse.tw rather than a program. Nothing run directly gets past 14. An
-// earlier round measured the nine satellite repositories too and found nothing
-// deeper than 18.
+// The low end: over all 66 .tw files in this repository that run as programs,
+// the deepest call depth any of them reaches is 14 and the median is 3. The
+// deeper recursion here is the self-hosted compiler, whose depth follows the
+// nesting of the file it is checking rather than the program's own call graph;
+// on the src/ files measured that peaks at 120. Both were measured by bisecting
+// the smallest TWILL_MAX_CALL_DEPTH at which each run completes, which is
+// exactly its peak depth and needs no instrumented build.
 //
 // The high end is not one number, and that has to be said plainly rather than
 // rounded off. What decides where the Go stack runs out is not what the twill
 // frame holds but how deeply the recursive call sits inside the expression
 // around it, because every enclosing operator is another evalExpr frame held
 // live across the call. Measured on this machine, macOS arm64 with Go's 1 GB
-// goroutine stack, a runaway f survives 236,295 nested calls when the call is
-// bare, 150,466 with one `+ 1` around it, 13,046 with thirty and 1,373 with
+// goroutine stack, a runaway f survives 233,013 nested calls when the call is
+// bare, 147,815 with one `+ 1` around it, 12,739 with thirty and 1,340 with
 // three hundred.
 //
-// Widening the frame changes nothing whatever: one parameter or eight, no
-// locals or sixteen, the cliff stays at 150,466. An earlier round of this work
-// read the same evidence the other way, reporting that a fat frame of five
-// parameters and three locals died a quarter shallower, at 110,375. That is the
-// two-operator-layer number: its test program had one more layer of expression
-// around the call than the thin one it was compared against. A thin frame with
-// two layers and a fat frame with two layers both survive 110,375.
+// Widening the frame changes nothing whatever: with the nesting held at one
+// layer, one parameter or eight, no locals or sixteen, five parameters and
+// three locals together, the cliff stays at 147,815 -- equal to the digit, not
+// merely close. An earlier round of this work read the same evidence the other
+// way, reporting that a fat frame of five parameters and three locals died a
+// quarter shallower. That was the two-operator-layer number: its test program
+// had one more layer of expression around the call than the thin one it was
+// compared against.
 //
 // So no fixed limit is uniformly below the crash, because nesting has no upper
 // bound. What 10,000 buys is a bounded envelope: a runaway call still gets the
-// diagnostic while it sits inside up to 39 arithmetic layers, which survives
-// 10,165 calls, or 25 of the most expensive layer measured, `[x][0]`, which
-// survives 10,271. The deepest call site written anywhere in this
-// repository is nested 21 expressions deep. Past that envelope the fatal
+// diagnostic while it sits inside up to 38 arithmetic layers, which survives
+// 10,174 calls, or 24 of the most expensive layer measured, `[x][0]`, which
+// survives 10,357. The deepest call site written anywhere in this
+// repository is nested 14 expressions deep. Past that envelope the fatal
 // overflow is back. The limit is a diagnostic for the shapes people write, not
 // a guarantee for every shape, and it never makes anything worse than it was.
 const DefaultMaxCallDepth = 10000

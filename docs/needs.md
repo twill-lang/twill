@@ -763,51 +763,56 @@ catches: past the limit there is nothing left to report with.
 
 ### What real programs need
 
-Two rounds of measurement, both with the interpreter instrumented to record the
-peak value of `callDepth`, one file per process, on macOS arm64 with the 1 GB
-default goroutine stack. The in-repository rows were re-taken against this tree,
-which is this branch merged with `main` at 1.10.0. The satellite rows and the
-`std/` modules row are from the earlier round, taken 2026-09-04 against `main` at
-`fcb32ae`, and were not re-run here.
+Every number in this section was measured on this tree, which is this branch
+merged with `main` at 1.11.0, on macOS arm64 with the 1 GB default goroutine
+stack. The probe is the limit itself rather than an instrumented build: with
+`TWILL_MAX_CALL_DEPTH` set to L the evaluator refuses on entering call L+1, so
+the smallest L at which a run completes is exactly that run's peak call depth.
+That is worth preferring over the instrumented build the earlier rounds used,
+because anyone can repeat it with the shipped binary.
 
-Checked by the self-hosted compiler (`src/main.tw check F` on the bootstrap):
+Run on the bootstrap, `twill run F`, over every file in the repository that is a
+program rather than a module. All 66 were bisected:
 
-| corpus | files | deepest |
-| --- | ---: | ---: |
-| `src/` | 30 | **217** (`src/parse.tw`) |
-| the nine satellites | 167 | 102 (`bobbin/src/report.tw`) |
-| `std/`, including `std/tests/` | 48 | 77 (`std/stats.tw`) |
-| `examples/` | 26 | 54 (`examples/patterns.tw`) |
-| `testdata/` | 354 | 47 (`testdata/cases/interp_cumulative_62c7b46b326a4d32.tw`) |
+| corpus | files | deepest | median |
+| --- | ---: | ---: | ---: |
+| `examples/`, `std/tests/`, `testdata/examples/` | 66 | **14** (`std/tests/json_test.tw`) | 3 |
 
-Run on the bootstrap:
+The next four are 10 (`std/tests/llama_test.tw`), 8
+(`std/tests/transformer_test.tw`), 8 (`examples/llama.tw`) and 7
+(`std/tests/stats_test.tw`). Nothing that runs as a program is within three
+orders of magnitude of 10,000.
 
-| corpus | files | deepest |
-| --- | ---: | ---: |
-| the nine satellites | 167 attempted, 150 ran | 18 (`selvedge/tests/registry_test.tw`) |
-| `std/tests/`, including its two harnesses | 19 | 14 (`std/tests/json_test.tw`) |
-| `examples/` | 26 | 8 (`examples/llama.tw`) |
-| `std/` modules | 29 | 1 |
-| `testdata/` | 354 | 4 (`testdata/examples/attention.tw`) |
+The deeper recursion in this repository is the self-hosted compiler itself,
+because a recursive-descent checker's depth follows its input.
+`twill run src/main.tw check F`, one probe per file:
 
-The 17 satellite files that did not run are all `heddle`'s: they mix imports
-resolved against the repository root with imports resolved against the file's
-own directory, so no single working directory loads them outside `heddle`'s own
-runner. All 167 were checked.
+| file | deepest |
+| --- | ---: |
+| `src/fmt.tw` | **120** |
+| `src/lex.tw` | 51 |
+| `src/bytes.tw` | 44 |
+| `src/buf.tw` | 41 |
+| `src/ast.tw` | 37 |
+| `src/builtins.tw` | 29 |
 
-One row moved on re-measurement. The earlier round put the deepest `std/tests/`
-run at 10, `llama_test.tw`; on this tree it is 14, `std/tests/json_test.tw`.
-Several of those tests print their own results before the process ends, so a
-reader that takes the first line of output rather than the peak line misses
-them.
+That is a subset of `src/` and is labelled as one: a single check of a
+thousand-line file costs over a minute, and the three largest, `src/eval.tw`,
+`src/tensor.tw` and `src/check.tw`, were not bisected here. An earlier round
+reported 217 for `src/parse.tw` on a different tree.
 
-The deepest anything legitimate reaches is 217, and it is the self-hosted
-compiler rather than a user program; the deepest thing that runs as a program is
-18. The compiler's depth follows the *nesting* of the file it is checking rather
-than its length: on this tree a synthetic file of 800 flat top-level `let`
-bindings peaks at 14, while a single `print` of a 120-term `+` chain reaches 245.
-So 217 is the deepest thing in this corpus, not a ceiling on what a checkable
-file can cost.
+The figure follows the *nesting* of the file being checked rather than its
+length, which is why no file's number is a ceiling: measured the same way, a
+synthetic file of 800 flat top-level `let` bindings peaks at 18, while a single
+`print` of a 120-term `+` chain reaches 247. The margin against 10,000 is
+therefore two orders of magnitude for real input and not a guarantee against
+constructed input, which is the same shape of answer as the section below.
+
+An earlier round of this entry also carried rows for the nine satellite
+repositories and for `testdata/` at large. Those cannot be re-taken from inside
+this repository, and a number that cannot be re-derived is worse than no number,
+so they are removed rather than carried with a footnote. Every row above was
+taken in one session on this tree.
 
 ### Where the stack runs out, which is not one number
 
@@ -815,11 +820,11 @@ This entry has now said two different things about a fat frame, and both were
 wrong. The first said that five parameters, three locals and a nested expression
 crashed at the same depth as a thin frame, because "what fills the stack is the
 interpreter's own Go frames rather than anything the twill frame holds". The
-second said the fat frame crashed a quarter shallower, at 110,375, so what the
-frame holds is not free after all. Neither is what happens. What was varying
-between the two programs, unnoticed, was the *expression around the recursive
-call*: the fat one had one more layer of it, and 110,375 is exactly the
-two-layer number for a thin frame as well.
+second said the fat frame crashed a quarter shallower, so what the frame holds
+is not free after all. Neither is what happens. What was varying between the two
+programs, unnoticed, was the *expression around the recursive call*: the fat one
+had one more layer of it, and its number is exactly the two-layer number for a
+thin frame as well.
 
 Parameters and locals are free, because they live in a heap environment. What is
 not free is how deeply the recursive call sits inside the expression around it,
@@ -829,81 +834,112 @@ holds open across the call.
 Re-measured one variable at a time, bisecting where the process takes a fatal Go
 stack overflow, with `TWILL_MAX_CALL_DEPTH` raised out of the way. Depths are
 nested twill calls, which is what `callDepth` counts and what the limit is
-compared against, so `f(n)` reaches n+1 of them:
+compared against, so `f(n)` reaches n+1 of them. Every number below was taken on
+this tree, which is this branch merged with `main` at 1.11.0, on macOS arm64
+with Go's 1 GB default goroutine stack. They moved by one to two percent against
+the round before, because `main` grew the evaluator underneath them; that is the
+reason to re-take them rather than carry them forward:
 
 | where the recursive call sits | deepest that returns | dies at |
 | --- | ---: | ---: |
-| `return f(n - 1)`, bare | 236,295 | 236,296 |
-| `f(n - 1) + 1` | 150,466 | 150,467 |
-| two layers | 110,375 | 110,376 |
-| three layers | 87,153 | 87,154 |
-| five layers | 61,342 | 61,343 |
-| ten layers | 35,246 | 35,247 |
-| twenty layers | 19,044 | 19,045 |
-| thirty layers | 13,046 | 13,047 |
-| forty layers | **9,922** | **9,923** |
-| sixty layers | 6,709 | 6,710 |
-| a hundred layers | 4,072 | 4,073 |
-| three hundred layers | 1,373 | 1,374 |
+| `return f(n - 1)`, bare | 233,013 | 233,014 |
+| `f(n - 1) + 1` | 147,815 | 147,816 |
+| two layers | 108,239 | 108,240 |
+| three layers | 85,379 | 85,380 |
+| five layers | 60,025 | 60,026 |
+| ten layers | 34,450 | 34,451 |
+| twenty layers | 18,600 | 18,601 |
+| thirty layers | 12,739 | 12,740 |
+| thirty-nine layers | **9,925** | **9,926** |
+| sixty layers | 6,549 | 6,550 |
+| a hundred layers | 3,974 | 3,975 |
+| three hundred layers | 1,340 | 1,341 |
 
-What the frame holds does not appear in that table at all. One parameter, three,
-five or eight: 150,466 every time. No locals, three, eight or sixteen: 150,466
-every time. Five parameters and three locals with one operator layer: 150,466.
-Five parameters and three locals with two: 110,375, the same as a thin frame
-with two, which is where the second version of this entry went wrong.
+What the frame holds does not appear in that table at all. Holding the nesting
+at one layer and varying only the frame: one parameter, three, five or eight,
+147,815 every time; no locals, three, eight or sixteen, 147,815 every time; five
+parameters and three locals together, 147,815. Not close to each other, equal to
+the digit, and equal again on a repeat run. The frame is free because it lives
+in a heap environment, and the earlier round's fat-frame number was a
+two-operator-layer number wearing a fat frame's label.
 
-Layers are not all priced alike either. Ten layers of each, against 236,295 with
+The reciprocal is linear in the layer count: `1/depth = 4.29e-6 + 2.47e-6 * k`
+for k layers, fitted on the first four rows. That fit is the reason to believe
+the mechanism rather than just the table, so it was used as a prediction: the
+hundred- and three-hundred-layer rows were computed from it, at 3,973 and 1,340,
+before being measured, and came back 3,974 and 1,340.
+
+Layers are not all priced alike either. Ten layers of each, against 233,013 with
 none:
 
 | ten layers of | deepest that returns |
 | --- | ---: |
-| `(x)` | 236,295, which is to say free; the parser keeps no node for it |
-| `abs(x)` | 38,043 |
-| `x + 1` | 35,246 |
-| `if n > 0 { x } else { 0 }` | 29,642 |
-| `[x][0]` | 24,105 |
+| `(x)` | 233,013, which is to say free; the parser keeps no node for it |
+| `abs(x)` | 37,118 |
+| `x + 1` | 34,450 |
+| `if n > 0 { x } else { 0 }` | 29,077 |
+| `[x][0]` | 23,399 |
 
 ### What 10,000 is therefore worth
 
-The reciprocal of the depth is linear in the number of layers, so the cliff
-falls away without bound as the expression gets deeper: three hundred layers of
-arithmetic survive 1,373 calls. **No fixed call limit is below the crash for
-every program**, and 10,000 is not an exception.
+Because the reciprocal is linear, the cliff falls away without bound as the
+expression gets deeper: three hundred layers of arithmetic survive 1,340 calls.
+**No fixed call limit is below the crash for every program**, and 10,000 is not
+an exception; no other number would be either.
 
-What it does buy was bisected. A runaway call still gets the diagnostic at 39
-arithmetic layers, which survives 10,165, and stops getting it at 40, which
-survives 9,922 and so never reaches the counter's 10,000. For the most expensive
-layer measured, `[x][0]`, the boundary is 25 layers, surviving 10,271, against
-26, surviving 9,893. Against that: the deepest call site written anywhere in this
-repository is nested 21 expressions deep, `src/check.tw:4620`, out of 19,362
-call sites in the 499 `.tw` files it holds.
+What it does buy was bisected. A runaway call still gets the diagnostic at 38
+arithmetic layers, which survives 10,174, and stops getting it at 39, which
+survives 9,925 and so never reaches the counter's 10,000. For the most expensive
+layer measured, `[x][0]`, the boundary is 24 layers, surviving 10,357, against
+25, surviving 9,960.
 
-The fix, for anyone who has one of these, is a `let`: bind the call and use the
-name afterwards, and the frames the interpreter holds open across the call go
-back to the bare-call count. Measured with the same forty layers applied to a
-bound name instead of to the call itself, the depth goes back out to 236,274.
+Against that, what is actually written here. Walking the AST of every `.tw` file
+in the repository and counting, for each call site, the enclosing expression
+nodes between it and its statement -- which is the quantity the table above
+varies, and it excludes parentheses, because the parser keeps no node for them,
+and restarts inside a lambda body, because that is a frame of its own -- gives
+20,136 call sites across 517 files, of which the deepest is nested **14**, a
+long `+` chain at `src/cli/diagnostic.tw:85`. 9,213 of them are nested zero deep
+and only 28 are nested past 8. The tool that counts this was checked against
+programs of known shape first: it reports 39 for the 39-layer runaway above and
+38 for the 38-layer one, and 1 for a call wrapped in four redundant pairs of
+parentheses.
+
+An earlier round of this entry put that figure at 21, at `src/check.tw:4620`.
+That line is `return TUnknown`, which is not a call at all, and the figure is
+withdrawn.
+
+The fix, for anyone who does have a deep one, is a `let`: bind the call and use
+the name afterwards, and the frames the interpreter holds open across the call
+go back to the bare-call count. Measured with 39 layers applied to a bound name
+instead of to the call itself, the depth goes back out to 232,993, against
+233,013 for a bare call.
 
 So the limit is a diagnostic for the shapes people write and not a guarantee for
-every shape they could write. A runaway recursion whose call sits more than
-about twenty-five expressions deep still dies the way it did before the limit
-existed: checked, at forty layers, on the shipped binary at the default limit,
-which exits 2 with 280 lines of Go runtime internals. That is no worse than the
-state before this work, and it is what the language guide now says out loud
-rather than leaving to be discovered.
+every shape they could write. A runaway recursion whose call sits deeper than
+that envelope still dies the way it did before the limit existed: checked end to
+end, at 39 layers, on the shipped binary at the default limit, which prints
+nothing on stdout and exits 2 with 280 lines of Go runtime internals. At 38
+layers, and at one, and at none, the same runaway is refused with the ordinary
+error and exits 1. That is no worse than the state before this work, and it is
+what the language guide now says out loud rather than leaving to be discovered.
 
 Two ways to close what is left, neither taken here. The counter could be charged
 for the call site's static nesting instead of one per call; both engines can
 compute that identically from the AST, so the two diagnostics would stay equal,
 but it changes what the number in the message means and wants its own
 measurement. Or the limit could come down, since the envelope scales inversely
-with it, weighed against a deepest measured legitimate depth of 217.
+with it, weighed against the deepest legitimate depth measured above.
 
 ### Two counters, one stack
 
 When `src/eval.tw` runs on the bootstrap, the peak outer depth for a program
-that nests `k` calls is `8k + 9` exactly, measured at k = 4, 12, 52, 102 and 202. A host left at 10,000 therefore stops the inner
-program at 1,248 of its own calls -- checked: 1,248 runs, 1,249 is refused --
-and reports against a function inside `src/eval.tw`.
+that nests `k` calls is `8k + 9` exactly. Re-measured on this tree at
+k = 4, 12, 52, 102 and 202, by bisecting the smallest host limit at which each
+program completes: 41, 105, 425, 825, 1625. Exact at all five. A host left at
+10,000 therefore stops the inner program at 1,248 of its own calls -- checked:
+1,248 runs, 1,249 is refused -- and reports against a function inside
+`src/eval.tw`.
 
 No single shared constant can fix that. Reaching L inside costs more than 8L
 outside, which is more than L for every L, so the host has to be given the

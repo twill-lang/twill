@@ -2,6 +2,91 @@
 
 ## [Unreleased]
 
+### Added
+
+- **A recursion limit, so a missing base case is a twill error and not a Go
+  crash.** Both evaluators refuse a call nested more than 10,000 deep:
+
+  ```
+  bad.tw:2: runtime error: call depth limit reached: "fact" is 10000 calls
+  deep, which is as deep as twill goes. A recursion this deep is almost always
+  a missing base case; if it is not, rewrite it as a loop
+    2 |   n * fact(n - 1)
+  ```
+
+  What it replaced was 424 lines of Go runtime traceback on stderr, nothing on
+  stdout, and exit code 2. Not one of those 424 lines named the user's function
+  or the line the recursion was on, and 2 is the status `twill` uses for "you
+  invoked it wrong" (`twill run` with no file exits 2), so the crash was not
+  even distinguishable by status from a typo on the command line. A Go stack
+  overflow is a *fatal* error: no recover catches it, so the only way to get a
+  diagnostic at all is to refuse before the stack runs out. `fn fact(n) = n *
+  fact(n - 1)` with the base case forgotten is the most likely first mistake
+  anyone makes in a new language, and it was the most likely first thing they
+  saw. It now exits 1, like any other program that failed.
+
+  10,000 is far above what working code needs, measured rather than assumed:
+  across all 66 `.tw` files in this repository that run as programs the deepest
+  recursion any of them reaches is 14 nested calls, median 3, and the deeper
+  recursion here is the self-hosted compiler, which peaks at 120 on the `src/`
+  files measured.
+
+  **The limit is a diagnostic, not a guarantee, and that is worth reading before
+  relying on it.** What decides where the host's stack runs out is not what the
+  twill frame holds, which costs nothing measurable, but how deeply the
+  recursive call sits inside the expression around it: every enclosing operator
+  is one more evaluator frame held open across the call. On this machine a
+  runaway survives 233,013 nested calls when the call is bare, 147,815 with one
+  `+ 1` around it, 12,739 with thirty layers and 1,340 with three hundred.
+  Because expression nesting has no upper bound, **no fixed call limit is below
+  the crash for every program**, and 10,000 is not an exception. What it does
+  cover was bisected: a runaway nested inside up to 38 layers of arithmetic,
+  which survives 10,174 calls, or 24 layers of `[x][0]`, the most expensive
+  layer measured, which survives 10,357. Deeper than that and the fatal overflow
+  is back, which is no worse than before this change but is not what the limit
+  promises. The remedy, for anyone who has such a shape, is to bind the call to
+  a `let` and use the name: the same 39 layers then reach 232,993 again.
+  `docs/needs.md` NEEDS-30 has the tables and the two ways to close the gap that
+  were not taken here.
+
+- **`TWILL_MAX_CALL_DEPTH`, so the two engines can refuse a program with the
+  same words.** Running the self-hosted evaluator on the bootstrap puts two
+  counters over one stack, and the outer depth is `8*inner + 9` exactly, so the
+  host stops first and names a function inside `src/eval.tw`. No shared constant
+  fixes that: reaching L inside costs 8L+9 outside, which is more than L for
+  every L. The host has to be handed the larger number.
+
+  ```
+  TWILL_MAX_CALL_DEPTH=100000 twill run src/main.tw run prog.tw
+  ```
+
+  prints for `prog.tw` exactly the bytes `twill run prog.tw` prints. 100,000 is
+  above the 80,013 the self-hosted evaluator needs, bisected on the shipped CLI
+  rather than derived, and not so far above it that the host runs out of stack
+  on the way.
+
+### Changed
+
+- **A fault inside the interpreter is reported as a twill error, not a Go
+  traceback.** `argmax(zeros(0))` used to print a goroutine dump; it now prints
+  the line the program had reached and says whose bug it is:
+
+  ```
+  bad.tw:1: runtime error: internal error: index out of range [0] with length 0.
+  This is a bug in twill, not in the program that hit it: please report it, with
+  this file, at https://github.com/twill-lang/twill/issues
+    1 | print(argmax(zeros(0)))
+  ```
+
+  A top-level `break` under `--no-check` was the same thing in 15 lines
+  (`panic: (interp.breakSignal)`) and now says ``  `break` outside a loop``.
+  Both used to exit 2, twill's code for a bad invocation; both now exit 1.
+
+  The person at the keyboard is running a twill program and cannot act on a Go
+  stack. This is the second half of the recursion limit and not a replacement
+  for it: the one fault most likely to be hit, a stack overflow, is the one
+  fault a recover cannot catch.
+
 ## [1.11.0] - 2026-09-05
 
 ### Added

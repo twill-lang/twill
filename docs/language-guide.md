@@ -662,31 +662,38 @@ missing base case; if it is not, rewrite it as a loop
 The limit is there because the alternative is not a deeper recursion, it is a
 crash: the evaluator runs on the host's stack, and running out of it takes the
 whole process down with nothing an error handler can catch. 10,000 is far above
-anything a working program needs. Across every `.tw` file in this repository the
-deepest recursion measured is the self-hosted compiler checking `src/parse.tw`,
-at 217 nested calls, and nothing that runs as a program gets past 14; an earlier
-round measured the nine satellite projects too and found nothing past 18. So a
-program that reaches 10,000 has almost certainly lost its base case. Recursion is
-not the language's loop; a `while` costs no stack at all.
+anything a working program needs. Measured across every `.tw` file in this
+repository that runs as a program, all 66 of them, the deepest recursion any of
+them reaches is 14 nested calls, and the median is 3. The deeper recursion here
+is the compiler itself, since a recursive-descent checker follows the nesting of
+what it reads, and on the `src/` files measured that peaks at 120. So a program
+that reaches 10,000 has almost certainly lost its base case. Recursion is not
+the language's loop; a `while` costs no stack at all.
 
 The limit is a diagnostic for the recursions people write, and not a guarantee
 for every one they could write. What decides how much host stack a twill frame
-costs is not what the frame holds, which costs nothing at all, but how deeply
-the recursive call sits inside the expression around it: every enclosing
+costs is not what the frame holds, which costs nothing measurable, but how
+deeply the recursive call sits inside the expression around it: every enclosing
 operator is one more frame the evaluator has to hold open across the call. A
-bare `return f(n - 1)` survives 236,295 nested calls before the host stack gives
-out; `f(n - 1) + 1` survives 150,466; thirty layers of arithmetic survive 13,046,
-and three hundred survive 1,373. Because nothing bounds how deep an expression
+bare `return f(n - 1)` survives 233,013 nested calls before the host stack gives
+out; `f(n - 1) + 1` survives 147,815; thirty layers of arithmetic survive 12,739,
+and three hundred survive 1,340. Because nothing bounds how deep an expression
 may be, no fixed limit can be below the crash for every program. What 10,000
-covers is a runaway call nested inside up to 39 layers of arithmetic, which
-survives 10,165 calls, or 25 layers of `[x][0]`, the most expensive layer
-measured, which survives 10,271. The deepest call site written anywhere in this
-repository is nested 21 deep. Write a recursion whose call sits deeper inside its
+covers is a runaway call nested inside up to 38 layers of arithmetic, which
+survives 10,174 calls, or 24 layers of `[x][0]`, the most expensive layer
+measured, which survives 10,357. The deepest call site written anywhere in this
+repository is nested 14 deep. Write a recursion whose call sits deeper inside its
 expression than that envelope, and lose its base case, and the process dies on
 the host's stack the way it did before the limit existed. Binding the call to a
 `let` and using the name afterwards puts it back in reach of the diagnostic:
-with those forty layers applied to a bound name rather than to the call, the
-depth goes back out to 236,274.
+with 39 layers applied to a bound name rather than to the call, the depth goes
+back out to 232,993.
+
+Those numbers are this machine's, measured on macOS arm64 with Go's 1 GB
+goroutine stack. Another host will put the cliff somewhere else. What does not
+move is the shape of it: the reciprocal of the depth is linear in the number of
+enclosing layers, so there is always a nesting deep enough to get under any
+fixed limit.
 
 `TWILL_MAX_CALL_DEPTH` overrides the number for one run. There is exactly one
 reason to reach for it, and it is not "my program needs more stack": an

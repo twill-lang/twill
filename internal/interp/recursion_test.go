@@ -19,7 +19,7 @@ import (
 // limit lifted, via TWILL_MAX_CALL_DEPTH=100000000, prints nothing on stdout
 // and 424 lines on stderr, the same 424 on every repeat. They are `fatal error:
 // stack overflow` and a runtime traceback: 96 of the lines name the
-// interpreter's own Go frames, and one reads `...1504585 frames elided...`. The
+// interpreter's own Go frames, and one reads `...1478067 frames elided...`. The
 // process exits 2, so it is not statusless -- but 2 is the status the CLI uses
 // for a usage error, so the crash was not distinguishable by status from a typo
 // on the command line, and no line of it names the user's function or the line
@@ -213,10 +213,11 @@ func TestInterpreterPanicBecomesATwillError(t *testing.T) {
 // two counters over one Go stack, and the outer depth grows by 8 for each of
 // the inner engine's frames (measured; see Interp.MaxCallDepth). The host limit
 // at which the inner engine gets to refuse first was found by bisecting the
-// shipped CLI, and re-bisected against this tree after the self-hosted runtime
-// port landed: 80,012 is not enough and 80,013 is. Any host below that refuses
-// first and names a function inside src/eval.tw. 100,000 clears 80,013 and
-// stays under the 150,467 where the bootstrap's stack actually gives out.
+// shipped CLI, and re-bisected on this tree, which carries the self-hosted
+// filesystem/clock/process port: 80,012 is not enough and 80,013 is. Any host
+// below that refuses first, and at 80,012 it names push_text inside
+// src/eval.tw. 100,000 clears 80,013 and stays under the 147,816 where the
+// bootstrap's own stack gives out for this shape of program.
 const selfHostedHostDepth = 100000
 
 // recursionCases are the programs the two engines are held to. Each is a
