@@ -5,6 +5,7 @@ package parser
 import (
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/twill-lang/twill/internal/ast"
 	"github.com/twill-lang/twill/internal/lexer"
@@ -26,6 +27,19 @@ var precedence = map[string]int{
 }
 
 var rightAssoc = map[string]bool{"^": true}
+
+// A tuple holds between two and eight values. Two because one is the value
+// itself and the comma would be decoration; eight because past that the
+// positions stop being readable and the thing wanted a struct, which is the
+// same judgement docs/roadmap.md entry 1 makes about naming them.
+const maxTupleArity = 8
+
+// The two refusals a tuple can earn, spelled once so the expression form and
+// the type form say the same thing. Both implementations print these bytes.
+const (
+	oneElementTupleMsg = "a tuple holds at least two values: (x,) is not a one-element tuple, and (x) is x in parentheses"
+	tupleArityMsg      = "a tuple holds at most %d values, but this one has %d; a value with that many parts wants a struct, whose fields have names"
+)
 
 // bitwiseWord is the set of operators spelled as a word rather than a symbol.
 // Each is a keyword, so each is also callable, `xor(a, b)`, and parsePrimary
@@ -232,6 +246,15 @@ func (p *parser) parseLet() (ast.Stmt, error) {
 	kw := p.next() // 'let' or 'const'
 	line := kw.Line
 	isConst := kw.Value == "const"
+	// `let (lo, hi) = span(xs)` destructures a tuple. The names are positional
+	// and `_` drops the one it stands for; there is no annotation, because the
+	// thing being annotated would be the tuple and the binding is the parts.
+	if p.check("(") {
+		if isConst {
+			return nil, p.errf(kw, "a destructuring binding is written with let, not const: const declares a guarantee about a single name, and nothing yet asks to declare several at once. The name a destructuring let binds is still refused when a const in the same scope already binds it.")
+		}
+		return p.parseLetTuple(line)
+	}
 	name, err := p.expectIdent()
 	if err != nil {
 		return nil, err
@@ -244,6 +267,11 @@ func (p *parser) parseLet() (ast.Stmt, error) {
 	if p.match(":") {
 		if p.atFnType() {
 			typeName, err = p.parseFnType()
+			if err != nil {
+				return nil, err
+			}
+		} else if p.check("(") {
+			typeName, err = p.parseTupleType()
 			if err != nil {
 				return nil, err
 			}
@@ -269,6 +297,44 @@ func (p *parser) parseLet() (ast.Stmt, error) {
 		return nil, err
 	}
 	return &ast.Let{Name: name, Unit: unit, TypeName: typeName, Value: v, Const: isConst, Line: line}, nil
+}
+
+// parseLetTuple reads the `(a, b) = value` half of a destructuring binding.
+// The cursor is on the `(`.
+func (p *parser) parseLetTuple(line int) (ast.Stmt, error) {
+	p.next() // '('
+	var names []string
+	for {
+		if p.check(")") {
+			return nil, p.errf(p.peek(0), oneElementTupleMsg)
+		}
+		t := p.peek(0)
+		if t.Kind != lexer.IDENT {
+			return nil, p.errf(t, "expected a name in a destructuring let but found %q", tokenText(t))
+		}
+		p.next()
+		names = append(names, t.Value)
+		if !p.match(",") {
+			break
+		}
+	}
+	if _, err := p.expect(")"); err != nil {
+		return nil, err
+	}
+	if len(names) < 2 {
+		return nil, p.errf(p.peek(0), oneElementTupleMsg)
+	}
+	if len(names) > maxTupleArity {
+		return nil, p.errf(p.peek(0), tupleArityMsg, maxTupleArity, len(names))
+	}
+	if _, err := p.expect("="); err != nil {
+		return nil, err
+	}
+	v, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+	return &ast.LetTuple{Names: names, Value: v, Line: line}, nil
 }
 
 func (p *parser) parseFnDecl() (ast.Stmt, error) {
@@ -587,17 +653,44 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 	}
 
 	if p.check("(") {
-		p.next()
+		open := p.next()
 		p.groupDepth++
 		inner, err := p.parseExpr()
-		p.groupDepth--
 		if err != nil {
+			p.groupDepth--
 			return nil, err
 		}
+		// The comma is what decides. Without one this is grouping and has been
+		// since the first parser; with one it is a tuple, and the elements after
+		// it are ordinary expressions.
+		if !p.check(",") {
+			p.groupDepth--
+			if _, err := p.expect(")"); err != nil {
+				return nil, err
+			}
+			return inner, nil
+		}
+		elements := []ast.Expr{inner}
+		for p.match(",") {
+			if p.check(")") {
+				p.groupDepth--
+				return nil, p.errf(p.peek(0), oneElementTupleMsg)
+			}
+			e, err := p.parseExpr()
+			if err != nil {
+				p.groupDepth--
+				return nil, err
+			}
+			elements = append(elements, e)
+		}
+		p.groupDepth--
 		if _, err := p.expect(")"); err != nil {
 			return nil, err
 		}
-		return inner, nil
+		if len(elements) > maxTupleArity {
+			return nil, p.errf(open, tupleArityMsg, maxTupleArity, len(elements))
+		}
+		return &ast.TupleLit{Elements: elements, Line: open.Line}, nil
 	}
 	if p.check("[") {
 		return p.parseTensorOrList()
@@ -827,6 +920,11 @@ func (p *parser) parseSignature() ([]ast.Param, *ast.ShapeAnno, *ast.UnitAnno, s
 			if err != nil {
 				return nil, nil, nil, "", err
 			}
+		} else if p.check("(") {
+			retType, err = p.parseTupleType()
+			if err != nil {
+				return nil, nil, nil, "", err
+			}
 		} else {
 			retUnit, err = p.parseUnitExpr()
 			if err != nil {
@@ -914,7 +1012,42 @@ func (p *parser) parseTypeExpr() (string, error) {
 	if p.atFnType() {
 		return p.parseFnType()
 	}
+	if p.check("(") {
+		return p.parseTupleType()
+	}
 	return p.parseTypeRef()
+}
+
+// parseTupleType reads `(T, U, ...)` in type position and returns it as text,
+// the way every other systems-mode type annotation is carried. The checker
+// parses the text back into a type; the formatter prints it as written. The
+// cursor is on the `(`.
+func (p *parser) parseTupleType() (string, error) {
+	open := p.next() // '('
+	var parts []string
+	for {
+		if p.check(")") {
+			return "", p.errf(p.peek(0), oneElementTupleMsg)
+		}
+		t, err := p.parseTypeExpr()
+		if err != nil {
+			return "", err
+		}
+		parts = append(parts, t)
+		if !p.match(",") {
+			break
+		}
+	}
+	if _, err := p.expect(")"); err != nil {
+		return "", err
+	}
+	if len(parts) < 2 {
+		return "", p.errf(open, oneElementTupleMsg)
+	}
+	if len(parts) > maxTupleArity {
+		return "", p.errf(open, tupleArityMsg, maxTupleArity, len(parts))
+	}
+	return "(" + strings.Join(parts, ", ") + ")", nil
 }
 
 // parseFnType parses a function-type annotation `fn(T, ...) -> R`. Each argument
@@ -959,14 +1092,19 @@ func (p *parser) parseFnType() (string, error) {
 }
 
 // parseTypeArgs reads `[T, U, ...]` after a type name, each T a full type
-// reference, and returns the bracketed text, e.g. "[Str, Arr[I64]]". It assumes
-// the current token is "[".
+// expression, and returns the bracketed text, e.g. "[Str, Arr[I64]]". It
+// assumes the current token is "[".
+//
+// A type *expression*, not a type *reference*, which is the whole of the fix
+// recorded in the changelog: reading a reference here made `Arr[fn(I64) -> I64]`
+// a syntax error to this parser and clean to `src/parse.tw`, which read an
+// expression. Putting a tuple into type-argument position is what found it.
 func (p *parser) parseTypeArgs() (string, error) {
 	p.next() // '['
 	out := "["
 	first := true
 	for {
-		a, err := p.parseTypeRef()
+		a, err := p.parseTypeExpr()
 		if err != nil {
 			return "", err
 		}
@@ -1041,6 +1179,11 @@ func (p *parser) parseParam() (ast.Param, error) {
 			// A function-typed parameter, e.g. `step: fn(Tree, Tensor) -> Tree`.
 			// Advisory, kept as text like any other systems-mode type name.
 			param.TypeName, err = p.parseFnType()
+			if err != nil {
+				return ast.Param{}, err
+			}
+		} else if p.check("(") {
+			param.TypeName, err = p.parseTupleType()
 			if err != nil {
 				return ast.Param{}, err
 			}

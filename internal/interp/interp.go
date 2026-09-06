@@ -381,6 +381,25 @@ func (ip *Interp) execStmt(s ast.Stmt, env *value.Env) value.Value {
 		v = ip.coerceScalarAnno(st.TypeName, st.Unit, v, st.Line)
 		env.Define(st.Name, v)
 		return value.TheUnit
+	case *ast.LetTuple:
+		v := ip.tracedStmt(func() value.Value { return ip.evalExpr(st.Value, env) })
+		tup, ok := v.(*value.Tuple)
+		if !ok {
+			ip.panicf(st.Line, "a destructuring let needs a tuple of %d values on the right, but the value is %s",
+				len(st.Names), value.Format(v))
+		} else if len(tup.Items) != len(st.Names) {
+			ip.panicf(st.Line, "a destructuring let of %d names needs a tuple of %d values, but the value has %d",
+				len(st.Names), len(st.Names), len(tup.Items))
+		}
+		for i, name := range st.Names {
+			// `_` stands for a position the program does not want, and binds
+			// nothing, the way it does in a pattern.
+			if name == "_" {
+				continue
+			}
+			env.Define(name, tup.Items[i])
+		}
+		return value.TheUnit
 	case *ast.FnDecl:
 		env.Define(st.Name, &value.Closure{
 			Params:     paramNames(st.Params),
@@ -802,6 +821,12 @@ func (ip *Interp) evalExpr(e ast.Expr, env *value.Env) value.Value {
 			ip.panicf(ex.Line, "%s", err.Error())
 		}
 		return t
+	case *ast.TupleLit:
+		items := make([]value.Value, len(ex.Elements))
+		for i, e := range ex.Elements {
+			items[i] = ip.evalExpr(e, env)
+		}
+		return &value.Tuple{Items: items}
 	case *ast.ListLit:
 		items := make([]value.Value, len(ex.Elements))
 		for i, el := range ex.Elements {
@@ -1274,6 +1299,20 @@ func deepEqual(l, r value.Value) bool {
 		return ok
 	case *value.List:
 		rv, ok := r.(*value.List)
+		if !ok || len(lv.Items) != len(rv.Items) {
+			return false
+		}
+		for i := range lv.Items {
+			if !deepEqual(lv.Items[i], rv.Items[i]) {
+				return false
+			}
+		}
+		return true
+	case *value.Tuple:
+		// Structural, and by arity first: a 2-tuple and a 3-tuple are never
+		// equal, and a tuple is never equal to a list that happens to hold the
+		// same values, because they are not the same kind of thing.
+		rv, ok := r.(*value.Tuple)
 		if !ok || len(lv.Items) != len(rv.Items) {
 			return false
 		}
