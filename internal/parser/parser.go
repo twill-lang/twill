@@ -251,7 +251,7 @@ func (p *parser) parseLet() (ast.Stmt, error) {
 	// thing being annotated would be the tuple and the binding is the parts.
 	if p.check("(") {
 		if isConst {
-			return nil, p.errf(kw, "a destructuring binding is written with let, not const: const binds one name, and the rule that a const name is bound only once is checked over single names")
+			return nil, p.errf(kw, "a destructuring binding is written with let, not const: const declares a guarantee about a single name, and nothing yet asks to declare several at once. The name a destructuring let binds is still refused when a const in the same scope already binds it.")
 		}
 		return p.parseLetTuple(line)
 	}
@@ -1092,8 +1092,13 @@ func (p *parser) parseFnType() (string, error) {
 }
 
 // parseTypeArgs reads `[T, U, ...]` after a type name, each T a full type
-// reference, and returns the bracketed text, e.g. "[Str, Arr[I64]]". It assumes
-// the current token is "[".
+// expression, and returns the bracketed text, e.g. "[Str, Arr[I64]]". It
+// assumes the current token is "[".
+//
+// A type *expression*, not a type *reference*, which is the whole of the fix
+// recorded in the changelog: reading a reference here made `Arr[fn(I64) -> I64]`
+// a syntax error to this parser and clean to `src/parse.tw`, which read an
+// expression. Putting a tuple into type-argument position is what found it.
 func (p *parser) parseTypeArgs() (string, error) {
 	p.next() // '['
 	out := "["

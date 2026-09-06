@@ -107,12 +107,19 @@ func TestDestructuringRefusesTheWrongValue(t *testing.T) {
 
 // The three refusals the syntax makes, each with the wording that says what to
 // write instead.
+//
+// The `const` one is pinned to more than its first clause on purpose. Its
+// original wording gave the reason as the const-rebinding rule being "checked
+// over single names", and that reason stopped being true the moment a
+// destructuring `let` was counted by that rule. A refusal that explains itself
+// with something the checker no longer does is worse than one that does not
+// explain itself, so the second half is asserted here.
 func TestTupleSyntaxRefusals(t *testing.T) {
 	cases := map[string]string{
 		"let x = (1.0,)":       "a tuple holds at least two values",
 		"let (a) = (1.0, 2.0)": "a tuple holds at least two values",
 		"let x = (1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0)": "a tuple holds at most 8 values",
-		"const (a, b) = (1.0, 2.0)":                             "written with let, not const",
+		"const (a, b) = (1.0, 2.0)":                             "not const: const declares a guarantee about a single name",
 		"let (a, 3) = (1.0, 2.0)":                               "expected a name in a destructuring let",
 	}
 	for src, want := range cases {

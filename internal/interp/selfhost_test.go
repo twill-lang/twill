@@ -1290,6 +1290,74 @@ func TestSelfHostedCheckTuples(t *testing.T) {
 	}
 }
 
+// The two holes a destructuring `let` had in the checker, across the seam.
+//
+// Both were silent and both implementations agreed on the wrong answer, which
+// is exactly the shape of defect the conformance gate cannot see: `const A`
+// followed by `let (A, b) = ...` rebound A and printed 2 under each, and
+// `let (a, a) = ...` bound a twice under each and let the last position win.
+// Agreement is not correctness, so these are asserted against the Go checker's
+// own text rather than against each other, the same way
+// TestSelfHostedRefusesRebindingAConst is.
+func TestSelfHostedRefusesADestructuringLetThatRebindsOrRepeats(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		src  string
+		want string
+	}{
+		{
+			name: "a destructuring let is a second binding of a const",
+			src:  "mode systems\nconst A: I64 = 1\nlet (A, b) = (2, 3)\n",
+			want: "cannot be bound a second time",
+		},
+		{
+			name: "a name may not be bound twice by one destructuring",
+			src:  "mode systems\nlet (a, a) = (1.0, 2.0)\n",
+			want: "binds a twice",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prog, err := parser.Parse(tc.src)
+			if err != nil {
+				t.Fatalf("parse error: %v", err)
+			}
+			diags := checker.Check(prog)
+			if len(diags) != 1 {
+				t.Fatalf("the Go checker reported %d diagnostics, want 1: %v", len(diags), diags)
+			}
+			if !strings.Contains(diags[0].Msg, tc.want) {
+				t.Fatalf("the Go checker reported something else: %s", diags[0].Msg)
+			}
+			code, out := runSelfHostedCheckOut(t, tc.src)
+			if code != 1 {
+				t.Errorf("self-hosted check exited %d, want 1", code)
+			}
+			if !strings.Contains(out, diags[0].Msg) {
+				t.Errorf("the two checkers disagree.\n  go:   %s\n  self: %s", diags[0].Msg, out)
+			}
+		})
+	}
+	// The two that must stay legal, again on both sides: `_` binds nothing, so
+	// it is neither a rebinding nor a repeat, and an inner scope is a different
+	// statement list, so shadowing is untouched.
+	for _, src := range []string{
+		"mode systems\nconst A: I64 = 1\nlet (_, b) = (2, 3)\n",
+		"mode systems\nlet (_, _) = (1.0, 2.0)\n",
+		"mode systems\nconst A: I64 = 1\nfn f() {\n  let (A, b) = (2, 3)\n}\n",
+	} {
+		prog, err := parser.Parse(src)
+		if err != nil {
+			t.Fatalf("parse error for %q: %v", src, err)
+		}
+		if diags := checker.Check(prog); len(diags) != 0 {
+			t.Errorf("the Go checker refused %q: %v", src, diags)
+		}
+		if code := runSelfHostedCheck(t, src); code != 0 {
+			t.Errorf("self-hosted check of %q exited %d, want 0", src, code)
+		}
+	}
+}
+
 // The three refusals the tuple syntax makes are parser errors, so they are the
 // same bytes on both sides or the differential harness is comparing two
 // different languages. A one-element tuple is refused rather than invented; a
@@ -1300,7 +1368,7 @@ func TestSelfHostedTupleSyntaxRefusals(t *testing.T) {
 		"let x = (1.0,)\n":       "a tuple holds at least two values",
 		"let (a) = (1.0, 2.0)\n": "a tuple holds at least two values",
 		"let x = (1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0)\n": "a tuple holds at most 8 values",
-		"const (a, b) = (1.0, 2.0)\n":                             "written with let, not const",
+		"const (a, b) = (1.0, 2.0)\n":                             "and nothing yet asks to declare several at once. The name a destructuring let binds is still refused when a const in the same scope already binds it.",
 		"let (a, 3) = (1.0, 2.0)\n":                               "expected a name in a destructuring let",
 		"mode systems\nfn f() -> (F64,) = 1.0\n":                  "a tuple holds at least two values",
 	}

@@ -329,7 +329,7 @@ fn parse_let(p: Parser) -> Res[ast.Stmt, lex.SyntaxError] {
   # being annotated would be the tuple and the binding is the parts.
   if check(p, "(") {
     if is_const {
-      return Err(err_at(kw, "a destructuring binding is written with let, not const: const binds one name, and the rule that a const name is bound only once is checked over single names"))
+      return Err(err_at(kw, "a destructuring binding is written with let, not const: const declares a guarantee about a single name, and nothing yet asks to declare several at once. The name a destructuring let binds is still refused when a const in the same scope already binds it."))
     }
     return parse_let_tuple(p, line)
   }
@@ -1256,8 +1256,12 @@ fn parse_fn_type(p: Parser) -> Res[Str, lex.SyntaxError] {
 }
 
 # parse_type_args reads `[T, U, ...]` after a type name, each T a full type
-# reference, and returns the bracketed text, e.g. "[Str, Arr[I64]]". It assumes
+# expression, and returns the bracketed text, e.g. "[Str, Arr[I64]]". It assumes
 # the current token is "[".
+#
+# This side always read an expression. The Go parser read a reference until the
+# tuple work, which is why `Arr[fn(I64) -> I64]` was a syntax error there and
+# clean here.
 fn parse_type_args(p: Parser) -> Res[Str, lex.SyntaxError] {
   next_tok(p)
   let out: Str = "["

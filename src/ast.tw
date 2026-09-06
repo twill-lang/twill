@@ -327,10 +327,15 @@ struct Let {
 # tree has to say what it does with one instead of quietly binding nothing.
 #
 # names has at least two entries, and `_` is written for a position the program
-# does not want; those bind nothing. There is no `const` form: a const name may
-# not be bound a second time in its scope, and that rule is checked by walking a
-# block's statements for the name's other bindings, so `const (a, b) = ...` is
-# refused at the parser rather than have the rule half kept.
+# does not want; those bind nothing. A name may not appear twice: the checker
+# refuses `let (a, a) = ...` rather than let the last position win.
+#
+# There is no `const` form: `const (a, b) = ...` is refused at the parser. That
+# is only about which shapes may declare a const, though. The rule that a const
+# name is not bound a second time in its scope is checked by walking a block's
+# statements, and this statement is one of the bindings that walk counts, so
+# `const A = 1.0` followed by `let (A, b) = ...` is refused with the same
+# message `let A = ...` gets.
 struct LetTuple {
   id: I64,
   names: Arr[Str],

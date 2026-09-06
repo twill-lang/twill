@@ -259,8 +259,10 @@ names, which is the part a test can hold.
 > `Batch`, `StepResult` and weft's four span types were standing in for. A tuple
 > holds two to eight values, is destructured or passed on whole, and has no `.0`
 > and no name -- a value that wants to be stored and read by name stays a
-> struct, which is the distinction the workaround was blurring. See
-> `docs/language-guide.md`, "Tuples".
+> struct, which is the distinction the workaround was blurring. A destructuring
+> `let` is a binding like any other: it goes through entry 28's const-rebinding
+> rule, and it may not write one name twice. See `docs/language-guide.md`,
+> "Tuples".
 
 **Six callers.** twill `docs/needs.md` NEEDS-10 (`src/lex.tw:294`, `tokenize`)
 and NEEDS-22 (every environment lookup in `src/check.tw`). spool entry 10

@@ -509,13 +509,15 @@ func (e *TupleLit) expr()    {}
 // tree has to say what it does with one instead of quietly binding nothing.
 //
 // Names has at least two entries, and `_` is written for a position the
-// program does not want; those bind nothing.
+// program does not want; those bind nothing. A name may not appear twice: the
+// checker refuses `let (a, a) = ...` rather than let the last position win.
 //
-// There is no `const` form. A `const` name may not be bound a second time in
-// its scope, and that rule is enforced by walking the statements of a block
-// looking for the name's other bindings; teaching it about a second shape of
-// binding for a guarantee nobody has asked for would be a rule half kept, so
-// `const (a, b) = ...` is refused at the parser instead.
+// There is no `const` form: `const (a, b) = ...` is refused at the parser. That
+// is only about which shapes may *declare* a const, though. The rule that a
+// const name is not bound a second time in its scope is enforced by walking the
+// statements of a block, and this statement is one of the bindings that walk
+// counts, so `const A = 1.0` followed by `let (A, b) = ...` is refused with the
+// same message `let A = ...` gets.
 type LetTuple struct {
 	Names []string
 	Value Expr

@@ -841,6 +841,12 @@ func (c *checker) inferBlock(b *ast.Block, env *checkEnv) Type {
 // reported, whichever side of it they sit on. Two plain `let`s of one name stay
 // legal, because that is an idiom this language allows and this rule is about
 // `const`. An inner scope is not this list, so shadowing is untouched.
+//
+// A destructuring `let` is a binding too, and it is counted here for the same
+// reason a plain one is. The first cut of tuples looked only at *ast.Let, so
+// `const A = 1.0` followed by `let (A, b) = (2.0, 3.0)` rebound A with nothing
+// said while `let A = 2.0` on the same line was refused with the full message.
+// A rule that a second shape of binding walks around is not a rule.
 func (c *checker) reportConstRebinds(body []ast.Stmt) {
 	// Indices rather than lines: two statements can share a line, so a line
 	// number cannot tell the const's own binding apart from a second one.
@@ -855,17 +861,58 @@ func (c *checker) reportConstRebinds(body []ast.Stmt) {
 	if len(first) == 0 {
 		return
 	}
-	for i, s := range body {
-		lt, ok := s.(*ast.Let)
-		if !ok {
-			continue
-		}
-		at, isConst := first[lt.Name]
-		if !isConst || at == i {
-			continue
-		}
+	// A const's own binding is the one at `first[name]`, and only a *ast.Let can
+	// be it: there is no `const (a, b) = ...`. So a LetTuple naming a const name
+	// is always a second binding, with no index to excuse it.
+	rebind := func(name string, line, at int) {
 		decl := body[at].(*ast.Let)
-		c.report(lt.Line, "%s is declared const on line %d, so the name cannot be bound a second time in the same scope: a second binding would take its place and everything after it would be assignable again. Rename one of them, or declare line %d with let if the name is meant to change.", lt.Name, decl.Line, decl.Line)
+		c.report(line, "%s is declared const on line %d, so the name cannot be bound a second time in the same scope: a second binding would take its place and everything after it would be assignable again. Rename one of them, or declare line %d with let if the name is meant to change.", name, decl.Line, decl.Line)
+	}
+	for i, s := range body {
+		switch b := s.(type) {
+		case *ast.Let:
+			at, isConst := first[b.Name]
+			if !isConst || at == i {
+				continue
+			}
+			rebind(b.Name, b.Line, at)
+		case *ast.LetTuple:
+			for _, name := range b.Names {
+				if name == "_" {
+					continue
+				}
+				at, isConst := first[name]
+				if !isConst {
+					continue
+				}
+				rebind(name, b.Line, at)
+			}
+		}
+	}
+}
+
+// reportRepeatedTupleNames refuses `let (a, a) = (1.0, 2.0)`.
+//
+// Positional binding has no way to say what a repeat means. Nothing merges the
+// two values and nothing reads them apart, so the second `define` simply lands
+// on top of the first and the last position wins, which is a typo answered with
+// a number rather than a diagnostic. `_` repeats freely, because `_` binds
+// nothing and is the written way to skip a position.
+//
+// It runs before the value is inferred so that a program with both faults reads
+// in the order it was written: the names are wrong on their own terms, whatever
+// the right-hand side turns out to be.
+func (c *checker) reportRepeatedTupleNames(st *ast.LetTuple) {
+	seen := map[string]bool{}
+	for _, name := range st.Names {
+		if name == "_" {
+			continue
+		}
+		if seen[name] {
+			c.report(st.Line, "this let binds %s twice, and the later position would take the earlier one's place with nothing said. Rename one of them, or write _ for a position whose value the program does not want.", name)
+			continue
+		}
+		seen[name] = true
 	}
 }
 
@@ -873,6 +920,7 @@ func (c *checker) reportConstRebinds(body []ast.Stmt) {
 // happens, so a mistake here reports once rather than once more for every use
 // of a name the destructuring did not manage to bind.
 func (c *checker) checkLetTuple(st *ast.LetTuple, env *checkEnv) {
+	c.reportRepeatedTupleNames(st)
 	rhs := c.inferExpr(st.Value, env)
 	bind := func(t Type) {
 		for _, name := range st.Names {

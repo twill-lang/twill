@@ -57,13 +57,34 @@
   (`save: cannot save a value of this kind ((1, 2))`). The tracer does walk
   one, which is not optional: a tensor returned inside a tuple escapes its
   statement exactly as a tensor in a list does, and a `liveTensors` that had
-  not been taught about tuples crashed the traced run rather than slowing it. `TestTracingSeesTensorsInsideATuple` is that case.
+  not been taught about tuples crashed the traced run rather than slowing it.
+  `TestTracingSeesTensorsInsideATuple` is that case.
+
+  **A destructuring `let` is a binding, and both rules that govern one apply.**
+  `const A = 1.0` followed by `let (A, b) = (2.0, 3.0)` is refused with the
+  same message `let A = 2.0` gets, and `let (a, a) = (1.0, 2.0)` is refused by
+  name. Both were holes in the first cut of this change: both were silent, both
+  implementations agreed on the wrong answer -- `print(A)` gave 2 under each,
+  and the repeated name let the last position win under each -- so the
+  conformance gate could not see either, which is what agreement between two
+  implementations is worth on its own. `_` is exempt from both, because `_`
+  binds nothing.
+
+  The parser's refusal of `const (a, b) = ...` is reworded as part of that. It
+  used to give its reason as the const-rebinding rule being "checked over single
+  names", which counting a destructuring `let` makes untrue; it now says that
+  `const` declares a guarantee about a single name and nothing yet asks to
+  declare several at once, and adds that a name a destructuring `let` binds is
+  still refused when a `const` in the same scope already binds it. A refusal
+  that explains itself with something the checker no longer does is worse than
+  one that does not explain itself.
 
   **What is not delivered:** a tuple pattern in `match`, a tuple element
   coerced by its annotation (`-> (I64, I64)` does not turn a `Num` into an
   `Int` the way `-> I64` does), tuples as pytree containers, `save` of a
-  tuple, and `const` destructuring, which is refused at the parser rather than
-  have the const-rebinding rule half kept.
+  tuple, and `const (a, b) = ...`, which is refused at the parser: a `const`
+  declares a guarantee about one name, and the positions of a tuple are not
+  that.
 
 ### Fixed
 

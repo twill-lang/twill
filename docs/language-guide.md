@@ -557,12 +557,13 @@ then reads the replacement. Declaring the table `const` is how a theme file says
 it did not mean that to happen.
 
 A `const` is also the only binding of its name in the scope that declares it. A
-second `let` of the same name there is refused rather than silently taking the
-const's place:
+second binding of the same name there is refused rather than silently taking the
+const's place, and a destructuring `let` is such a binding:
 
 ```rust
 const HEX = ["#000"]
-let HEX = other()   # refused
+let HEX = other()          # refused
+let (HEX, rest) = pair()   # refused, with the same message
 ```
 
 That is a rule about one scope, not about the name. A `let` in a nearer scope is
@@ -1064,15 +1065,34 @@ let (a, b, c) = span([1.0, 2.0])
 # this let binds 3 names, but the value is (F64, F64), which has 2
 ```
 
-`_` takes a position without binding it, the way it does in a pattern:
+`_` takes a position without binding it, the way it does in a pattern, and it is
+the only name a destructuring may repeat. Two positions writing the same name is
+a typo with no reading to give it: nothing merges the two values and nothing
+tells them apart, so the checker names it rather than let the last position win.
 
 ```rust
 let (a, _, c) = (10.0, 20.0, 30.0)   # a is 10, c is 30
+let (_, _) = (1.0, 2.0)              # fine: `_` binds nothing
+let (a, a) = (1.0, 2.0)
+# this let binds a twice, and the later position would take the earlier one's
+# place with nothing said. Rename one of them, or write _ for a position whose
+# value the program does not want.
 ```
 
-The binding form is `let` only. `const` binds one name, and the rule that a
-`const` name is bound once in its scope is checked over single names, so
-`const (a, b) = ...` is refused rather than have that rule half kept.
+The binding form is `let` only: `const (a, b) = ...` is refused at the parser,
+because a `const` declares a guarantee about one name and the positions of a
+tuple are not that. That is about which shapes may *declare* a const, though,
+and not about which shapes count as a binding. A destructuring `let` is a
+binding like any other, so it is refused where a plain `let` would be:
+
+```rust
+const A = 1.0
+let (A, b) = (2.0, 3.0)
+# A is declared const on line 1, so the name cannot be bound a second time in
+# the same scope: ...
+```
+
+Shadowing in an inner scope is untouched, exactly as it is for a plain `let`.
 
 **Tuple types are types.** `(F64, F64)` may be written wherever an annotation
 may appear -- a return, a parameter, a binding, a struct field, a type argument

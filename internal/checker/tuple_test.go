@@ -74,3 +74,41 @@ func TestATypeArgumentIsAFullType(t *testing.T) {
 	wantNone(t, "mode systems\nlet xs: Arr[(I64, Str)] = arr_new()\n")
 	wantNone(t, "mode systems\nlet d: Dict[Str, (I64, I64)] = {}\n")
 }
+
+// A destructuring `let` is a binding, so the const-rebinding rule counts it.
+//
+// This is the hole the first cut of tuples left: `reportConstRebinds` walked the
+// statement list looking for `*ast.Let` and nothing else, so `const A = 1.0`
+// followed by `let (A, b) = (2.0, 3.0)` rebound A with no diagnostic and
+// `print(A)` gave 2, while `let A = 2.0` on the same line was refused with the
+// full const message. Both implementations agreed on the wrong answer, so the
+// conformance gate saw nothing. The message is the same one a plain `let` gets,
+// deliberately: a reader who has met one recognises the other, and there is no
+// second wording for the two of them to drift apart in.
+func TestADestructuringLetCannotRebindAConst(t *testing.T) {
+	wantOne(t, "mode systems\nconst A = 1.0\nlet (A, b) = (2.0, 3.0)\n",
+		"A is declared const on line 2, so the name cannot be bound a second time in the same scope")
+	// Order is not consulted, exactly as it is not for a plain `let`: the whole
+	// list is scanned, so the `const` below the destructuring is found too.
+	wantOne(t, "mode systems\nlet (K, b) = (2.0, 3.0)\nconst K = 1.0\n",
+		"K is declared const on line 3, so the name cannot be bound a second time in the same scope")
+	// `_` binds nothing, so it is not a second binding of anything.
+	wantNone(t, "mode systems\nconst A = 1.0\nlet (_, b) = (2.0, 3.0)\n")
+	// An inner scope is a different statement list, so shadowing is untouched,
+	// which is what a plain `let` already does there.
+	wantNone(t, "mode systems\nconst A = 1.0\nfn f() {\n  let (A, b) = (2.0, 3.0)\n}\n")
+}
+
+// `let (a, a) = (1.0, 2.0)` bound a twice with nothing said and the last
+// position won, so the program printed 2. Positional binding has no reading of
+// a repeat to offer -- nothing merges the values and nothing tells them apart --
+// so the typo is named instead of answered with a number.
+func TestADestructuringLetCannotBindANameTwice(t *testing.T) {
+	wantOne(t, "mode systems\nlet (a, a) = (1.0, 2.0)\n",
+		"this let binds a twice, and the later position would take the earlier one's place")
+	wantOne(t, "mode systems\nfn f() -> (I64, I64, I64) = (1, 2, 3)\nlet (x, y, x) = f()\n",
+		"this let binds x twice")
+	// `_` is the written way to skip a position, so it repeats freely.
+	wantNone(t, "mode systems\nlet (_, _) = (1.0, 2.0)\n")
+	wantNone(t, "mode systems\nlet (a, b) = (1.0, 2.0)\n")
+}

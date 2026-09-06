@@ -2113,6 +2113,12 @@ fn systems_builtin_result(name: Str, args: Arr[Type]) -> Opt[Type] {
 # reported, whichever side of it they sit on. Two plain `let`s of one name stay
 # legal, because that is an idiom this language allows and this rule is about
 # `const`. An inner scope is not this list, so shadowing is untouched.
+#
+# A destructuring `let` is a binding too, and it is counted here for the same
+# reason a plain one is. The first cut of tuples looked only at SLet, so
+# `const A = 1.0` followed by `let (A, b) = (2.0, 3.0)` rebound A with nothing
+# said while `let A = 2.0` on the same line was refused with the full message. A
+# rule that a second shape of binding walks around is not a rule.
 fn report_const_rebinds(c: Checker, body: Arr[ast.Stmt]) {
   # Indices rather than lines: two statements can share a line, so a line number
   # cannot tell the const's own binding apart from a second one.
@@ -2132,6 +2138,9 @@ fn report_const_rebinds(c: Checker, body: Arr[ast.Stmt]) {
     i = i + 1
   }
   if not any { return }
+  # A const's own binding is the one at first[name], and only an SLet can be it:
+  # there is no `const (a, b) = ...`. So an SLetTuple naming a const name is
+  # always a second binding, with no index to excuse it.
   let j: I64 = 0
   while j < len(body) {
     match body[j] {
@@ -2139,21 +2148,38 @@ fn report_const_rebinds(c: Checker, body: Arr[ast.Stmt]) {
         match dict_get(first, st.name) {
           Some(at) => {
             if at != j {
-              let decl_line: I64 = stmt_line(body[at])
-              report(c, st.line, bytes.concat(st.name,
-                bytes.concat(" is declared const on line ",
-                bytes.concat(str(decl_line),
-                bytes.concat(", so the name cannot be bound a second time in the same scope: a second binding would take its place and everything after it would be assignable again. Rename one of them, or declare line ",
-                bytes.concat(str(decl_line), " with let if the name is meant to change."))))))
+              report_const_rebind(c, st.name, st.line, stmt_line(body[at]))
             }
           },
           None => unit,
+        }
+      },
+      SLetTuple(st) => {
+        let k: I64 = 0
+        while k < len(st.names) {
+          if not bytes.equal(st.names[k], "_") {
+            match dict_get(first, st.names[k]) {
+              Some(at) => report_const_rebind(c, st.names[k], st.line, stmt_line(body[at])),
+              None => unit,
+            }
+          }
+          k = k + 1
         }
       },
       _ => unit,
     }
     j = j + 1
   }
+}
+
+# The one message, written once, so the two shapes of binding cannot drift apart
+# in their wording the way they drifted apart in whether they were checked.
+fn report_const_rebind(c: Checker, name: Str, line: I64, decl_line: I64) {
+  report(c, line, bytes.concat(name,
+    bytes.concat(" is declared const on line ",
+    bytes.concat(str(decl_line),
+    bytes.concat(", so the name cannot be bound a second time in the same scope: a second binding would take its place and everything after it would be assignable again. Rename one of them, or declare line ",
+    bytes.concat(str(decl_line), " with let if the name is meant to change."))))))
 }
 
 # The line a statement was written on, for the one caller that has a statement in
@@ -2184,7 +2210,36 @@ fn lvalue_base(target: ast.Expr) -> Opt[Str] {
 # check_let_tuple judges `let (lo, hi) = span(xs)`. The names are bound whatever
 # happens, so a mistake here reports once rather than once more for every use of
 # a name the destructuring did not manage to bind.
+# report_repeated_tuple_names refuses `let (a, a) = (1.0, 2.0)`.
+#
+# Positional binding has no way to say what a repeat means. Nothing merges the
+# two values and nothing reads them apart, so the second define simply lands on
+# top of the first and the last position wins, which is a typo answered with a
+# number rather than a diagnostic. `_` repeats freely, because `_` binds nothing
+# and is the written way to skip a position.
+#
+# It runs before the value is inferred so that a program with both faults reads
+# in the order it was written: the names are wrong on their own terms, whatever
+# the right-hand side turns out to be.
+fn report_repeated_tuple_names(c: Checker, st: ast.LetTuple) {
+  let seen: Dict[Str, Bool] = dict_new()
+  let i: I64 = 0
+  while i < len(st.names) {
+    let name: Str = st.names[i]
+    if not bytes.equal(name, "_") {
+      if dict_has(seen, name) {
+        report(c, st.line, bytes.concat("this let binds ",
+          bytes.concat(name, " twice, and the later position would take the earlier one's place with nothing said. Rename one of them, or write _ for a position whose value the program does not want.")))
+      } else {
+        dict_set(seen, name, true)
+      }
+    }
+    i = i + 1
+  }
+}
+
 fn check_let_tuple(c: Checker, st: ast.LetTuple, env: CheckEnv) {
+  report_repeated_tuple_names(c, st)
   let rhs: Type = infer_expr(c, st.value, env)
   let tup: TupleType = match rhs {
     TTuple(t) => t,
