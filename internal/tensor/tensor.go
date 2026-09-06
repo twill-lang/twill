@@ -680,6 +680,28 @@ func Exp(a *Tensor) *Tensor {
 func Log(a *Tensor) *Tensor {
 	return unary(a, false, math.Log, func(x, o float64) float64 { return 1 / x }, func(x, o float64) float64 { return -1 / (x * x) })
 }
+
+// Log1p is log(1+x) computed without forming 1+x, which is what keeps it
+// accurate for small x: at x = 1e-16 the sum rounds to exactly 1 and log of
+// that is 0, while log1p answers 1e-16. The first derivative is 1/(1+x) written
+// that way rather than as a function of the output, because recovering x from
+// log1p(x) would throw the accuracy away again.
+func Log1p(a *Tensor) *Tensor {
+	return unary(a, false, math.Log1p,
+		func(x, o float64) float64 { return 1 / (1 + x) },
+		func(x, o float64) float64 { return -1 / ((1 + x) * (1 + x)) })
+}
+
+// Expm1 is exp(x)-1 computed without forming exp(x), for the same reason in the
+// other direction: at x = 1e-16 exp rounds to 1 and the subtraction gives 0.
+// Its derivative is exp(x), which is the output plus one, so the rule is
+// written on o and costs no second exponential.
+func Expm1(a *Tensor) *Tensor {
+	return unary(a, false, math.Expm1,
+		func(x, o float64) float64 { return o + 1 },
+		func(x, o float64) float64 { return o + 1 })
+}
+
 func Sin(a *Tensor) *Tensor {
 	return unary(a, false, math.Sin, func(x, o float64) float64 { return math.Cos(x) }, func(x, o float64) float64 { return -o })
 }

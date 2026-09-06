@@ -347,9 +347,12 @@ func (p *printer) expr(e ast.Expr) string {
 	case *ast.ListLit:
 		return "[" + p.exprList(ex.Elements) + "]"
 	case *ast.RecordLit:
-		parts := make([]string, len(ex.Fields))
-		for i, f := range ex.Fields {
-			parts[i] = f.Name + ": " + p.expr(f.Value)
+		parts := make([]string, 0, len(ex.Fields)+1)
+		if ex.Base != nil {
+			parts = append(parts, ".."+p.expr(ex.Base))
+		}
+		for _, f := range ex.Fields {
+			parts = append(parts, f.Name+": "+p.expr(f.Value))
 		}
 		prefix := ""
 		if ex.TypeName != "" {

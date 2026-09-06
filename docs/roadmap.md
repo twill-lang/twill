@@ -111,11 +111,11 @@ two differences in the file are the blank lines above `fn gflops` and above
 `"builtin ... is named in the builtin table but has no implementation"`. A large
 minority of the names in `src/builtins.tw` still reach it. `docs/BUGS.md` entry
 12 records the port that closed the lists, dictionaries, byte buffers and string
-primitives, and its Open section carries what is left -- the filesystem, the
-clock, the process, the RNG, the `f64_*` scalar intrinsics, the GPU stubs and
-the memory counters -- with the count as measured and the one-line probe that
-re-derives it. That is the place to read it: a split quoted in two documents
-goes stale in one of them.
+primitives, entry 13 the one that closed the filesystem, the clock and the
+process, and the Open section carries what is left -- the RNG, the `f64_*`
+scalar intrinsics, the GPU stubs and the memory counters -- with the count as
+measured and the command that re-derives it. That is the place to read it: a
+split quoted in two documents goes stale in one of them.
 
 What matters here is the shape rather than the count. The missing set is the
 systems half of the language, and the systems half is the dialect `src/` is
@@ -124,13 +124,25 @@ run `src/`:
 
 ```
 $ ./twill run src/main.tw run "$PWD/src/main.tw" run "$PWD/examples/hello.tw"
-<repo>/src/main.tw:47: runtime error: builtin "args" is named in the builtin table but has no implementation
-  47 |   let a: Arr[Str] = drop_first(args())
+<repo>/src/main.tw:341: runtime error: undefined variable "SFn"
+  341 |       if len(diags) == 0 {
 ```
 
+That line moved when the filesystem, clock and process port landed. It used to
+be line 47 and the builtin `args`, which is to say the inner CLI stopped on the
+first statement of its own `main`. It now gets through argument handling and
+into the checker and stops on an enum case that `src/check.tw` uses unqualified
+from `src/ast.tw`, so what is left there is about a module and an enum rather
+than about a missing name. The same two levels answer `--version` correctly.
+The line number is the entry file's rather than the module's, which is the same
+attribution defect the allow-list records for `nn_test.tw`.
+
 (`<repo>` is the checkout's absolute path. The inner paths are absolute because
-the self-hosted CLI resolves a relative one against its own directory rather
-than the caller's. That is the same bug `examples/frames.tw` hits, below.)
+the self-hosted CLI resolves the path it is *given* against its own directory
+rather than the caller's. That is the same bug `examples/frames.tw` hits, below.
+A relative path inside a program being run is a different question and no longer
+has that answer: the evaluator is told which file it is running and resolves
+against the program's directory.)
 
 The compiler is written in the half of the language the compiler cannot
 evaluate. That is the distance left to a Go-free binary, and no count of
@@ -226,7 +238,7 @@ names, which is the part a test can hold.
 | 26 | Allocation and memory counters | 1 | bobbin | 1.6.0 |
 | 27 | Ranged reads | 1 | warp | 1.6.0 |
 | 28 | Immutable top-level bindings | 1 | weft | **half**: `const` in one file, cross-file open |
-| 29 | Optional and named arguments, or record update | 1 | weft | **open** |
+| 29 | Optional and named arguments, or record update | 1 | weft | **half**: record update unreleased, named arguments open |
 | 30 | A compiler barrier | 1 | bobbin | unreleased, `black_box` |
 | 31 | `Dict` keyed by something other than `Str` | 1 | twill | **half**: `I64` keys, not identity |
 | 32 | An empty record, and removing a field | 1 | twill | **open** |
@@ -1127,18 +1139,26 @@ enum walk. Three things are open, and they are separate problems:
   enum declared in another module is unjudged there while the Go checker judges
   it. That gap is older than this entry and is not closed by it.
 
-**29. Optional and named arguments, or record update**, **open** (weft entry
-10). Neither form exists: a call site takes positional arguments only, and there
-is no update expression over a record. The two halves are not the same size, and
-the entry's "or" is doing real work: record update is one new expression form,
-while named arguments reach every arity check in both implementations and every
-builtin, whose arities are declared as word lists with no parameter names in
-them at all. A chart
+**29. Optional and named arguments, or record update**, **half** (weft entry
+10). The entry's "or" was doing real work, and the cheaper half is now
+delivered. Record update is `S { ..base, field: value }`, one new expression
+form, and it is in both implementations, unreleased. Named arguments are not:
+they reach every arity check on both sides and every builtin, whose arities are
+declared as word lists with no parameter names in them at all.
+
+What the update answers is the configuration half of the complaint. A chart
 has a dozen settings and almost every caller changes two. The constructor takes
 the three that are always given and the rest are mutated on afterwards, so every
 optional setting is a statement rather than an argument and no configuration can
 be built by a pure expression. `fix_y` exists purely to give two of those
-mutations a name.
+mutations a name. `{ ..defaults, fix_y: true }` is that expression, and it is
+one expression, so it can be an argument, a return value or a field.
+
+What it does not answer is a call whose arguments are optional. A function of
+twelve parameters still takes twelve at every call site, and the workaround is
+the one the entry describes: pass a record and update it. That is a smaller gap
+than the one the entry opened with, and it is the half that costs the arity
+rewrite, so the entry is half rather than delivered.
 
 **30. A compiler barrier** (bobbin entry 3). **Delivered, and the entry's
 premise was wrong.** `black_box(x)` returns `x`, in both modes and on both

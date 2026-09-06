@@ -32,18 +32,15 @@
 
 # --- The evaluator has no implementation for the builtin ---------------------
 # Each of these dies at a named line on a named builtin that src/eval.tw does
-# not dispatch. docs/conformance.md lists every name in that state. These
-# signatures moved when the self-hosted Arr, Dict, buffer and string runtime
-# landed on main: all six systems-mode suites used to die on the first line of
-# std/tests/systems_harness.tw, which calls arr_new, and now get as far as
-# printing their results and fall over on the way out.
-#   io_test.tw:119     builtin "write_out" ... has no implementation
-#   json_test.tw:119   builtin "write_out" ... has no implementation
-#   text_test.tw:119   builtin "write_out" ... has no implementation
-io_test.tw               9786e999b01b
-json_test.tw             007212f18d1f
-text_test.tw             1492121f2ed1
-
+# not dispatch. docs/conformance.md lists every name in that state.
+#
+# Three lines left this section when the filesystem, clock and process port
+# landed: io_test.tw, json_test.tw and text_test.tw all died on the write_out
+# in std/tests/systems_harness.tw, which is how a systems-mode suite prints its
+# verdict, and now agree byte for byte. Nothing replaced them, which is the
+# claim worth reading: those three suites had no second divergence waiting
+# behind the first.
+#
 #   linalg_test.tw:362 builtin "f64_of_i64" ... has no implementation
 #   stats_test.tw:165  builtin "f64_of_i64" ... has no implementation
 linalg_test.tw           53a1a865f09f

@@ -2200,8 +2200,10 @@ idiom. **The normative text is `docs/language-guide.md`, Operators →
 Bitwise operators on `I64`.** Read it there, not here.
 
 The decision: `shr` is an **arithmetic** shift, `shl` shifts zeros in, and shift
-counts are masked to 0..63. A logical right shift is spelled by building one,
-and `src/float.tw`'s `ushr` is the named idiom.
+counts are masked to 0..63. A logical right shift was spelled by building one,
+and `src/float.tw`'s `ushr` was the named idiom; `ushr(x, k)` is now a builtin,
+masking its count the same way, and it is what new code should call. The
+hand-rolled helpers stay where they are, so nothing importing them breaks.
 
 Why it had to be decided rather than measured: the Go bootstrap does not
 implement `mode systems`, `I64`, or any bitwise operator, so there was no
@@ -3416,8 +3418,9 @@ rather than taken from a commit message.
 - **NEEDS-82**, **NEEDS-86** a file-level `let` may be initialised by a call; it
   runs once and the value is shared.
 - **NEEDS-84** `f64_bits`/`f64_from_bits`, exact now that `I64` is.
-- **NEEDS-85** `shl(1, 63)` round-trips, so `src/float.tw`'s `ushr` helpers are
-  compensating only for the missing unsigned type. They still work.
+- **NEEDS-85** `shl(1, 63)` round-trips, so `src/float.tw`'s `ushr` helpers were
+  compensating only for the missing unsigned type. They still work, and `ushr`
+  is a builtin now, so new code does not have to build one.
 - **NEEDS-91**, **NEEDS-92** the filesystem: `path_exists`, `path_is_dir`,
   `mkdir_all`, `remove_file`, `remove_dir`, `remove_all`, `rename`, `temp_dir`,
   `cwd`, `mtime`, and the path string operations `path_join`, `path_base`,

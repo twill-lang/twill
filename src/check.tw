@@ -1705,6 +1705,54 @@ fn bind_pattern(c: Checker, pat: ast.MatchPattern, subject: Type, env: CheckEnv)
   }
 }
 
+# infer_record_lit types a record literal, including the update form
+# `{ ..base, f: v }`. The update's type is the base's fields with the named ones
+# replacing what they name, which is the value the evaluator builds.
+#
+# A field named in an update that the base does not have is not reported. The
+# record it produces is the one `{ a: base.a, b: 1 }` produces and runs exactly
+# as well, and records here are structural, so refusing it would be a diagnostic
+# on a correct program -- the one kind of mistake this checker is not allowed to
+# make. A typed update, `P { ..base, b: 1 }`, is still checked against P's
+# declaration by check_struct_lit below, which is where a misspelt field on a
+# struct is caught.
+#
+# An untyped update produces a plain record rather than the base's struct type.
+# Its fields are what a later field access is answered from, and a name it kept
+# would be a nominal claim about a value the update may have added a field to.
+fn infer_record_lit(c: Checker, ex: ast.RecordLit, env: CheckEnv) -> Type {
+  let fields: Dict[Str, Type] = dict_new()
+  # The base is inferred first because it is written first: a diagnostic from
+  # inside it should come before one from a field that replaces part of it.
+  match ex.base {
+    Some(b) => {
+      let base: Type = infer_expr(c, b, env)
+      match as_record(base) {
+        Some(rec) => {
+          for name in dict_keys(rec.fields) {
+            dict_set(fields, name, dict_must(rec.fields, name))
+          }
+        },
+        None => {
+          if is_definite_non_record(base) {
+            report(c, ex.line, bytes.concat("the base of a record update must be a record, got ",
+              type_text(c, base)))
+          }
+        },
+      }
+    },
+    None => unit,
+  }
+  let i: I64 = 0
+  while i < len(ex.fields) {
+    let f: ast.RecordField = ex.fields[i]
+    dict_set(fields, f.name, infer_expr(c, f.value, env))
+    i = i + 1
+  }
+  if len(ex.type_name) > 0 { return check_struct_lit(c, ex, fields) }
+  TRecord(RecordType { fields: fields, name: "", args: [] })
+}
+
 # check_struct_lit types a typed record literal against its struct declaration:
 # every field named must exist and its value must be of the declared type. The
 # literal's type is the struct.
@@ -1905,7 +1953,7 @@ fn systems_builtin_result(name: Str, args: Arr[Type]) -> Opt[Type] {
     return Some(TInt)
   }
   if in_set(name, "f64 f64_of_i64") { return Some(scalar()) }
-  if in_set(name, "chr str_quote f64_to_str bytes_to_str read_text_or resolve_path f64_hex num_to_text") {
+  if in_set(name, "chr str_quote f64_to_str bytes_to_str read_text_or resolve_path f64_hex num_to_text sha256 sha256_bytes") {
     return Some(TStr)
   }
   # The barrier hands back exactly what it was given, and the type says so.
@@ -2316,17 +2364,7 @@ fn infer_expr(c: Checker, e: ast.Expr, env: CheckEnv) -> Type {
     ECall(ex) => infer_call(c, ex, env),
     EIndex(ex) => infer_index(c, ex, env),
     ESlice(ex) => infer_slice(c, ex, env),
-    ERecord(ex) => {
-      let fields: Dict[Str, Type] = dict_new()
-      let i: I64 = 0
-      while i < len(ex.fields) {
-        let f: ast.RecordField = ex.fields[i]
-        dict_set(fields, f.name, infer_expr(c, f.value, env))
-        i = i + 1
-      }
-      if len(ex.type_name) > 0 { return check_struct_lit(c, ex, fields) }
-      TRecord(RecordType { fields: fields, name: "", args: [] })
-    },
+    ERecord(ex) => infer_record_lit(c, ex, env),
     EField(ex) => {
       let target: Type = infer_expr(c, ex.target, env)
       match as_record(target) {
@@ -4068,10 +4106,10 @@ fn builtin_fixed_arity(name: Str) -> I64 {
   if in_set(name, "args arr_new bytes_new clock_now_ms dict_new gpu_available gpu_device_count is_tty_stdout rng_normal rng_uniform window_size") {
     return 0
   }
-  if in_set(name, "relu exp log sin cos tanh sigmoid sqrt square floor ceil round abort abs arr_clear black_box bnot buf_len buf_new bytes_to_str chr columns dict_keys emit_line enumerate env eye arr_of_tensor f64_bits f64_bits_hi f64_bits_lo f64_from_bits f64_hex f64_of_i64 f64_signbit f64_to_str gbm_describe grad grads hessian hvp jvp vjp dtype i64_of_f64 i64_of_str int item jacobian len list_dir load load_value module_source nbytes num_to_text permutation pop read_csv read_file read_frame rng_perm rng_seed scalar seed shape str str_quote str_to_f64 tensor value_and_grad write_err write_out") {
+  if in_set(name, "relu exp log log1p expm1 sha256 sha256_bytes f64_log1p f64_expm1 sin cos tanh sigmoid sqrt square floor ceil round abort abs arr_clear black_box bnot buf_len buf_new bytes_to_str chr columns dict_keys emit_line enumerate env eye arr_of_tensor f64_bits f64_bits_hi f64_bits_lo f64_from_bits f64_hex f64_of_i64 f64_signbit f64_to_str gbm_describe grad grads hessian hvp jvp vjp dtype i64_of_f64 i64_of_str int item jacobian len list_dir load load_value module_source nbytes num_to_text permutation pop read_csv read_file read_frame rng_perm rng_seed scalar seed shape str str_quote str_to_f64 tensor value_and_grad write_err write_out") {
     return 1
   }
-  if in_set(name, "matmul dot conv2d maximum minimum greater less greater_equal less_equal equal and or band bor xor shl shr append arr_push buf_get8 bytes_push concat dict_del dict_get dict_has dict_must f64_from_halves f64_mod f64_pow field gather is_same linear map map_leaves maxpool2d pow push save save_value write_file write_frame zip_leaves") {
+  if in_set(name, "matmul dot conv2d maximum minimum greater less greater_equal less_equal equal and or band bor xor shl shr ushr append arr_push buf_get8 bytes_push concat dict_del dict_get dict_has dict_must f64_from_halves f64_mod f64_pow field gather is_same linear map map_leaves maxpool2d pow push save save_value write_file write_frame zip_leaves") {
     return 2
   }
   if in_set(name, "arange buf_set8 clip dict_or dict_set fold linspace run slice where with_field") {
@@ -4084,7 +4122,7 @@ fn builtin_fixed_arity(name: Str) -> I64 {
 # Deliberately a short, checked list rather than everything: len, map, fold,
 # concat, append, sort, zip and the rest take lists on purpose, and reporting
 # those would be the false positive that makes a checker worth turning off.
-let TENSOR_ONLY: Str = "sum mean prod median max min argmax argmin exp log sin cos tanh sigmoid sqrt square abs relu softmax logsumexp transpose reshape shape matmul dot linear broadcast_to cumsum cumprod flip roll diff"
+let TENSOR_ONLY: Str = "sum mean prod median max min argmax argmin exp log log1p expm1 sin cos tanh sigmoid sqrt square abs relu softmax logsumexp transpose reshape shape matmul dot linear broadcast_to cumsum cumprod flip roll diff"
 
 # Whether a type certainly is not a tensor. TUnknown is not, which is what keeps
 # an unannotated program silent.
@@ -4259,7 +4297,7 @@ fn infer_builtin_call(c: Checker, name: Str, ex: ast.Call, arg_types: Arr[Type],
   }
   # Transcendental functions need a dimensionless argument: exp(USD) is not a
   # quantity. The result is dimensionless whatever the input was.
-  if in_set(name, "exp log sin cos tanh sigmoid") {
+  if in_set(name, "exp log log1p expm1 sin cos tanh sigmoid") {
     match arg_tensor(arg_types, 0) {
       Some(t) => {
         if len(t.unit) != 0 {

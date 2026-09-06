@@ -57,7 +57,7 @@ European call, S0=100 K=100 r=5% vol=20% T=1y, MC paths: 200000
 landed on the closed-form Greeks. No tape object, no `requires_grad`, no
 `.backward()`. The full program is [`examples/montecarlo_option.tw`](examples/montecarlo_option.tw).
 
-This is an early prototype; the current release is v1.10.0, and as of v1.4.0
+This is an early prototype; the current release is v1.11.0, and as of v1.4.0
 the twill compiler written in twill runs on the Go bootstrap and reproduces the
 reference across every stage (see [twill is being written in
 twill](#twill-is-being-written-in-twill)). The reference implementation is a
@@ -192,6 +192,26 @@ The REPL keeps reading until brackets balance, so block-body functions can be
 defined interactively. Without installing, `go run ./cmd/twill <file.tw>` works
 too, and `go test ./...` runs the suite.
 
+`twill test` finds the suites; `std/test` is what a suite is written with. A
+file prints one line per failure and a summary the runner reads, and its status
+is its own return value:
+
+```
+mode systems
+
+import "std/test" as t
+
+fn main() -> I64 {
+  t.equal_i64("two and two is four", 2 + 2, 4)
+  t.near("a third is a third", 1.0 / 3.0, 0.3333333333, 0.0000000001)
+  t.report("arith")
+}
+```
+
+`near` takes the tolerance and has no default, because a default epsilon is the
+one number in a numeric test worth stating and the wrong one for something
+whatever it is set to.
+
 ## Differentiation
 
 | Builtin | Returns |
@@ -319,6 +339,7 @@ The `std/` libraries are written in twill itself and compiled into the binary, s
 | `std/text`, `std/float` | string handling for `mode systems`, and exact float formatting and parsing |
 | `std/term` | the terminal layer: capability detection, colour, boxes, frames, display width |
 | `std/io`, `std/json`, `std/hash` | text and line reading, a JSON reader and writer, SHA-256 |
+| `std/test` | the assertions a `*_test.tw` file is written with, printing the verdict `twill test` reads |
 
 That table is a selection. `std/` also carries `batch`, `frame`, `linalg`,
 `llama`, `loss`, `metrics`, `random`, `sample`, `stats` and `gradcheck`.
@@ -437,13 +458,25 @@ is that `src/` cannot run `src/`:
 
 ```
 $ ./twill run src/main.tw run "$PWD/src/main.tw" run "$PWD/examples/hello.tw"
-<repo>/src/main.tw:47: runtime error: builtin "args" is named in the builtin table but has no implementation
-  47 |   let a: Arr[Str] = drop_first(args())
+<repo>/src/main.tw:341: runtime error: undefined variable "SFn"
+  341 |       if len(diags) == 0 {
 ```
 
-(The inner paths are absolute because the self-hosted CLI resolves a relative
-one against its own directory rather than the caller's, which is the same bug
-`examples/frames.tw` hits.)
+That line moved when the filesystem, clock and process port landed. It used to
+be line 47 and the builtin `args`, which is to say the inner CLI stopped on the
+first statement of its own `main`. It now gets through argument handling and
+into the checker and stops on an enum case that `src/check.tw` uses unqualified
+from `src/ast.tw`, so what is left there is about a module and an enum rather
+than about a missing name. The same two levels answer `--version` correctly.
+(The line number is the entry
+file's rather than the module's, which is a second defect visible in the same
+report and recorded in `docs/BUGS.md`.)
+
+(The inner paths are absolute because the self-hosted CLI resolves the path it
+is *given* against its own directory rather than the caller's, which is the same
+bug `examples/frames.tw` hits. A relative path inside a program being run is a
+different question and no longer has that answer: the evaluator is told which
+file it is running and resolves against the program's directory.)
 
 The paragraph above is about the front end, and about the example corpus, and
 it is worth being exact about where the agreement stops.
@@ -451,16 +484,21 @@ it is worth being exact about where the agreement stops.
 implementations rather than by reading either, and it says which names in the
 shared builtin table `src/eval.tw` dispatches and which it does not. It has the
 count and the list, and `make conformance` regenerates both, which is why
-neither is repeated here. A program that reaches for `read_file`, `write_out`,
-`path_join`, `rng_open` or any of the `f64_*` scalar functions checks clean on
-both sides, runs on the bootstrap, and is a runtime error self-hosted. The gap
-is not only missing names: most of the suites in `std/tests/` do not produce
-identical bytes under the two implementations, and `gradcheck_test.tw` passes 19
-of 19 on the bootstrap and 17 of 19 self-hosted, with no error on either side.
-Every one of those divergences is on a checked-in allow-list that
-`make conformance-check` enforces, keyed to the divergence it names, so a new
-divergence fails the build, a changed one fails the build, and the list can only
-get shorter.
+neither is repeated here. A program that reaches for `rng_open`, any of the
+`f64_*` scalar functions, the `gpu_*` device intrinsics or the `mem_*` counters
+checks clean on both sides, runs on the bootstrap, and is a runtime error
+self-hosted. The gap is not only missing names: most of the suites in
+`std/tests/` do not produce identical bytes under the two implementations, and
+`gradcheck_test.tw` passes 19 of 19 on the bootstrap and 17 of 19 self-hosted,
+with no error on either side. Every one of those divergences is on a checked-in
+allow-list that `make conformance-check` enforces, keyed to the divergence it
+names, so a new divergence fails the build, a changed one fails the build, and
+the list can only get shorter.
+
+The same gate runs the cases under `testdata/conformance/cases/`, which have no
+allow-list: each is written to pin one builtin and is checked in only once both
+implementations agree on it, so a divergence there is a regression rather than
+an unfinished port.
 
 Designing the subset a compiler needs was the point of doing it. A `.tw` file
 declares its mode on the first line, and `mode systems` turns that subset on: a

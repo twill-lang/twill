@@ -15,6 +15,20 @@ mode systems
 # it would not be for hashing a large binary artifact, and if spool ever grows
 # those, this becomes a builtin. See docs/needs.md.
 #
+# THE BUILTIN NOW EXISTS, AND THIS FILE DID NOT BECOME IT
+#
+# `sha256(s)` and `sha256_bytes(b)` are builtins, and they are what production
+# code should call: same digest, same lower-case hex, at machine speed. This
+# file stays as it is on purpose.
+#
+# It is the specification. spool's tests/sha256_test.tw holds `hash_str` to the
+# published vectors, and `internal/interp/sha256_test.go` holds the builtin to
+# `hash_str` over every message length from 0 to 70 bytes, which walks both
+# padding boundaries. Rewriting `hash_str` as one line over the builtin would
+# collapse both of those into the builtin testing itself, and the header two
+# paragraphs up is exactly the mistake that would be: a hash function tested
+# only against itself is a checksum with delusions.
+#
 # All arithmetic is masked back to 32 bits after every step, because I64 wraps
 # at 64 bits and SHA-256 wraps at 32.
 
