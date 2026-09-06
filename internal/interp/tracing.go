@@ -97,6 +97,14 @@ func liveTensors(dst []*tensor.Tensor, v value.Value) []*tensor.Tensor {
 		for _, it := range t.Items {
 			dst = liveTensors(dst, it)
 		}
+	case *value.Tuple:
+		// A tuple is a container like any other here. A tensor returned inside
+		// one escapes the statement that made it exactly as a tensor in a list
+		// does, and a scope that did not hear about it is the wrong-answer case
+		// this function exists to prevent.
+		for _, it := range t.Items {
+			dst = liveTensors(dst, it)
+		}
 	case *value.Record:
 		for _, k := range t.Keys {
 			dst = liveTensors(dst, t.Fields[k])

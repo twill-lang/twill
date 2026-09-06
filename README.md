@@ -269,6 +269,11 @@ for i in range(10) { total = total + i }
 # Differentiation.
 fn energy(w) = sum(relu(w) * relu(w)) / 2.0
 let g = grad(energy)([-1.0, 2.0, -3.0, 4.0])   # [0, 2, 0, 4]
+
+# Two values back, when neither of them wants a name. The comma is what makes
+# a tuple: `(x)` is still x in parentheses.
+fn span(t) -> (F64, F64) = (min(t), max(t))
+let (lo, hi) = span(v)                         # lo is 1, hi is 3
 ```
 
 The [language guide](docs/language-guide.md) covers everything, and the

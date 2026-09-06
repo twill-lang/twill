@@ -565,12 +565,13 @@ then reads the replacement. Declaring the table `const` is how a theme file says
 it did not mean that to happen.
 
 A `const` is also the only binding of its name in the scope that declares it. A
-second `let` of the same name there is refused rather than silently taking the
-const's place:
+second binding of the same name there is refused rather than silently taking the
+const's place, and a destructuring `let` is such a binding:
 
 ```rust
 const HEX = ["#000"]
-let HEX = other()   # refused
+let HEX = other()          # refused
+let (HEX, rest) = pair()   # refused, with the same message
 ```
 
 That is a rule about one scope, not about the name. A `let` in a nearer scope is
@@ -1018,6 +1019,112 @@ The base has to be a record. Where the checker can see the type it refuses the
 literal -- `the base of a record update must be a record, got I64` -- and where
 it cannot, the same refusal arrives at run time, without the type.
 
+## Tuples
+
+A tuple is a fixed-arity positional group, written with a comma inside
+parentheses. It is what a function returns when it has two things to say and
+neither of them wants a name.
+
+```rust
+fn span(xs: Arr[F64]) -> (F64, F64) {
+  let lo: F64 = xs[0]
+  let hi: F64 = xs[0]
+  for x in xs {
+    if x < lo { lo = x }
+    if x > hi { hi = x }
+  }
+  (lo, hi)
+}
+
+let (lo, hi) = span([3.0, 1.0, 4.0])   # lo is 1, hi is 4
+```
+
+**The comma is what decides.** `(x)` is `x` in parentheses and has always been
+grouping; `(x, y)` is a tuple. A one-element tuple is refused rather than
+invented, because `(x,)` is a language explaining a trailing comma:
+
+```rust
+let a = (1.0 + 2.0) * 3.0   # 9: grouping, as it always was
+let b = (1.0,)              # syntax error
+```
+
+A tuple holds between two and eight values. Past eight the positions stop being
+readable and what was wanted is a `struct`, whose fields have names, so the
+parser says that instead of allowing it.
+
+**A tuple is destructured or passed on whole.** There is deliberately no `.0`
+and no named tuple type. A value that wants to be stored and read by name stays
+a `struct`; a tuple that grew accessors would be a second, worse record, and the
+reason this feature exists (docs/roadmap.md entry 1) is that a struct declared
+for one call site costs a type name, not that structs are the wrong shape.
+
+```rust
+let t = (1.0, 2.0)
+t.first        # error: cannot read field "first" of (a scalar, a scalar)
+print(t)       # (1, 2)
+print(span([1.0, 2.0]))   # a tuple may be printed or passed on whole
+```
+
+**A destructuring `let` says how many values it wants**, and both the checker
+and the runtime hold the value to that:
+
+```rust
+let (a, b, c) = span([1.0, 2.0])
+# this let binds 3 names, but the value is (F64, F64), which has 2
+```
+
+`_` takes a position without binding it, the way it does in a pattern, and it is
+the only name a destructuring may repeat. Two positions writing the same name is
+a typo with no reading to give it: nothing merges the two values and nothing
+tells them apart, so the checker names it rather than let the last position win.
+
+```rust
+let (a, _, c) = (10.0, 20.0, 30.0)   # a is 10, c is 30
+let (_, _) = (1.0, 2.0)              # fine: `_` binds nothing
+let (a, a) = (1.0, 2.0)
+# this let binds a twice, and the later position would take the earlier one's
+# place with nothing said. Rename one of them, or write _ for a position whose
+# value the program does not want.
+```
+
+The binding form is `let` only: `const (a, b) = ...` is refused at the parser,
+because a `const` declares a guarantee about one name and the positions of a
+tuple are not that. That is about which shapes may *declare* a const, though,
+and not about which shapes count as a binding. A destructuring `let` is a
+binding like any other, so it is refused where a plain `let` would be:
+
+```rust
+const A = 1.0
+let (A, b) = (2.0, 3.0)
+# A is declared const on line 1, so the name cannot be bound a second time in
+# the same scope: ...
+```
+
+Shadowing in an inner scope is untouched, exactly as it is for a plain `let`.
+
+**Tuple types are types.** `(F64, F64)` may be written wherever an annotation
+may appear -- a return, a parameter, a binding, a struct field, a type argument
+-- and they nest:
+
+```rust
+struct Pair[T] { span: (T, T) }
+
+fn take(p: (I64, Str), q: fn(I64) -> (I64, I64)) -> (I64, I64) = q(1)
+
+let xs: Arr[(I64, Str)] = arr_new()
+let p: Pair[I64] = Pair { span: (1, 2) }
+```
+
+Arity and order are part of a tuple type's identity: a 2-tuple is not a 3-tuple,
+and `(I64, Str)` is not `(Str, I64)`. Equality is structural and starts with
+arity, so `(1, 2) == (1, 2)` is true, `(1, 2) == (1, 2, 3)` is false, and a
+tuple is never equal to a list holding the same values.
+
+**A tuple is not a parameter tree.** `grad`, `map_leaves` and `zip_leaves` walk
+a list, a record and a variant payload; a tuple is an opaque leaf to all three,
+and `save` refuses one. A model's parameters go in a record, which is what
+`grad` was built to follow.
+
 ## `struct`, and what a parameter is
 
 `struct` is a systems-mode type, declared by name, with typed fields that are
@@ -1399,7 +1506,42 @@ the comparisons `greater`, `less`, `greater_equal`, `less_equal`, `equal`
 
 Reductions: `sum`, `mean`, `max`, `min`, `prod` and `median` reduce the whole
 tensor to a scalar, or one axis with a second argument (`sum(t, 0)`).
-`argmax(t[, axis])` gives the index of the maximum.
+`argmax(t[, axis[, keepdims]])` gives the index of the maximum.
+
+A third argument keeps the reduced axis instead of dropping it, at length 1:
+`sum(t, 1, true)` on a `[2, 3]` is a `[2, 1]` where `sum(t, 1)` is a `[2]`. This
+is what every other array library spells `keepdims`, and it is what makes the
+result line back up against the input, since broadcasting aligns from the right
+and a `[2]` does not align with a `[2, 3]`. The values are the dropping form's,
+in a longer shape, and the gradient is unchanged, because a kept reduction is
+the dropping one followed by a reshape.
+
+The flag is positional, like `sort`'s `descending` and `topk`'s `smallest`,
+because twill has no named arguments (docs/roadmap.md entry 29 is where that is
+still open). Unlike those two it may be written as a Bool or as a number, where
+a non-zero number is set; `sort(t, 0, true)` is still a runtime error and this
+one is not.
+
+It applies to every builtin that removes an axis: the six reductions above,
+`logsumexp`, and `argmax` and `argmin`. That those two return indices rather
+than values changes nothing about what the flag means, because it is a statement
+about the shape and not about the numbers in it: `argmax(t, 1, true)` on a
+`[2, 3]` is a `[2, 1]` of positions, which is the shape you need to compare
+against the input the positions were taken from. Ops that do not remove an axis
+do not take it: `softmax` and `flip` preserve the shape they were given, and
+`diff` shortens its axis rather than removing it, so there is no axis for the
+flag to keep.
+
+What a third argument to those three does today is not uniform, and the
+difference is older than the flag. `flip(t, 1, true)` and `diff(t, 1, true)`
+are refused, with `flip expects (tensor[, axis])` and
+`diff expects (tensor[, axis])`. `softmax(t, 1, true)` is **not** refused: it
+runs and returns the ordinary `softmax(t, 1)`, ignoring the third argument, as
+it ignores a fourth. That is how `softmax` has always behaved on both
+implementations, it is unchanged here, and it is worth knowing because it is a
+trap: a `keepdims` written on a `softmax` is silently nothing rather than an
+error. Tightening it is a separate change, because it would turn calls the
+corpus has always accepted into failures.
 
 All of them are differentiable, including the two order-based ones, though what
 that means is worth being clear about. `median` routes the whole gradient to
@@ -1409,8 +1551,8 @@ the product of the others, which is the total divided by that factor, except
 where a factor is zero and the division is not available. There, a single zero
 takes the product of the rest and everything else gets nothing, and two or more
 zeros flatten the gradient entirely, because every product of the others still
-contains a zero. `softmax(t[, axis])` and `logsumexp(t[, axis])` default to
-the last axis.
+contains a zero. `softmax(t[, axis])` and
+`logsumexp(t[, axis[, keepdims]])` default to the last axis.
 
 `split(t, n | sizes[, axis])` is the inverse of `concat`, returning a list of
 pieces. A number means that many equal pieces (`split(x, 2, 1)` halves the
@@ -1425,9 +1567,14 @@ crash. Each piece keeps its own gradient path, so
 right-aligned rules, where every axis must already match or be 1. It is what
 you need after a reduction: reducing axis 1 of a `[2, 3]` gives a `[2]`, and
 `[2]` will not broadcast back against `[2, 3]`, because alignment is from the
-right. `broadcast_to(reshape(mu, list(2, 1)), list(2, 3))` puts it back. Other
-array libraries spell this as `keepdims=True` on the reduction itself; here it
-is an operation, and `num.keep` wraps the two steps.
+right. `broadcast_to(reshape(mu, list(2, 1)), list(2, 3))` puts it back, and so
+does `num.keep`, which wraps those two steps.
+
+Most of the time the reduction's own `keepdims` flag is the shorter road:
+`sum(t, 1, true)` gives the `[2, 1]` directly and the implicit broadcast in the
+arithmetic that follows does the rest. `broadcast_to` is for the case that flag
+cannot reach, which is expanding against a shape that is not one of the
+operands.
 
 Sorting: `sort(t[, axis[, descending]])` and `argsort` give the values and the
 positions; `topk(t, k[, axis[, smallest]])` and `argtopk` keep the k largest,
@@ -1442,8 +1589,8 @@ value outside the top k does not move the output at all, so its gradient is
 zero, which is correct rather than a simplification. The sort is stable, so ties
 keep their original order and therefore their own gradients.
 
-`argmin(t[, axis])` is `argmax`'s counterpart, and `flip(t[, axis])` reverses
-along an axis. `flip` is differentiable and exactly so, since a reversal is a
+`argmin(t[, axis[, keepdims]])` is `argmax`'s counterpart, and `flip(t[, axis])`
+reverses along an axis. `flip` is differentiable and exactly so, since a reversal is a
 permutation and is its own inverse, which makes the backward pass the same
 reversal. All three default to the last axis. Ties in `argmax` and `argmin` go to
 the first occurrence, the same rule the cumulative extremes and the sort use.

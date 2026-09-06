@@ -124,6 +124,15 @@ type List struct {
 	Items []Value
 }
 
+// Tuple is a fixed-arity positional group, `(lo, hi)`. It is immutable: there
+// is no Set, nothing indexes it, and no field on it has a name, so the only
+// things a program can do with one are destructure it and pass it on. That is
+// deliberate -- a value meant to be stored and read by name is a Record, and a
+// tuple that grew accessors would be a second, worse one.
+type Tuple struct {
+	Items []Value
+}
+
 // Record is a struct with named fields. Keys preserves declaration order for
 // stable printing.
 type Record struct {
@@ -396,6 +405,11 @@ func Truthy(v Value) bool {
 		return len(t) > 0
 	case *List:
 		return len(t.Items) > 0
+	case *Tuple:
+		// A tuple always holds at least two values, so it is never empty and
+		// never false. Answering by its length would make `(0, 0)` truthy for a
+		// reason that has nothing to do with what it holds.
+		return true
 	case *Record:
 		return len(t.Keys) > 0
 	case Unit:
@@ -449,6 +463,12 @@ func Format(v Value) string {
 			parts[i] = Format(it)
 		}
 		return "[" + strings.Join(parts, ", ") + "]"
+	case *Tuple:
+		parts := make([]string, len(t.Items))
+		for i, it := range t.Items {
+			parts[i] = Format(it)
+		}
+		return "(" + strings.Join(parts, ", ") + ")"
 	case *Record:
 		parts := make([]string, len(t.Keys))
 		for i, k := range t.Keys {
