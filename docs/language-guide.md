@@ -666,7 +666,7 @@ anything a working program needs. Measured across every `.tw` file in this
 repository that runs as a program, all 66 of them, the deepest recursion any of
 them reaches is 14 nested calls, and the median is 3. The deeper recursion here
 is the compiler itself, since a recursive-descent checker follows the nesting of
-what it reads, and on the `src/` files measured that peaks at 120. So a program
+what it reads, and on the `src/` files measured that peaks at 217. So a program
 that reaches 10,000 has almost certainly lost its base case. Recursion is not
 the language's loop; a `while` costs no stack at all.
 

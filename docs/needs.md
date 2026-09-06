@@ -789,24 +789,30 @@ because a recursive-descent checker's depth follows its input.
 
 | file | deepest |
 | --- | ---: |
-| `src/fmt.tw` | **120** |
+| `src/parse.tw` | **217** |
+| `src/fmt.tw` | 120 |
+| `src/main.tw` | 73 |
 | `src/lex.tw` | 51 |
 | `src/bytes.tw` | 44 |
 | `src/buf.tw` | 41 |
+| `src/cli/diagnostic.tw` | 41 |
 | `src/ast.tw` | 37 |
 | `src/builtins.tw` | 29 |
 
-That is a subset of `src/` and is labelled as one: a single check of a
-thousand-line file costs over a minute, and the three largest, `src/eval.tw`,
-`src/tensor.tw` and `src/check.tw`, were not bisected here. An earlier round
-reported 217 for `src/parse.tw` on a different tree.
+That is nine of the thirty files under `src/` and is labelled as one rather than
+presented as a survey: a single check of a thousand-line file costs over a
+minute here, and the three largest, `src/eval.tw`, `src/tensor.tw` and
+`src/check.tw`, were not bisected. `src/parse.tw`'s 217 is the same number an
+earlier round reported, arrived at again by a different method, which is the one
+figure in this entry that has now survived being re-derived twice.
 
 The figure follows the *nesting* of the file being checked rather than its
 length, which is why no file's number is a ceiling: measured the same way, a
 synthetic file of 800 flat top-level `let` bindings peaks at 18, while a single
-`print` of a 120-term `+` chain reaches 247. The margin against 10,000 is
-therefore two orders of magnitude for real input and not a guarantee against
-constructed input, which is the same shape of answer as the section below.
+`print` of a 120-term `+` chain reaches 247, more than the whole of
+`src/parse.tw`. The margin against 10,000 is therefore about a factor of fifty
+for real input and not a guarantee against constructed input, which is the same
+shape of answer as the section below.
 
 An earlier round of this entry also carried rows for the nine satellite
 repositories and for `testdata/` at large. Those cannot be re-taken from inside

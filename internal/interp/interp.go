@@ -75,7 +75,7 @@ func CheckLegacyExt(path string) error {
 // the deepest call depth any of them reaches is 14 and the median is 3. The
 // deeper recursion here is the self-hosted compiler, whose depth follows the
 // nesting of the file it is checking rather than the program's own call graph;
-// on the src/ files measured that peaks at 120. Both were measured by bisecting
+// on the src/ files measured that peaks at 217. Both were measured by bisecting
 // the smallest TWILL_MAX_CALL_DEPTH at which each run completes, which is
 // exactly its peak depth and needs no instrumented build.
 //

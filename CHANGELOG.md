@@ -28,8 +28,8 @@
   10,000 is far above what working code needs, measured rather than assumed:
   across all 66 `.tw` files in this repository that run as programs the deepest
   recursion any of them reaches is 14 nested calls, median 3, and the deeper
-  recursion here is the self-hosted compiler, which peaks at 120 on the `src/`
-  files measured.
+  recursion here is the self-hosted compiler, which peaks at 217 on the `src/`
+  files measured, checking `src/parse.tw`.
 
   **The limit is a diagnostic, not a guarantee, and that is worth reading before
   relying on it.** What decides where the host's stack runs out is not what the
