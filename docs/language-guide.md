@@ -654,6 +654,79 @@ fn matmul2(A: [n, k], B: [k, m]) -> [n, m] {
 Here `k` must match between `A` and `B`, and the result is checked against
 `[n, m]`.
 
+### Recursion, and how deep it goes
+
+Functions may recurse, and there is a limit: 10,000 nested calls. Past it the
+program is refused with an ordinary error naming the function and the call's
+line.
+
+```
+$ twill run fact.tw
+fact.tw:2: runtime error: call depth limit reached: "fact" is 10000 calls deep,
+which is as deep as twill goes. A recursion this deep is almost always a
+missing base case; if it is not, rewrite it as a loop
+  2 |   n * fact(n - 1)
+```
+
+The limit is there because the alternative is not a deeper recursion, it is a
+crash: the evaluator runs on the host's stack, and running out of it takes the
+whole process down with nothing an error handler can catch. 10,000 is far above
+anything a working program needs. Measured across every `.tw` file in this
+repository that runs as a program, all 66 of them, the deepest recursion any of
+them reaches is 14 nested calls, and the median is 3. The deeper recursion here
+is the compiler itself, since a recursive-descent checker follows the nesting of
+what it reads, and on the `src/` files measured that peaks at 217. So a program
+that reaches 10,000 has almost certainly lost its base case. Recursion is not
+the language's loop; a `while` costs no stack at all.
+
+The limit is a diagnostic for the recursions people write, and not a guarantee
+for every one they could write. What decides how much host stack a twill frame
+costs is not what the frame holds, which costs nothing measurable, but how
+deeply the recursive call sits inside the expression around it: every enclosing
+operator is one more frame the evaluator has to hold open across the call. A
+bare `return f(n - 1)` survives 233,013 nested calls before the host stack gives
+out; `f(n - 1) + 1` survives 147,815; thirty layers of arithmetic survive 12,739,
+and three hundred survive 1,340. Because nothing bounds how deep an expression
+may be, no fixed limit can be below the crash for every program. What 10,000
+covers is a runaway call nested inside up to 38 layers of flat arithmetic,
+`1 + 1 + ... + f(n)`, which
+survives 10,174 calls, or 24 layers of `[x][0]`, the most expensive layer
+measured, which survives 10,357. The deepest call site written anywhere in this
+repository is nested 14 deep. Write a recursion whose call sits deeper inside its
+expression than that envelope, and lose its base case, and the process dies on
+the host's stack the way it did before the limit existed. Binding the call to a
+`let` and using the name afterwards puts it back in reach of the diagnostic:
+with 39 layers applied to a bound name rather than to the call, the depth goes
+back out to 232,993.
+
+The shape matters as much as the count, which is why the number above names
+one. Right-nested arithmetic costs slightly more per layer than the flat form:
+`(1 + (1 + ... f(n)))` is caught at 37 layers and overflows at 38, where the
+flat `1 + 1 + ... + f(n)` is still caught at 38. Both were measured the same
+way, on this machine.
+
+Those numbers are this machine's, measured on macOS arm64 with Go's 1 GB
+goroutine stack. Another host will put the cliff somewhere else. What does not
+move is the shape of it: the reciprocal of the depth is linear in the number of
+enclosing layers, so there is always a nesting deep enough to get under any
+fixed limit.
+
+`TWILL_MAX_CALL_DEPTH` overrides the number for one run. There is exactly one
+reason to reach for it, and it is not "my program needs more stack": an
+interpreter written in twill, running on this one, spends several of the host's
+frames for each of its own, so the host has to be given a larger limit than the
+guest before the guest can ever reach its own. That is why
+
+```
+TWILL_MAX_CALL_DEPTH=100000 twill run src/main.tw run prog.tw
+```
+
+prints for `prog.tw` exactly what `twill run prog.tw` prints, and why the plain
+form does not: without it the host stops first and reports against a function
+inside `src/eval.tw`. It is not a knob for buying stack: raise it far enough and
+the overflow the limit exists to turn into a diagnostic comes back, at whatever
+depth the program's own shape puts it.
+
 ## Control flow
 
 `if` is an expression:

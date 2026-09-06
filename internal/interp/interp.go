@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 
 	"github.com/twill-lang/twill/internal/ast"
@@ -51,6 +52,95 @@ func CheckLegacyExt(path string) error {
 	}
 	renamed := path[:len(path)-len(legacyExt)] + ".tw"
 	return fmt.Errorf("%q uses the retired .ra extension: Twill source files are .tw, so rename it to %q", path, renamed)
+}
+
+// DefaultMaxCallDepth is how many twill calls may be nested before the
+// interpreter refuses to go further.
+//
+// It exists because a Go stack overflow is a *fatal* error: no recover catches
+// it, the process dies and nothing the interpreter does afterwards runs. With
+// the limit lifted, a three-line runaway recursion prints 424 lines of Go
+// runtime traceback on this machine and exits 2, and not one of those lines
+// names the user's function or the line the recursion is on. See
+// TestRunawayRecursionIsRefused for how that was measured. A missing base case
+// is the most likely first mistake a newcomer makes, so that crash was the most
+// likely first thing they saw. A counter checked on the way in turns it into an
+// ordinary twill error, which is the only way to get one at all.
+//
+// Both ends of the number are measured and docs/needs.md NEEDS-30 has the
+// tables. Depths here are counted in nested twill calls, which is what
+// callDepth counts, so f(n) reaches n+1 of them.
+//
+// The low end: over all 66 .tw files in this repository that run as programs,
+// the deepest call depth any of them reaches is 14 and the median is 3. The
+// deeper recursion here is the self-hosted compiler, whose depth follows the
+// nesting of the file it is checking rather than the program's own call graph;
+// on the src/ files measured that peaks at 217. Both were measured by bisecting
+// the smallest TWILL_MAX_CALL_DEPTH at which each run completes, which is
+// exactly its peak depth and needs no instrumented build.
+//
+// The high end is not one number, and that has to be said plainly rather than
+// rounded off. What decides where the Go stack runs out is not what the twill
+// frame holds but how deeply the recursive call sits inside the expression
+// around it, because every enclosing operator is another evalExpr frame held
+// live across the call. Measured on this machine, macOS arm64 with Go's 1 GB
+// goroutine stack, a runaway f survives 233,013 nested calls when the call is
+// bare, 147,815 with one `+ 1` around it, 12,739 with thirty and 1,340 with
+// three hundred.
+//
+// Widening the frame changes nothing whatever: with the nesting held at one
+// layer, one parameter or eight, no locals or sixteen, five parameters and
+// three locals together, the cliff stays at 147,815 -- equal to the digit, not
+// merely close. An earlier round of this work read the same evidence the other
+// way, reporting that a fat frame of five parameters and three locals died a
+// quarter shallower. That was the two-operator-layer number: its test program
+// had one more layer of expression around the call than the thin one it was
+// compared against.
+//
+// So no fixed limit is uniformly below the crash, because nesting has no upper
+// bound. What 10,000 buys is a bounded envelope: a runaway call still gets the
+// diagnostic while it sits inside up to 38 arithmetic layers, which survives
+// 10,174 calls, or 24 of the most expensive layer measured, `[x][0]`, which
+// survives 10,357. The deepest call site written anywhere in this
+// repository is nested 14 expressions deep. Past that envelope the fatal
+// overflow is back. The limit is a diagnostic for the shapes people write, not
+// a guarantee for every shape, and it never makes anything worse than it was.
+const DefaultMaxCallDepth = 10000
+
+// maxCallDepthEnv overrides DefaultMaxCallDepth for interpreters made by New.
+//
+// It exists for one caller: a host running an interpreter written in twill. See
+// Interp.MaxCallDepth for why that case needs a different number from every
+// other one, and why no single shared constant can serve both.
+const maxCallDepthEnv = "TWILL_MAX_CALL_DEPTH"
+
+// envMaxCallDepth is DefaultMaxCallDepth unless TWILL_MAX_CALL_DEPTH holds a
+// positive integer. A value that is not one is ignored rather than refused:
+// this is a safety limit, and failing to start because its override is
+// misspelled would be a worse outcome than running at the default.
+func envMaxCallDepth() int {
+	n, err := strconv.Atoi(os.Getenv(maxCallDepthEnv))
+	if err != nil || n < 1 {
+		return DefaultMaxCallDepth
+	}
+	return n
+}
+
+// callDepthMessage is the refusal, in the one place both engines copy it from.
+// src/eval.tw's call_depth_message is the same text and the two must agree
+// character for character; TestSelfHostedRefusalsMatchTheBootstrap, in
+// recursion_test.go, is what holds them together: it runs each shape of runaway
+// recursion on both engines and requires the self-hosted CLI's first stderr
+// line to equal the bootstrap's byte for byte, so a change made here and not in
+// src/eval.tw fails there.
+func callDepthMessage(name string, depth int) string {
+	who := "an anonymous function"
+	if name != "" {
+		who = strconv.Quote(name)
+	}
+	return fmt.Sprintf("call depth limit reached: %s is %d calls deep, which is as deep as twill "+
+		"goes. A recursion this deep is almost always a missing base case; if it is not, rewrite "+
+		"it as a loop", who, depth)
 }
 
 // RuntimeError carries a source line for errors raised during evaluation.
@@ -124,8 +214,38 @@ type Interp struct {
 	gradDepth int
 	// callDepth counts the closures currently executing. It is what tells a `?`
 	// at the top of a file, where there is no function to return from, apart
-	// from one inside a function.
+	// from one inside a function, and it is what the recursion limit counts.
 	callDepth int
+	// line is the source line of the statement currently executing, which is
+	// all the position a panic from inside the interpreter has to report. See
+	// recovered.
+	line int
+	// MaxCallDepth is the recursion limit for this interpreter, set by New to
+	// DefaultMaxCallDepth or to whatever TWILL_MAX_CALL_DEPTH says.
+	//
+	// It is a field rather than a constant because of one case: an interpreter
+	// written in twill, running on this one. Two counters are then measuring the
+	// same Go stack, and the outer one always reaches its limit first, because
+	// each of the inner interpreter's frames costs several of the outer one's.
+	// Measured on `twill run src/main.tw run prog.tw`, the outer depth is
+	// 8*inner + 9 exactly, so an outer interpreter left at 10,000 cuts the inner
+	// program off at 1,248 of its own calls and names a function inside
+	// src/eval.tw rather than one in prog.tw.
+	//
+	// No single shared constant fixes that, and it is worth being precise about
+	// why: if both engines refuse at L, the inner engine needs 8L+9 outer frames
+	// to reach L, and the outer engine stops at L first for every positive L.
+	// The only way the two can refuse the same program with the same words is
+	// for the host to be given a larger number than the guest, which is what
+	// this field and TWILL_MAX_CALL_DEPTH are for. The number the self-hosted
+	// evaluator needs was bisected on the shipped CLI rather than derived: at
+	// 80,012 the host still refuses first, at 80,013 the guest does.
+	// TWILL_MAX_CALL_DEPTH=100000 is the documented value because it clears
+	// 80,013 without sitting on it. There is no single number above which it
+	// stops working, for the same reason there is no single crash depth: see
+	// DefaultMaxCallDepth. What is known is that the host survives this one,
+	// because TestSelfHostedRefusalsMatchTheBootstrap runs it.
+	MaxCallDepth int
 	// rngs holds the independent generator streams `rng_open` hands out, by
 	// handle. A twill value cannot carry a native pointer, so a stream is named
 	// by an integer, the same way a fitted gbm model is. This is separate from
@@ -158,6 +278,7 @@ func New(out func(string)) *Interp {
 		structFields:    map[string]map[string]string{},
 		rngs:            map[int64]*rand.Rand{},
 		tr:              trace.New(nil),
+		MaxCallDepth:    envMaxCallDepth(),
 	}
 	ip.installBuiltins()
 	return ip
@@ -194,6 +315,47 @@ func (ip *Interp) resolvePath(path string) string {
 	return filepath.Join(ip.currentDir(), path)
 }
 
+// recovered turns whatever came out of a recover into what the caller should
+// return. The interpreter's own signals are handled by name; anything else is a
+// fault inside the interpreter, and is rendered as a twill error rather than
+// re-panicked into a Go traceback.
+//
+// Re-panicking was the previous behaviour, and what it produced was a goroutine
+// dump addressed to someone who is not reading it: the person at the keyboard
+// is running a twill program and cannot act on a Go stack. The
+// line the program had reached is what they can act on, together with being
+// told plainly that the fault is twill's and not theirs. The Go stack is not
+// lost to whoever does have to fix it -- the panic value is quoted verbatim,
+// and the failing input is in front of them.
+//
+// This is the second half of the recursion limit and not a replacement for it.
+// A Go stack overflow is a fatal error that never reaches a recover, so the
+// one fault most likely to be hit is the one fault this cannot catch. That is
+// what MaxCallDepth is for.
+func (ip *Interp) recovered(r any, result value.Value) (value.Value, error) {
+	switch e := r.(type) {
+	case *RuntimeError:
+		return result, e
+	case *ExitError:
+		return result, e
+	case returnSignal:
+		return e.value, nil
+	case breakSignal:
+		return result, &RuntimeError{Line: ip.line, Msg: "`break` outside a loop"}
+	case continueSignal:
+		return result, &RuntimeError{Line: ip.line, Msg: "`continue` outside a loop"}
+	default:
+		// A Go runtime fault stringifies as "runtime error: ...", which after the
+		// prefix below would read "internal error: runtime error: ...". One name
+		// for the thing is enough, and "internal" is the word that says whose
+		// fault it is.
+		what := strings.TrimPrefix(fmt.Sprint(r), "runtime error: ")
+		return result, &RuntimeError{Line: ip.line, Msg: fmt.Sprintf(
+			"internal error: %s. This is a bug in twill, not in the program that hit it: "+
+				"please report it, with this file, at https://github.com/twill-lang/twill/issues", what)}
+	}
+}
+
 // Run parses and evaluates source, returning the last value.
 func (ip *Interp) Run(src string) (result value.Value, err error) {
 	prog, perr := parser.Parse(src)
@@ -202,16 +364,7 @@ func (ip *Interp) Run(src string) (result value.Value, err error) {
 	}
 	defer func() {
 		if r := recover(); r != nil {
-			switch e := r.(type) {
-			case *RuntimeError:
-				err = e
-			case *ExitError:
-				err = e
-			case returnSignal:
-				result = e.value
-			default:
-				panic(r)
-			}
+			result, err = ip.recovered(r, result)
 		}
 	}()
 	result = value.TheUnit
@@ -246,16 +399,7 @@ func (ip *Interp) RunFileMain(path string, args []string) (result value.Value, r
 
 	defer func() {
 		if r := recover(); r != nil {
-			switch e := r.(type) {
-			case *RuntimeError:
-				err = e
-			case *ExitError:
-				err = e
-			case returnSignal:
-				result = e.value
-			default:
-				panic(r)
-			}
+			result, err = ip.recovered(r, result)
 		}
 	}()
 	result = value.TheUnit
@@ -266,7 +410,7 @@ func (ip *Interp) RunFileMain(path string, args []string) (result value.Value, r
 	if prog.Mode == "systems" {
 		if m, ok := ip.Global.Get("main"); ok {
 			if c, ok := m.(*value.Closure); ok && len(c.Params) == 0 {
-				result = ip.callClosure(c, nil)
+				result = ip.callClosure(c, nil, c.Body.Pos())
 				ranMain = true
 			}
 		}
@@ -363,6 +507,10 @@ func containerForAnnotation(typeName string, v value.Value) (value.Value, bool) 
 }
 
 func (ip *Interp) execStmt(s ast.Stmt, env *value.Env) value.Value {
+	// The line of the statement being executed, kept only so that a fault inside
+	// the interpreter can say where the program had got to. Nothing reads it on
+	// the way through; see recovered.
+	ip.line = s.Pos()
 	switch st := s.(type) {
 	case *ast.Let:
 		v := ip.tracedStmt(func() value.Value { return ip.evalExpr(st.Value, env) })
@@ -1636,14 +1784,23 @@ func (ip *Interp) Apply(callee value.Value, args []value.Value, line int) value.
 			}
 			ip.panicf(line, "%s expects %d argument(s), got %d", name, len(fn.Params), len(args))
 		}
-		return ip.callClosure(fn, args)
+		return ip.callClosure(fn, args, line)
 	default:
 		ip.panicf(line, "value is not callable: %s", value.Format(callee))
 		return value.TheUnit
 	}
 }
 
-func (ip *Interp) callClosure(c *value.Closure, args []value.Value) (ret value.Value) {
+// callClosure calls c with args. line is the source line of the call, used to
+// point the recursion refusal at the call site.
+func (ip *Interp) callClosure(c *value.Closure, args []value.Value, line int) (ret value.Value) {
+	// The check is on the way in, before the frame is entered, so the refusal
+	// unwinds from a stack that still has room to unwind through. Checking after
+	// the fact is not available: Go's stack overflow is fatal and cannot be
+	// recovered from.
+	if ip.callDepth >= ip.MaxCallDepth {
+		ip.panicf(line, "%s", callDepthMessage(c.Name, ip.MaxCallDepth))
+	}
 	ip.callDepth++
 	defer func() { ip.callDepth-- }()
 	scope := value.NewEnv(c.Env)
