@@ -3332,6 +3332,12 @@ func plural(n int, one, many string) string {
 }
 
 func (c *checker) reduceResult(name string, ex *ast.Call, argTypes []Type) Type {
+	// `sum()` with no arguments reached the index below and panicked the
+	// checker. It is an arity error the runtime already names, so there is
+	// nothing to say here beyond declining to guess a type.
+	if len(argTypes) == 0 {
+		return tUnknown{}
+	}
 	var u unitMap // reductions preserve the input's unit
 	rdt := dtUnknown
 	if t, ok := argTypes[0].(tTensor); ok {
@@ -3347,17 +3353,23 @@ func (c *checker) reduceResult(name string, ex *ast.Call, argTypes []Type) Type 
 	if len(argTypes) == 1 {
 		return tTensor{dims: []int{}, unit: u}.withDType(rdt)
 	}
-	if len(argTypes) == 2 {
+	if len(argTypes) == 2 || len(argTypes) == 3 {
 		if c.rank0Axis(ex, argTypes) {
 			return tUnknown{}
 		}
+		keep, known := constKeepdims(ex.Args, 2)
 		if t, ok := argTypes[0].(tTensor); ok && len(t.dims) > 0 {
 			if ax, ok := constInt(ex.Args[1]); ok {
 				if ax < 0 {
 					ax += len(t.dims)
 				}
 				if ax >= 0 && ax < len(t.dims) {
-					return tTensor{dims: removeDim(t.dims, ax), unit: u}.withDType(rdt)
+					// The axis is checked either way; only the shape depends on
+					// a flag the checker may not be able to fold.
+					if !known {
+						return tUnknown{}
+					}
+					return tTensor{dims: reducedDims(t.dims, ax, keep), unit: u}.withDType(rdt)
 				}
 				c.reportAxis(ex, t)
 			}
@@ -3392,15 +3404,18 @@ func (c *checker) axisPreserveResult(ex *ast.Call, argTypes []Type, axisArg int)
 	return t
 }
 
-// axisReduceResult handles argmax/logsumexp, which always reduce one axis
-// (default: the last).
+// axisReduceResult handles argmax/argmin/logsumexp, which always reduce one axis
+// (default: the last) and take the rank-preserving flag in the third position.
 func (c *checker) axisReduceResult(ex *ast.Call, argTypes []Type) Type {
+	if len(argTypes) == 0 {
+		return tUnknown{}
+	}
 	t, ok := argTypes[0].(tTensor)
 	if !ok || len(t.dims) == 0 {
 		return tUnknown{}
 	}
 	axis := len(t.dims) - 1
-	if len(ex.Args) == 2 {
+	if len(ex.Args) >= 2 {
 		ax, ok := constInt(ex.Args[1])
 		if !ok {
 			return tUnknown{}
@@ -3414,7 +3429,11 @@ func (c *checker) axisReduceResult(ex *ast.Call, argTypes []Type) Type {
 		c.reportAxis(ex, t)
 		return tUnknown{}
 	}
-	return tTensor{dims: removeDim(t.dims, axis)}
+	keep, known := constKeepdims(ex.Args, 2)
+	if !known {
+		return tUnknown{}
+	}
+	return tTensor{dims: reducedDims(t.dims, axis, keep)}
 }
 
 func (c *checker) broadcastTwo(ex *ast.Call, argTypes []Type) Type {
@@ -3462,6 +3481,40 @@ func (c *checker) broadcastWhere(ex *ast.Call, argTypes []Type) Type {
 		}
 	}
 	return res
+}
+
+// reducedDims is the input's shape with the reduced axis dropped, or left in at
+// length 1 when the rank-preserving flag is set. One place decides what
+// `keepdims` does to a shape, so the reductions and the index reductions cannot
+// drift apart on it.
+func reducedDims(dims []int, axis int, keep bool) []int {
+	if !keep {
+		return removeDim(dims, axis)
+	}
+	out := append([]int(nil), dims...)
+	out[axis] = 1
+	return out
+}
+
+// constKeepdims folds a rank-preserving flag argument: absent is false, and a
+// literal `true`, `false` or number is what it says, matching flagOf's rule at
+// runtime that a non-zero number is set.
+//
+// The second result is false when the argument is there but is not a literal.
+// The result's rank then depends on a value the checker cannot see, and there is
+// no answer to give: guessing either shape would report mismatches against a
+// shape the program may never have.
+func constKeepdims(args []ast.Expr, idx int) (bool, bool) {
+	if len(args) <= idx {
+		return false, true
+	}
+	if b, ok := args[idx].(*ast.BoolLit); ok {
+		return b.Value, true
+	}
+	if n, ok := constInt(args[idx]); ok {
+		return n != 0, true
+	}
+	return false, false
 }
 
 func removeDim(dims []int, axis int) []int {

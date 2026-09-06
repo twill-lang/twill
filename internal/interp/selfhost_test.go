@@ -1245,6 +1245,29 @@ let HEX: I64 = 2
 	}
 }
 
+// The rank-preserving flag is a shape change, and a shape change is exactly the
+// kind of thing the two implementations can transcribe differently: one of them
+// composes reduce-then-reshape in the interpreter and the other in the tensor
+// kernel. Printing the result compares the shape, the values, the dtype tag and
+// the diagnostics in one go.
+func TestSelfHostedKeepdimsMatches(t *testing.T) {
+	src := "let m = tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])\n" +
+		"print(sum(m, 1, true))\nprint(sum(m, 1, false))\nprint(sum(m, 1, 1))\n" +
+		"print(mean(m, 0, true))\nprint(max(m, -1, true))\nprint(min(m, 1, true))\n" +
+		"print(prod(m, 1, true))\nprint(median(m, 1, true))\n" +
+		"print(argmax(m, 1, true))\nprint(argmin(m, 0, true))\n" +
+		"print(logsumexp(m, 1, true))\n" +
+		"print(m - sum(m, 1, true) / 3.0)\n" +
+		"print(grad(fn(v) = sum(sum(v, 1, true)))(m))\n"
+	goOut, selfOut := runBothWays(t, src)
+	if goOut != selfOut {
+		t.Fatalf("keepdims differs:\n Go   %q\n self %q", goOut, selfOut)
+	}
+	if !strings.Contains(goOut, "shape=[2, 1]") {
+		t.Fatalf("expected a kept axis in the output, got %q", goOut)
+	}
+}
+
 // --- tuples ----------------------------------------------------------------
 
 // Tuple returns and destructuring `let` (docs/roadmap.md entry 1) touch the
@@ -1567,5 +1590,53 @@ let c = { ..base }
 	}
 	if got != want {
 		t.Errorf("the two formatters disagree.\n  go:\n%s\n  self:\n%s", want, got)
+	}
+}
+
+// docs/language-guide.md tells the reader what a third argument to the three
+// shape-preserving ops does, and it does not do the same thing for all three.
+// `flip` and `diff` refuse it; `softmax` has never counted its arguments and
+// ignores it, so a `keepdims` written on a softmax is silently nothing. That
+// asymmetry is older than the flag and is documented rather than fixed, which
+// only works if it is pinned: this is the test that turns the paragraph red if
+// either half of it stops being true, on either implementation.
+func TestSelfHostedThirdArgumentToShapePreservingOps(t *testing.T) {
+	const m = "let m = tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])\n"
+
+	// softmax ignores it, and both implementations ignore it identically: the
+	// answer is the two-argument one, shape and all.
+	plainGo, plainSelf := runBothWays(t, m+"print(softmax(m, 1))\n")
+	if plainGo != plainSelf {
+		t.Fatalf("softmax(m, 1) differs:\n Go   %q\n self %q", plainGo, plainSelf)
+	}
+	for _, src := range []string{
+		m + "print(softmax(m, 1, true))\n",
+		m + "print(softmax(m, 1, true, 9))\n",
+	} {
+		goOut, selfOut := runBothWays(t, src)
+		if goOut != selfOut {
+			t.Errorf("%q differs:\n Go   %q\n self %q", src, goOut, selfOut)
+		}
+		if goOut != plainGo {
+			t.Errorf("%q should be softmax(m, 1) ignoring the extra argument, got %q want %q",
+				src, goOut, plainGo)
+		}
+	}
+
+	// flip and diff refuse it, on both implementations, with the arity message.
+	for _, tc := range []struct{ src, msg string }{
+		{m + "print(flip(m, 1, true))\n", "flip expects (tensor[, axis])"},
+		{m + "print(diff(m, 1, true))\n", "diff expects (tensor[, axis])"},
+	} {
+		ip := interp.New(func(string) {})
+		_, err := ip.Run(tc.src)
+		if err == nil {
+			t.Errorf("the bootstrap accepted %q instead of refusing it", tc.src)
+		} else if !strings.Contains(err.Error(), tc.msg) {
+			t.Errorf("the bootstrap refused %q with %q, want it to contain %q", tc.src, err, tc.msg)
+		}
+		if code := runSelfHostedRun(t, tc.src); code == 0 {
+			t.Errorf("the self-hosted evaluator accepted %q instead of refusing it", tc.src)
+		}
 	}
 }

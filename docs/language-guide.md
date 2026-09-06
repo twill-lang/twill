@@ -1498,7 +1498,42 @@ the comparisons `greater`, `less`, `greater_equal`, `less_equal`, `equal`
 
 Reductions: `sum`, `mean`, `max`, `min`, `prod` and `median` reduce the whole
 tensor to a scalar, or one axis with a second argument (`sum(t, 0)`).
-`argmax(t[, axis])` gives the index of the maximum.
+`argmax(t[, axis[, keepdims]])` gives the index of the maximum.
+
+A third argument keeps the reduced axis instead of dropping it, at length 1:
+`sum(t, 1, true)` on a `[2, 3]` is a `[2, 1]` where `sum(t, 1)` is a `[2]`. This
+is what every other array library spells `keepdims`, and it is what makes the
+result line back up against the input, since broadcasting aligns from the right
+and a `[2]` does not align with a `[2, 3]`. The values are the dropping form's,
+in a longer shape, and the gradient is unchanged, because a kept reduction is
+the dropping one followed by a reshape.
+
+The flag is positional, like `sort`'s `descending` and `topk`'s `smallest`,
+because twill has no named arguments (docs/roadmap.md entry 29 is where that is
+still open). Unlike those two it may be written as a Bool or as a number, where
+a non-zero number is set; `sort(t, 0, true)` is still a runtime error and this
+one is not.
+
+It applies to every builtin that removes an axis: the six reductions above,
+`logsumexp`, and `argmax` and `argmin`. That those two return indices rather
+than values changes nothing about what the flag means, because it is a statement
+about the shape and not about the numbers in it: `argmax(t, 1, true)` on a
+`[2, 3]` is a `[2, 1]` of positions, which is the shape you need to compare
+against the input the positions were taken from. Ops that do not remove an axis
+do not take it: `softmax` and `flip` preserve the shape they were given, and
+`diff` shortens its axis rather than removing it, so there is no axis for the
+flag to keep.
+
+What a third argument to those three does today is not uniform, and the
+difference is older than the flag. `flip(t, 1, true)` and `diff(t, 1, true)`
+are refused, with `flip expects (tensor[, axis])` and
+`diff expects (tensor[, axis])`. `softmax(t, 1, true)` is **not** refused: it
+runs and returns the ordinary `softmax(t, 1)`, ignoring the third argument, as
+it ignores a fourth. That is how `softmax` has always behaved on both
+implementations, it is unchanged here, and it is worth knowing because it is a
+trap: a `keepdims` written on a `softmax` is silently nothing rather than an
+error. Tightening it is a separate change, because it would turn calls the
+corpus has always accepted into failures.
 
 All of them are differentiable, including the two order-based ones, though what
 that means is worth being clear about. `median` routes the whole gradient to
@@ -1508,8 +1543,8 @@ the product of the others, which is the total divided by that factor, except
 where a factor is zero and the division is not available. There, a single zero
 takes the product of the rest and everything else gets nothing, and two or more
 zeros flatten the gradient entirely, because every product of the others still
-contains a zero. `softmax(t[, axis])` and `logsumexp(t[, axis])` default to
-the last axis.
+contains a zero. `softmax(t[, axis])` and
+`logsumexp(t[, axis[, keepdims]])` default to the last axis.
 
 `split(t, n | sizes[, axis])` is the inverse of `concat`, returning a list of
 pieces. A number means that many equal pieces (`split(x, 2, 1)` halves the
@@ -1524,9 +1559,14 @@ crash. Each piece keeps its own gradient path, so
 right-aligned rules, where every axis must already match or be 1. It is what
 you need after a reduction: reducing axis 1 of a `[2, 3]` gives a `[2]`, and
 `[2]` will not broadcast back against `[2, 3]`, because alignment is from the
-right. `broadcast_to(reshape(mu, list(2, 1)), list(2, 3))` puts it back. Other
-array libraries spell this as `keepdims=True` on the reduction itself; here it
-is an operation, and `num.keep` wraps the two steps.
+right. `broadcast_to(reshape(mu, list(2, 1)), list(2, 3))` puts it back, and so
+does `num.keep`, which wraps those two steps.
+
+Most of the time the reduction's own `keepdims` flag is the shorter road:
+`sum(t, 1, true)` gives the `[2, 1]` directly and the implicit broadcast in the
+arithmetic that follows does the rest. `broadcast_to` is for the case that flag
+cannot reach, which is expanding against a shape that is not one of the
+operands.
 
 Sorting: `sort(t[, axis[, descending]])` and `argsort` give the values and the
 positions; `topk(t, k[, axis[, smallest]])` and `argtopk` keep the k largest,
@@ -1541,8 +1581,8 @@ value outside the top k does not move the output at all, so its gradient is
 zero, which is correct rather than a simplification. The sort is stable, so ties
 keep their original order and therefore their own gradients.
 
-`argmin(t[, axis])` is `argmax`'s counterpart, and `flip(t[, axis])` reverses
-along an axis. `flip` is differentiable and exactly so, since a reversal is a
+`argmin(t[, axis[, keepdims]])` is `argmax`'s counterpart, and `flip(t[, axis])`
+reverses along an axis. `flip` is differentiable and exactly so, since a reversal is a
 permutation and is its own inverse, which makes the backward pass the same
 reversal. All three default to the last axis. Ties in `argmax` and `argmin` go to
 the first occurrence, the same rule the cumulative extremes and the sort use.

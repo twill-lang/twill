@@ -2582,6 +2582,22 @@ fn scalar_of(v: Value, who: Str, line: I64) -> Res[F64, RuntimeError] {
 fn int_of(v: Value, who: Str, line: I64) -> Res[I64, RuntimeError] =
   Ok(i64_of_f64(f64_trunc(scalar_of(v, who, line)?)))
 
+# A boolean flag argument, written either way.
+#
+# The flags that came before this one -- sort's descending, topk's smallest --
+# are numbers, because a comparison in twill already yields 1 and 0, and
+# `sort(t, 0, true)` is a runtime error today for want of a Bool case here. A new
+# flag does not have to inherit that. Both spellings are accepted, so `keepdims`
+# can be written the way anybody would write it, and nothing that worked before
+# means anything different.
+fn flag_of(v: Value, who: Str, line: I64) -> Res[Bool, RuntimeError] {
+  match v {
+    VBool(b) => return Ok(b),
+    _ => unit,
+  }
+  Ok(scalar_of(v, who, line)? != 0.0)
+}
+
 # Whether v is a single number as opposed to a sequence of them. Used where a
 # scalar and a one-element sequence have to mean different things, which is
 # `split` and only `split`.
@@ -2783,7 +2799,8 @@ fn call_builtin(b: BuiltinVal, args: Arr[Value], line: I64) -> Res[Value, Runtim
   if in_words("topk argtopk", name) { return bi_topping(name, args, line) }
   if in_words(LAST_AXIS, name) { return bi_last_axis(name, args, line) }
   if bytes.equal(name, "roll") { return bi_roll(args, line) }
-  if in_words("softmax logsumexp", name) { return bi_last_axis_op(name, args, line) }
+  if bytes.equal(name, "softmax") { return bi_softmax(args, line) }
+  if bytes.equal(name, "logsumexp") { return bi_logsumexp(args, line) }
   if in_words("reshape broadcast_to", name) { return bi_reshaping(name, args, line) }
   if bytes.equal(name, "transpose") { return bi_transpose(args, line) }
   if bytes.equal(name, "linear") { return bi_linear(args, line) }
@@ -3153,26 +3170,36 @@ fn bi_clip(args: Arr[Value], line: I64) -> Res[Value, RuntimeError] {
 # A constant axis is refused by the checker before any of this, so the message
 # is only reachable when the axis is computed.
 
+# A third argument is the rank-preserving flag, which leaves the reduced axis in
+# at length 1 instead of dropping it. It is positional because twill has no named
+# arguments (docs/roadmap.md entry 29) and it is a Bool or a number because
+# flag_of takes either.
 fn bi_reduce(name: Str, args: Arr[Value], line: I64) -> Res[Value, RuntimeError] {
-  if len(args) == 0 or len(args) > 2 {
-    return Err(runtime_error(line, bytes.concat(name, " expects (tensor) or (tensor, axis)")))
+  if len(args) == 0 or len(args) > 3 {
+    return Err(runtime_error(line, bytes.concat(name, " expects (tensor) or (tensor, axis[, keepdims])")))
   }
   let t: tensor.Tensor = arg_tensor(args[0], name, line)?
+  let op: tensor.Op = reduce_op(name)
   if len(args) == 1 {
-    if bytes.equal(name, "sum") { return lift_v(tr_reduce_all(tensor.OpSum, t), line) }
-    if bytes.equal(name, "mean") { return lift_v(tr_reduce_all(tensor.OpMean, t), line) }
-    if bytes.equal(name, "max") { return lift_v(tr_reduce_all(tensor.OpMax, t), line) }
-    if bytes.equal(name, "min") { return lift_v(tr_reduce_all(tensor.OpMin, t), line) }
-    if bytes.equal(name, "prod") { return lift_v(tr_reduce_all(tensor.OpProd, t), line) }
-    return lift_v(tr_reduce_all(tensor.OpMedian, t), line)
+    return lift_v(tr_reduce_all(op, t), line)
   }
   let ax: I64 = int_of(args[1], name, line)?
-  if bytes.equal(name, "sum") { return lift_v(tr_reduce_axis(tensor.OpSum, t, ax), line) }
-  if bytes.equal(name, "mean") { return lift_v(tr_reduce_axis(tensor.OpMean, t, ax), line) }
-  if bytes.equal(name, "max") { return lift_v(tr_reduce_axis(tensor.OpMax, t, ax), line) }
-  if bytes.equal(name, "min") { return lift_v(tr_reduce_axis(tensor.OpMin, t, ax), line) }
-  if bytes.equal(name, "prod") { return lift_v(tr_reduce_axis(tensor.OpProd, t, ax), line) }
-  lift_v(tr_reduce_axis(tensor.OpMedian, t, ax), line)
+  let keep: Bool = false
+  if len(args) == 3 { keep = flag_of(args[2], name, line)? }
+  if keep { return lift_v(tr_reduce_axis_keep(op, t, ax), line) }
+  lift_v(tr_reduce_axis(op, t, ax), line)
+}
+
+# The Op a reduction's name stands for. One place, so the whole-tensor form, the
+# axis form and the keepdims form cannot drift into three different six-way
+# branches that agree only by inspection.
+fn reduce_op(name: Str) -> tensor.Op {
+  if bytes.equal(name, "sum") { return tensor.OpSum }
+  if bytes.equal(name, "mean") { return tensor.OpMean }
+  if bytes.equal(name, "max") { return tensor.OpMax }
+  if bytes.equal(name, "min") { return tensor.OpMin }
+  if bytes.equal(name, "prod") { return tensor.OpProd }
+  tensor.OpMedian
 }
 
 # sort/argsort take an optional axis and an optional "desc" flag, so `sort(t)`,
@@ -3403,17 +3430,42 @@ fn bi_topping(name: Str, args: Arr[Value], line: I64) -> Res[Value, RuntimeError
 }
 
 # argmax/argmin/flip/diff all take an optional axis and default to the last one.
+# argmax and argmin remove that axis, so they take the rank-preserving flag as
+# well; flip keeps the rank it was given and diff only shortens the axis, so for
+# those a third argument is the arity error it always was.
 fn bi_last_axis(name: Str, args: Arr[Value], line: I64) -> Res[Value, RuntimeError] {
-  if len(args) == 0 or len(args) > 2 {
-    return Err(runtime_error(line, bytes.concat(name, " expects (tensor[, axis])")))
+  let indexing: Bool = in_words("argmax argmin", name)
+  let usage: Str = bytes.concat(name, " expects (tensor[, axis])")
+  let max_args: I64 = 2
+  if indexing {
+    usage = bytes.concat(name, " expects (tensor[, axis[, keepdims]])")
+    max_args = 3
+  }
+  if len(args) == 0 or len(args) > max_args {
+    return Err(runtime_error(line, usage))
   }
   let t: tensor.Tensor = arg_tensor(args[0], name, line)?
   let axis: I64 = len(t.shape) - 1
-  if len(args) == 2 { axis = int_of(args[1], name, line)? }
-  if bytes.equal(name, "argmax") { return lift_v(tensor.argmax_axis(t, axis), line) }
-  if bytes.equal(name, "argmin") { return lift_v(tensor.argmin_axis(t, axis), line) }
+  if len(args) >= 2 { axis = int_of(args[1], name, line)? }
+  let keep: Bool = false
+  if len(args) == 3 { keep = flag_of(args[2], name, line)? }
+  if bytes.equal(name, "argmax") { return lift_v(keep_reduced(tensor.argmax_axis(t, axis), t, axis, keep), line) }
+  if bytes.equal(name, "argmin") { return lift_v(keep_reduced(tensor.argmin_axis(t, axis), t, axis, keep), line) }
   if bytes.equal(name, "flip") { return lift_v(tr_flip_axis(t, axis), line) }
   lift_v(tr_diff_axis(t, axis), line)
+}
+
+# The rank-preserving form of an index reduction. argmax and argmin stay on the
+# pure kernel even under a tape, for the reason bi_sorting gives -- a position
+# has no derivative -- so putting the axis back is a plain reshape with nothing
+# to record. The reduction has already run when this is called, so an
+# out-of-range axis has been reported by the kernel, in the kernel's words,
+# exactly as it is without the flag.
+fn keep_reduced(r: Res[tensor.Tensor, Str], t: tensor.Tensor, axis: I64, keep: Bool) -> Res[tensor.Tensor, Str] {
+  let out: tensor.Tensor = r?
+  if not keep { return Ok(out) }
+  let ax: I64 = tensor.normalize_axis(axis, len(t.shape))?
+  tensor.reshape(out, tensor.keep_axis(t.shape, ax))
 }
 
 # roll takes the shift first, since that is the argument nobody omits.
@@ -3428,18 +3480,36 @@ fn bi_roll(args: Arr[Value], line: I64) -> Res[Value, RuntimeError] {
   lift_v(tr_roll_axis(t, shift, axis), line)
 }
 
-# softmax and logsumexp default to the last axis. They have no count check on
-# the Go side and none here: a third argument is ignored rather than refused,
-# and that is transcribed rather than tightened, because tightening it would
-# turn a silently-accepted call into an error the corpus has never seen.
-fn bi_last_axis_op(name: Str, args: Arr[Value], line: I64) -> Res[Value, RuntimeError] {
+# softmax defaults to the last axis. It has no count check on the Go side and
+# none here: a third argument is ignored rather than refused, and that is
+# transcribed rather than tightened, because tightening it would turn a
+# silently-accepted call into an error the corpus has never seen. It preserves
+# the shape it was given, so there is no axis for a keepdims flag to keep.
+fn bi_softmax(args: Arr[Value], line: I64) -> Res[Value, RuntimeError] {
   if len(args) == 0 {
-    return Err(runtime_error(line, bytes.concat(name, " expects (tensor[, axis])")))
+    return Err(runtime_error(line, "softmax expects (tensor[, axis])"))
   }
-  let t: tensor.Tensor = arg_tensor(args[0], name, line)?
+  let t: tensor.Tensor = arg_tensor(args[0], "softmax", line)?
   let axis: I64 = len(t.shape) - 1
-  if len(args) == 2 { axis = int_of(args[1], name, line)? }
-  if bytes.equal(name, "softmax") { return lift_v(tr_softmax(t, axis), line) }
+  if len(args) == 2 { axis = int_of(args[1], "softmax", line)? }
+  lift_v(tr_softmax(t, axis), line)
+}
+
+# logsumexp reduces the axis it works on rather than preserving it, so it takes
+# the rank-preserving flag and no longer shares softmax's dispatch. It keeps
+# softmax's laxity about the argument count -- neither ever refused a trailing
+# argument -- so the third position gains a meaning it did not have and no call
+# that ran before stops running.
+fn bi_logsumexp(args: Arr[Value], line: I64) -> Res[Value, RuntimeError] {
+  if len(args) == 0 {
+    return Err(runtime_error(line, "logsumexp expects (tensor[, axis[, keepdims]])"))
+  }
+  let t: tensor.Tensor = arg_tensor(args[0], "logsumexp", line)?
+  let axis: I64 = len(t.shape) - 1
+  if len(args) >= 2 { axis = int_of(args[1], "logsumexp", line)? }
+  let keep: Bool = false
+  if len(args) >= 3 { keep = flag_of(args[2], "logsumexp", line)? }
+  if keep { return lift_v(tr_reduce_axis_keep(tensor.OpLogSumExp, t, axis), line) }
   lift_v(tr_logsumexp_axis(t, axis), line)
 }
 

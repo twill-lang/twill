@@ -1,6 +1,12 @@
 package interp_test
 
-import "testing"
+import (
+	"fmt"
+	"strings"
+	"testing"
+
+	"github.com/twill-lang/twill/internal/interp"
+)
 
 // These reuse the run/scalar helpers from interp_test.go (same test package).
 
@@ -79,5 +85,59 @@ func TestGradThroughBroadcastAndSoftmax(t *testing.T) {
 	src := "grad(fn(x) = sum(softmax(x, 0)))([1.0, 2.0, 3.0])[0]"
 	if got := scalar(t, src); got < -1e-9 || got > 1e-9 {
 		t.Errorf("grad got %v, want ~0", got)
+	}
+}
+
+// The rank-preserving flag leaves the reduced axis in at length 1 instead of
+// dropping it, for every reduction that takes an axis. The shape is the whole
+// point, so it is what is asserted; the values are asserted to be the ones the
+// dropping form already produced, since the flag is a reshape and nothing else.
+func TestReductionsKeepTheAxisWhenAsked(t *testing.T) {
+	const m = "[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]"
+	shapes := map[string][]float64{
+		"shape(sum(" + m + ", 1))":             {2},
+		"shape(sum(" + m + ", 1, true))":       {2, 1},
+		"shape(sum(" + m + ", 1, 1))":          {2, 1},
+		"shape(sum(" + m + ", 1, false))":      {2},
+		"shape(mean(" + m + ", 0, true))":      {1, 3},
+		"shape(max(" + m + ", -1, true))":      {2, 1},
+		"shape(min(" + m + ", 1, true))":       {2, 1},
+		"shape(prod(" + m + ", 1, true))":      {2, 1},
+		"shape(median(" + m + ", 1, true))":    {2, 1},
+		"shape(argmax(" + m + ", 1, true))":    {2, 1},
+		"shape(argmin(" + m + ", 0, true))":    {1, 3},
+		"shape(logsumexp(" + m + ", 1, true))": {2, 1},
+	}
+	for src, want := range shapes {
+		for i, d := range want {
+			if got := scalar(t, fmt.Sprintf("%s[%d]", src, i)); got != d {
+				t.Errorf("%s dimension %d = %v, want %v", src, i, got, d)
+			}
+		}
+		if got := scalar(t, "len("+src+")"); got != float64(len(want)) {
+			t.Errorf("%s has %v dimensions, want %d", src, got, len(want))
+		}
+	}
+	// The numbers are the dropping form's, moved into a longer shape.
+	if got := scalar(t, "sum("+m+", 1, true)[1][0]"); got != 15 {
+		t.Errorf("kept sum = %v, want 15", got)
+	}
+	if got := scalar(t, "argmax("+m+", 1, true)[0][0]"); got != 2 {
+		t.Errorf("kept argmax = %v, want 2", got)
+	}
+	// What the flag is for: a [2, 1] broadcasts back against a [2, 3] and a [2]
+	// does not, because alignment is from the right.
+	if got := scalar(t, "sum("+m+" - sum("+m+", 1, true) / 3.0)"); got != 0 {
+		t.Errorf("row-centred sum = %v, want 0", got)
+	}
+	// It is a reduction followed by a reshape, so the gradient still flows.
+	if got := scalar(t, "sum(grad(fn(v) = sum(sum(v, 1, true)))("+m+"))"); got != 6 {
+		t.Errorf("gradient of a kept sum = %v, want 6", got)
+	}
+	// flip and diff do not remove an axis, so a third argument is still the
+	// arity error it always was.
+	_, err := interp.New(func(string) {}).Run("print(flip(" + m + ", 1, true))")
+	if err == nil || !strings.Contains(err.Error(), "flip expects (tensor[, axis])") {
+		t.Errorf("flip with a third argument: got %v", err)
 	}
 }
