@@ -55,6 +55,18 @@ func TestTupleHasNoFields(t *testing.T) {
 	wantOne(t, "let t = (1.0, 2.0)\nlet y = t.first\n", "cannot read field")
 }
 
+// A tuple type on a parameter is a type in numeric mode as well. It was refused
+// there as `unknown type "(F64, F64)" on parameter "t"` while the same
+// annotation on a return or a `let` passed, so the guide's `take` example only
+// checked under `mode systems`. A function type shares the path and the fix.
+func TestTupleAndFnTypeOnAParameterInNumericMode(t *testing.T) {
+	wantNone(t, "fn g(t: (F64, F64)) -> F64 { let (a, b) = t\n a + b }\nlet r = g((1.0, 2.0))\n")
+	wantOne(t, "fn g(t: (F64, F64)) -> F64 { let (a, b) = t\n a + b }\nlet r = g(1.0)\n",
+		`argument 1 ("t") is declared (a scalar, a scalar) but the value is a scalar`)
+	wantNone(t, "fn app(q: fn(F64) -> F64) -> F64 = q(1.0)\nlet r = app(fn(x) = x * 2.0)\n")
+	wantOne(t, "fn f(m: Nope) = m\nlet r = f(1.0)", "unknown type")
+}
+
 func TestTupleAnnotationOnABinding(t *testing.T) {
 	wantNone(t, "mode systems\nlet t: (I64, Str) = (1, \"a\")\n")
 	wantOne(t, "mode systems\nlet t: (I64, Str) = (1, 2)\n",

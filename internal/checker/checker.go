@@ -2297,8 +2297,13 @@ func (c *checker) inferUserCall(fn tFn, ex *ast.Call, argTypes []Type) Type {
 				// type name is still reported.
 				// A name that is one of the language's own types is a type in
 				// either mode, so numeric mode does not report it as unknown --
-				// the same correction the `let` annotation needed.
-				if c.systems || isKnownTypeName(annoHeadName(p.TypeName)) {
+				// the same correction the `let` annotation needed. A tuple or a
+				// function type has no head name, and is a type in either mode
+				// too: `-> (F64, F64)` and `let t: (F64, F64)` already pass in
+				// numeric mode, so a parameter written the same way must not be
+				// the one place the annotation is refused.
+				if c.systems || isKnownTypeName(annoHeadName(p.TypeName)) ||
+					strings.HasPrefix(p.TypeName, "(") || strings.HasPrefix(p.TypeName, "fn(") {
 					want := c.parseType(p.TypeName)
 					what := fmt.Sprintf("argument %d (%q)", i+1, p.Name)
 					if c.checkAssignable(ex.Line, what, want, argTypes[i]) && i < len(ex.Args) {

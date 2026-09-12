@@ -4001,8 +4001,13 @@ fn infer_user_call(c: Checker, fn_: FnType, ex: ast.Call, arg_types: Arr[Type]) 
             # argument happened to be, so a body indexing an Arr[I64] is not
             # judged by a scalar a test passed in. A name that is one of the
             # language's own types is a type in either mode, so numeric mode
-            # does not report it as unknown.
-            if c.systems or is_known_type_name(anno_head_name(p.type_name)) {
+            # does not report it as unknown. A tuple or a function type has no
+            # head name, and is a type in either mode too: `-> (F64, F64)` and
+            # `let t: (F64, F64)` already pass in numeric mode, so a parameter
+            # written the same way must not be the one place the annotation is
+            # refused.
+            if c.systems or is_known_type_name(anno_head_name(p.type_name))
+                or bytes.has_prefix(p.type_name, "(") or bytes.has_prefix(p.type_name, "fn(") {
               let want: Type = parse_type(c, p.type_name)
               let what: Str = bytes.concat("argument ", bytes.concat(str(i + 1),
                 bytes.concat(" (", bytes.concat(quoted(p.name), ")"))))

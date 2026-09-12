@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **A tuple type on a parameter is a type in numeric mode.** Without a
+  `mode systems` line, `fn g(t: (F64, F64))` was refused as `unknown type
+  "(F64, F64)" on parameter "t"` while the same annotation on a return or a
+  `let` passed, so the language guide's `take` example only checked under
+  systems mode. The parameter path admitted a bare type name and nothing else;
+  it now admits a tuple and a function type too, on both implementations, and
+  checks the argument against it.
+
 ## [1.12.0] - 2026-09-05
 
 ### Added

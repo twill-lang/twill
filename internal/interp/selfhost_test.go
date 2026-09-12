@@ -1305,6 +1305,7 @@ func TestSelfHostedCheckTuples(t *testing.T) {
 		"mode systems\nstruct Pair[T] { span: (T, T) }\nlet p: Pair[I64] = Pair { span: (1, 2) }\n",
 		"mode systems\nlet xs: Arr[(I64, Str)] = arr_new()\n",
 		"let (a, _, c) = (1.0, 2.0, 3.0)\nprint(a + c)\n",
+		"fn g(t: (F64, F64)) -> F64 { let (a, b) = t\n a + b }\nprint(g((1.0, 2.0)))\n",
 	}
 	for _, src := range good {
 		if code := runSelfHostedCheck(t, src); code != 0 {
