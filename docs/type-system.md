@@ -320,11 +320,12 @@ enum Constraint {
 
 A variant has zero payloads or one. Not two.
 
-**Why one.** A two-payload variant is a tuple, twill has no tuple type, and
-entry 1's whole finding is that the absence of a tuple is what drives people to
-declare a struct per call site. Adding positional multi-payload variants here
-would introduce positional access (`v.0`) as a second field syntax next to `.`,
-for one feature. A variant that wants two fields declares a struct and holds it:
+**Why one.** A two-payload variant is a tuple. Twill has a tuple type since
+1.12.0, for returning several values, and it is deliberately a value with no
+`.0` and no names: it is destructured or passed on whole. Adding positional
+multi-payload variants here would introduce positional access (`v.0`) as a
+second field syntax next to `.`, for one feature. A variant that wants two
+fields declares a struct and holds it:
 
 ```
 struct BinOp { op: Str, lhs: Expr, rhs: Expr }

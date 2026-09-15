@@ -1,6 +1,7 @@
 package interp_test
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -1640,4 +1641,172 @@ func TestSelfHostedThirdArgumentToShapePreservingOps(t *testing.T) {
 			t.Errorf("the self-hosted evaluator accepted %q instead of refusing it", tc.src)
 		}
 	}
+}
+
+// `const` across a file boundary, on both checkers.
+//
+// This is weft entry 9 as it was reported: a theme file declaring the palette,
+// an app importing it and replacing it. The self-hosted checker read one file
+// and nothing else until this rule, so the two implementations had to gain the
+// import walk together or diverge on the case the feature exists for. The
+// expected text comes from checker.CheckFile rather than a literal, so a
+// reworded diagnostic on either side fails here.
+
+// selfHostedCheckPath runs the self-hosted CLI's `check` on a file that is
+// already on disk, since a program whose imports matter cannot be handed over
+// as a string, and returns its exit code and what it wrote. The diagnostics go
+// through write_err to the real os.Stderr, bypassing the interpreter's sink, so
+// they are captured at the OS level.
+func selfHostedCheckPath(t *testing.T, path string) (int, string) {
+	t.Helper()
+	saved := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = w
+	done := make(chan string, 1)
+	go func() {
+		var b strings.Builder
+		io.Copy(&b, r)
+		done <- b.String()
+	}()
+	ip := interp.New(func(string) {})
+	result, ranMain, runErr := ip.RunFileMain(filepath.Join("..", "..", "src", "main.tw"),
+		[]string{"twill", "check", path})
+	w.Close()
+	os.Stderr = saved
+	out := <-done
+	if runErr != nil {
+		t.Fatalf("self-hosted CLI errored: %v", runErr)
+	}
+	if !ranMain {
+		t.Fatal("self-hosted main did not run")
+	}
+	n, ok := value.AsNumber(result)
+	if !ok {
+		t.Fatalf("self-hosted main returned a non-number: %v", result)
+	}
+	return int(n), out
+}
+
+// goVerdict is what checker.CheckFile says about a file on disk.
+func goVerdict(t *testing.T, path string) []checker.Diagnostic {
+	t.Helper()
+	src, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prog, err := parser.Parse(string(src))
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	return checker.CheckFile(prog, path)
+}
+
+// bothCheckersAgree holds the two checkers to one verdict on a file: refused
+// or not, and if refused, the same first message.
+func bothCheckersAgree(t *testing.T, name, path string, refuse bool) {
+	t.Helper()
+	diags := goVerdict(t, path)
+	if got := len(diags) > 0; got != refuse {
+		t.Errorf("the Go checker %s %s: %v", verb(got), name, diags)
+	}
+	code, out := selfHostedCheckPath(t, path)
+	if got := code != 0; got != refuse {
+		t.Errorf("the self-hosted checker %s %s: %s", verb(got), name, out)
+	}
+	if len(diags) > 0 && !strings.Contains(out, diags[0].Msg) {
+		t.Errorf("the two checkers disagree on %s.\n  go:   %s\n  self: %s", name, diags[0].Msg, out)
+	}
+}
+
+func verb(refused bool) string {
+	if refused {
+		return "refused"
+	}
+	return "accepted"
+}
+
+// Every shape the cross-file rule judges, on both checkers, in one table: the
+// binding, an element of it and a field of it, each written plainly and under
+// an alias, plus the top-level rebinding; and, on the other side, an imported
+// `let`, a parameter, a local `let`, a read, and a field of a local record that
+// happens to share the name. Exit codes are compared rather than asserted, so
+// a rule that changes on one side and not the other fails here.
+func TestBothCheckersAgreeOnEveryImportedConstShape(t *testing.T) {
+	skipUnderShort(t)
+	dir := t.TempDir()
+	theme := `mode systems
+struct Box { f: I64 }
+const HEX: Arr[Str] = mk()
+const REC: Box = Box { f: 1 }
+let SIZE: I64 = 3
+fn mk() -> Arr[Str] {
+  let a: Arr[Str] = arr_new()
+  push(a, "#000")
+  a
+}
+`
+	if err := os.WriteFile(filepath.Join(dir, "theme.tw"), []byte(theme), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name   string
+		app    string
+		refuse bool
+	}{
+		{"assignment", "import \"theme.tw\"\nHEX = arr_new()\n", true},
+		{"element", "import \"theme.tw\"\nHEX[0] = \"#fff\"\n", true},
+		{"field", "import \"theme.tw\"\nREC.f = 2\n", true},
+		{"alias assignment", "import \"theme.tw\" as t\nt.HEX = arr_new()\n", true},
+		{"alias element", "import \"theme.tw\" as t\nt.HEX[0] = \"#fff\"\n", true},
+		{"alias field", "import \"theme.tw\" as t\nt.REC.f = 2\n", true},
+		{"rebinding", "import \"theme.tw\"\nlet HEX: Arr[Str] = arr_new()\n", true},
+		{"destructuring rebinding", "import \"theme.tw\"\nlet (HEX, n) = (arr_new(), 1)\n", true},
+		{"an imported let", "import \"theme.tw\"\nSIZE = 4\n", false},
+		{"a local let", "import \"theme.tw\"\nfn f() {\n  let HEX: I64 = 1\n  HEX = 2\n}\n", false},
+		{"a parameter", "import \"theme.tw\"\nfn f(HEX: I64) -> I64 {\n  HEX = 2\n  HEX\n}\n", false},
+		{"a read", "import \"theme.tw\"\nfn f() -> Str = HEX[0]\n", false},
+		{"a local record's field", "import \"theme.tw\" as t\nstruct B { HEX: I64 }\nfn f() {\n  let b: B = B { HEX: 1 }\n  b.HEX = 2\n}\n", false},
+	}
+	for i, tc := range cases {
+		app := filepath.Join(dir, fmt.Sprintf("app%d.tw", i))
+		if err := os.WriteFile(app, []byte("mode systems\n"+tc.app), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		bothCheckersAgree(t, tc.name, app, tc.refuse)
+	}
+}
+
+// How deep the walk goes, on both checkers. The bound is a level count, and
+// the two implementations have to hold the same one: a chain one checker
+// follows to the end and the other stops short of is a program one refuses
+// and the other calls clean. Nothing in the ecosystem imports this deep, so
+// the differential sweep cannot see it and the chain is built here instead.
+// writeChain writes theme.tw and enough files to reach it through `files`
+// imported files, and returns the app that imports the head of the chain.
+func writeChain(t *testing.T, dir string, files int) string {
+	t.Helper()
+	write := func(name, src string) {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("theme.tw", "mode systems\nconst HEX: I64 = 1\n")
+	prev := "theme.tw"
+	for i := files - 1; i >= 1; i-- {
+		name := fmt.Sprintf("m%d.tw", i)
+		write(name, "mode systems\nimport \""+prev+"\"\n")
+		prev = name
+	}
+	app := filepath.Join(dir, "app.tw")
+	write("app.tw", "mode systems\nimport \""+prev+"\"\nHEX = 2\n")
+	return app
+}
+
+func TestBothCheckersFollowEightImportLevelsAndStopAtNine(t *testing.T) {
+	skipUnderShort(t)
+	bothCheckersAgree(t, "eight levels", writeChain(t, t.TempDir(), 8), true)
+	bothCheckersAgree(t, "nine levels", writeChain(t, t.TempDir(), 9), false)
 }

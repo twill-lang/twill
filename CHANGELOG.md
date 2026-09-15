@@ -2,6 +2,39 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`const` reaches across a file boundary.** A `const` declared at the top
+  level of one file is now refused a write from any file that imports it, on
+  both implementations, with the same message. weft entry 9 (roadmap entry 28)
+  was a theme file declaring a palette that an importer replaces; `const`
+  landed in 1.10.0 and refused that write only inside the declaring file, which
+  is the one place nobody was worried about. Now `HEX = ...`, `HEX[0] = ...`
+  and `REC.f = ...` after a plain `import "theme.tw"` are refused, and so are
+  `th.HEX = ...`, `th.HEX[0] = ...` and `th.REC.f = ...` after
+  `import "theme.tw" as th`, which is how weft actually imports its theme. A
+  top-level `let` of a plain-imported const's name, by a plain or a
+  destructuring `let`, is refused too, because that binding is what every other
+  importer then reads. The message names the file the const was declared in and
+  the line, and says the decision is that file's.
+- Plain imports are followed through plain imports, eight levels deep, so a
+  const declared two modules down is seen. A namespaced import inside an
+  imported file is not followed: its names would be spelled `mid.th.HEX` in the
+  importer, which no rule reads. A nearer binding wins, so a parameter or a
+  local `let` named after an imported const is still mutable, and an imported
+  `let` stays writable, because `const` is the opt-in.
+- The rule rides on a walk of its own, not on the enum walk. The first attempt
+  changed how the enum walk bounded and guarded itself and stopped a file with
+  nine or more siblings being followed to the end, so a non-exhaustive `match`
+  was accepted depending on import order. `internal/checker/imports.go`'s enum
+  walk is untouched; the const walk is `internal/checker/constimport.go`, and
+  `src/check.tw` gains `check_file(prog, path)` with the same walk, run on
+  demand so the compiler's own entry points, which import everything under an
+  alias and assign through nothing, do not pay for a parse of the whole front
+  end. `check(prog)` still reads one AST and no files.
+- What `const` still does not do is unchanged: it is not a deep freeze, so
+  `push(HEX, x)` and a function handed the handle are not refused.
+
 ### Fixed
 
 - **A tuple type on a parameter is a type in numeric mode.** Without a

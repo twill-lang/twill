@@ -72,6 +72,9 @@ func newChecker(prog *ast.Program) *checker {
 	c.structDecls = map[string]*ast.StructDecl{}
 	c.typeParams = map[string][]string{}
 	c.activeParams = map[string]bool{}
+	c.importedConsts = map[string]importedConst{}
+	c.aliasConsts = map[string]map[string]importedConst{}
+	c.parsedImports = map[string]*ast.Program{}
 	return c
 }
 
@@ -248,6 +251,10 @@ func (c *checker) prelude(prog *ast.Program) *checkEnv {
 	// The file's top level is a scope like any other, so a second binding of a
 	// const name here is refused the same way one inside a block is.
 	c.reportConstRebinds(prog.Body)
+	// And a plain import brings its names into this same scope, so a top-level
+	// binding of an imported const's name is that rule reaching across the
+	// file boundary. Empty unless the check came through CheckFile.
+	c.reportImportedConstRebinds(prog.Body)
 	return env
 }
 
@@ -295,6 +302,17 @@ type checker struct {
 	// checked for exhaustiveness against.
 	enums        map[string][]string
 	variantOwner map[string]string
+
+	// importedConsts is every top-level `const` reachable through a plain
+	// `import`, by the name it arrives under; aliasConsts is the same for a
+	// namespaced one, keyed by the alias and then the name. Both are empty
+	// unless the check was entered through CheckFile, which is the only entry
+	// point that may read files. parsedImports memoises that walk's parses by
+	// resolved path, with a nil entry for a file that did not parse. See
+	// constimport.go.
+	importedConsts map[string]importedConst
+	aliasConsts    map[string]map[string]importedConst
+	parsedImports  map[string]*ast.Program
 
 	// typeParams is the `[T, U]` a struct or enum declares, by declaration
 	// name. activeParams is the set in scope right now -- while a declaration's
@@ -748,9 +766,19 @@ func (c *checker) inferStmt(s ast.Stmt, env *checkEnv) {
 		// function handed the handle, because `Arr` has reference semantics and
 		// nothing tracks where a handle goes. docs/language-guide.md says so
 		// where `const` is introduced; docs/roadmap.md entry 28.
+		reported := false
 		if base, ok := lvalueBase(st.Target); ok {
 			if at, isConst := env.constLine(base.Name); isConst {
 				c.report(st.Line, "%s is declared const on line %d, so nothing may be assigned through that name: not the binding, and not an element or field of it. Bind a new name for the changed value, or declare it with let if it is meant to change.", base.Name, at)
+				reported = true
+			}
+		}
+		// The same rule for a const this file imported rather than declared.
+		// The advice differs because the ways out differ: the reader of an
+		// imported table cannot decide that it is writable.
+		if !reported {
+			if name, ic, isConst := c.importedConstFor(st.Target, env); isConst {
+				c.report(st.Line, "%s is declared const in %q on line %d, so nothing may be assigned through that name: not the binding, and not an element or field of it. The handle is shared, so this write is what every other importer then reads. Bind a new name for the changed value; whether %s may change is that file's decision.", name, ic.path, ic.line, name)
 			}
 		}
 		if id, ok := st.Target.(*ast.Ident); ok {

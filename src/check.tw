@@ -28,6 +28,9 @@ import "ast.tw" as ast
 import "bytes.tw" as bytes
 import "tensor.tw" as tensor
 import "builtins.tw" as builtins
+# Only check_file() uses this, to parse the files a program imports. check()
+# itself stays pure over one AST and reads nothing.
+import "parse.tw" as parse
 
 # ---- diagnostics -----------------------------------------------------------
 
@@ -559,6 +562,29 @@ fn env_const_line(e: CheckEnv, name: Str) -> Opt[I64] {
   None
 }
 
+# Whether a name reaches the file's own top-level scope rather than a nearer one.
+# A name nothing binds counts as reaching it: that is what a plain import's names
+# look like to this checker, which records the imported file's consts without
+# defining them as values.
+fn env_binds_at_root(e: CheckEnv, name: Str) -> Bool {
+  let cur: Opt[CheckEnv] = Some(e)
+  while true {
+    match cur {
+      Some(env) => {
+        if dict_has(env.vars, name) {
+          match env.parent {
+            Some(_) => return false,
+            None => return true,
+          }
+        }
+        cur = env.parent
+      },
+      None => return true,
+    }
+  }
+  true
+}
+
 # Assignment rebinds where the name was defined, walking outward, and defines
 # locally only if it was never defined at all. That mirrors interp.Env.assign,
 # and it is what makes `total = total - x` inside a loop body update the
@@ -637,6 +663,33 @@ struct Checker {
   # call syntax for `push(a, v)` and works on any value, so a field access
   # there is a function name and not a field at all.
   in_callee: Bool,
+  # Every top-level `const` reachable through a plain `import`, by the name it
+  # arrives under; alias_consts is the same for a namespaced one, keyed by the
+  # alias and then the name. Both stay empty unless the check was entered
+  # through check_file(), which is the only entry point that reads files, and
+  # until something asks a question only the walk can answer. See
+  # ensure_plain_imports().
+  imported_consts: Dict[Str, ImportedConst],
+  alias_consts: Dict[Str, Dict[Str, ImportedConst]],
+  # The file being checked, absolute, or "" when the check did not come from a
+  # file and no import may be read. imports_body is that file's top-level
+  # statements, which is where the walk starts.
+  imports_from: Str,
+  imports_body: Arr[ast.Stmt],
+  # Which of the two maps have been filled. imports_memo is the parse memo the
+  # walk shares across its branches.
+  plain_loaded: Bool,
+  alias_loaded: Dict[Str, Bool],
+  imports_memo: Dict[Str, FileFacts],
+}
+
+# A `const` this file did not declare: the import path the declaring file was
+# named by, as written, and the line inside it. The path is carried because a
+# bare line number from another file is the least useful thing a diagnostic can
+# print.
+struct ImportedConst {
+  path: Str,
+  line: I64,
 }
 
 fn report(c: Checker, line: I64, msg: Str) {
@@ -661,8 +714,217 @@ fn cross_module_variant(c: Checker, name: Str) -> Bool {
   first >= 65 and first <= 90
 }
 
-# check analyses a program and returns any diagnostics found.
-fn check(prog: ast.Program) -> Arr[Diagnostic] {
+# ---- the import walk -------------------------------------------------------
+
+# The checker reads one file. That is deliberate and mostly right: a diagnostic
+# about a name defined somewhere else is a diagnostic the checker cannot be sure
+# of, and it says nothing rather than guessing.
+#
+# A top-level `const` is the exception, and it is here because the rule was
+# useless in the place it was asked for. weft's complaint (docs/roadmap.md entry
+# 28) is a theme file declaring a palette that an importer replaces, and a rule
+# that reads one file catches only a library breaking its own promise inside its
+# own file. A plain `import` copies the name into the importing scope and the
+# handle is shared, so an importer's `HEX = ...` and `HEX[0] = ...` are both what
+# every other importer then reads; under an alias the same writes are spelled
+# `theme.HEX = ...` and `theme.HEX[0] = ...`. Measured on both evaluators.
+#
+# Nothing here types a value, resolves a function, or reports a diagnostic about
+# the imported file. A file that cannot be read, or that does not parse, is
+# skipped in silence: its own problems are reported when it is checked itself.
+# Enums are not collected either. A match on an enum declared in another module
+# is unjudged here exactly as it was before; that gap is older than this rule.
+
+# How many levels of import the walk follows. A cycle is already stopped by the
+# seen set; this stops a pathological chain from turning a check into a
+# directory traversal. It counts levels, so how many siblings a file imports
+# never changes whether one of them is followed. The Go checker's
+# maxConstImportDepth is the same eight: the two walks have to stop in the same
+# place or a program exists that one checker refuses and the other calls clean.
+const MAX_IMPORT_DEPTH: I64 = 8
+
+# What one imported file contributes to the walk: the top-level consts it
+# declares, and the plain imports it makes. It is memoised per check run by
+# resolved path, because parsing here is interpreted twill parsing twill and a
+# file several branches reach was otherwise parsed once per arrival.
+struct FileFacts {
+  consts: Arr[DeclaredConst],
+  imports: Arr[Str],
+}
+
+struct DeclaredConst {
+  name: Str,
+  line: I64,
+}
+
+struct ImportSource {
+  src: Str,
+  key: Str,
+}
+
+# read_import resolves an import path to its source, with a key that identifies
+# it for the cycle guard. It mirrors the evaluator's resolution: a `std/` path
+# names a module compiled into the binary, and anything else is a file, relative
+# to the importing file first and then the working directory.
+fn read_import(import_path: Str, from_file: Str) -> Opt[ImportSource] {
+  if bytes.has_prefix(import_path, "std/") {
+    match module_source(import_path) {
+      Some(text) => return Some(ImportSource { src: text, key: import_path }),
+      None => return None,
+    }
+  }
+  let cands: Arr[Str] = arr_new()
+  if len(from_file) > 0 { push(cands, path_join(path_dir(from_file), import_path)) }
+  match cwd() {
+    Ok(dir) => push(cands, path_join(dir, import_path)),
+    Err(_) => unit,
+  }
+  let i: I64 = 0
+  while i < len(cands) {
+    match read_file(cands[i]) {
+      Ok(text) => return Some(ImportSource { src: text, key: path_normalize(cands[i]) }),
+      Err(_) => unit,
+    }
+    i = i + 1
+  }
+  None
+}
+
+# The walk runs on demand, and for most files it never runs at all. Run eagerly
+# it cost the compiler's own entry points a factor of twelve: src/main.tw and
+# src/cli/main.tw import the whole front end under aliases and assign through
+# none of them, so an eager walk parsed every module to fill maps nothing read.
+# So the maps are filled at the places that read them: a plain import's names
+# are wanted by a top-level binding or a bare-name assignment, an alias's names
+# only by an assignment written through that alias. Laziness cannot change a
+# verdict, because what the walk collects is a function of the file set alone.
+
+# ensure_plain_imports fills imported_consts from every unaliased top-level
+# import, once. Each import walks under its own cycle guard, so a file reached
+# through two of them lands in both maps, which is what the evaluator does.
+fn ensure_plain_imports(c: Checker) {
+  if c.plain_loaded { return }
+  c.plain_loaded = true
+  if len(c.imports_from) == 0 { return }
+  for s in c.imports_body {
+    match s {
+      SImport(imp) => {
+        if len(imp.alias) == 0 {
+          collect_import(imp.path, c.imports_from, c.imported_consts, dict_new(), 0, c.imports_memo)
+        }
+      },
+      _ => unit,
+    }
+  }
+}
+
+# ensure_alias_imports fills one alias's map from every top-level import that
+# names it, once per alias. The map is made only once an import actually names
+# the alias: an empty one for every name asked about would answer for names
+# that are not aliases at all, and a field write on a plain-imported const would
+# stop there instead of reaching the flat map that has it.
+fn ensure_alias_imports(c: Checker, alias: Str) {
+  if dict_has(c.alias_loaded, alias) { return }
+  dict_set(c.alias_loaded, alias, true)
+  if len(c.imports_from) == 0 { return }
+  for s in c.imports_body {
+    match s {
+      SImport(imp) => {
+        if bytes.equal(imp.alias, alias) {
+          let into: Dict[Str, ImportedConst] = dict_new()
+          match dict_get(c.alias_consts, alias) {
+            Some(existing) => into = existing,
+            None => dict_set(c.alias_consts, alias, into),
+          }
+          collect_import(imp.path, c.imports_from, into, dict_new(), 0, c.imports_memo)
+        }
+      },
+      _ => unit,
+    }
+  }
+}
+
+# collect_import reads one imported file, records its top-level consts in
+# `into`, and follows its own plain imports into the same map, one level deeper.
+fn collect_import(import_path: Str, from_file: Str, into: Dict[Str, ImportedConst],
+                  seen: Dict[Str, Bool], depth: I64, memo: Dict[Str, FileFacts]) {
+  if depth >= MAX_IMPORT_DEPTH { return }
+  let found: ImportSource = ImportSource { src: "", key: "" }
+  match read_import(import_path, from_file) {
+    Some(r) => found = r,
+    None => return,
+  }
+  if dict_has(seen, found.key) { return }
+  dict_set(seen, found.key, true)
+  let facts: FileFacts = file_facts(found, memo)
+  for declared in facts.consts {
+    # First one wins: a name two modules both declare is reported against the
+    # one found first, and the ambiguity is not this rule's to resolve.
+    if not dict_has(into, declared.name) {
+      dict_set(into, declared.name, ImportedConst { path: import_path, line: declared.line })
+    }
+  }
+  for next_path in facts.imports {
+    collect_import(next_path, found.key, into, seen, depth + 1, memo)
+  }
+}
+
+# file_facts parses one imported file and reduces it to what the walk uses: its
+# top-level consts and its plain imports. A namespaced import inside an imported
+# file is not followed: its names would be written `mid.theme.HEX` here, which
+# no rule reads. A file that does not parse contributes nothing, and is
+# remembered as contributing nothing rather than re-parsed at every arrival.
+fn file_facts(found: ImportSource, memo: Dict[Str, FileFacts]) -> FileFacts {
+  match dict_get(memo, found.key) {
+    Some(cached) => return cached,
+    None => unit,
+  }
+  let facts: FileFacts = FileFacts { consts: arr_new(), imports: arr_new() }
+  match parse.parse(found.src) {
+    Err(_) => unit,
+    Ok(imported) => {
+      for s in imported.body {
+        match s {
+          SLet(d) => {
+            if d.is_const { push(facts.consts, DeclaredConst { name: d.name, line: d.line }) }
+          },
+          SImport(imp) => {
+            if len(imp.alias) == 0 { push(facts.imports, imp.path) }
+          },
+          _ => unit,
+        }
+      }
+    },
+  }
+  dict_set(memo, found.key, facts)
+  facts
+}
+
+# check analyses a program and returns any diagnostics found. It reads one file
+# and nothing else, which is what makes it usable on a program that came from
+# somewhere other than the file system.
+fn check(prog: ast.Program) -> Arr[Diagnostic] = check_program(prog, "")
+
+# check_file is check() for a program that came from a file, following its
+# imports far enough to know what top-level `const` bindings they declare.
+# `path` is the file's own path, which is what a relative import resolves
+# against. Reading files is a capability the checker did not have, so it stays
+# out of check(): this is the entry point that has it, mirroring CheckFile.
+fn check_file(prog: ast.Program, path: Str) -> Arr[Diagnostic] {
+  # A relative path is resolved against the importing file's directory, and
+  # read_file() resolves a relative path against the running script instead, so
+  # the walk works in absolute paths from here down.
+  let base: Str = path
+  if not path_is_abs(base) {
+    match cwd() {
+      Ok(d) => base = path_join(d, path),
+      Err(_) => unit,
+    }
+  }
+  check_program(prog, base)
+}
+
+fn check_program(prog: ast.Program, from_file: Str) -> Arr[Diagnostic] {
   let c: Checker = Checker {
     diags: arr_new(),
     stack: dict_new(),
@@ -680,6 +942,13 @@ fn check(prog: ast.Program) -> Arr[Diagnostic] {
     type_params: dict_new(),
     active_params: dict_new(),
     in_callee: false,
+    imported_consts: dict_new(),
+    alias_consts: dict_new(),
+    imports_from: from_file,
+    imports_body: prog.body,
+    plain_loaded: false,
+    alias_loaded: dict_new(),
+    imports_memo: dict_new(),
   }
   dict_set(c.enums, "Opt", ["Some", "None"])
   dict_set(c.enums, "Res", ["Ok", "Err"])
@@ -904,11 +1173,46 @@ fn check(prog: ast.Program) -> Arr[Diagnostic] {
   # The file's top level is a scope like any other, so a second binding of a
   # const name here is refused the same way one inside a block is.
   report_const_rebinds(c, prog.body)
+  # And a plain import brings its names into this same scope, so a top-level
+  # binding of an imported const's name is that rule reaching across the file
+  # boundary. Empty unless the check came through check_file().
+  report_imported_const_rebinds(c, prog.body)
 
   for s in prog.body {
     infer_stmt(c, s, env)
   }
   dedupe(c.diags)
+}
+
+# report_imported_const_rebinds refuses a top-level binding of a name a plain
+# import brought in as a const: the importer's `let HEX` is what a second
+# importer's function then reads. A destructuring `let` is a binding too.
+fn report_imported_const_rebinds(c: Checker, body: Arr[ast.Stmt]) {
+  for s in body {
+    match s {
+      SLet(st) => report_imported_const_rebind(c, st.name, st.line),
+      SLetTuple(st) => {
+        for name in st.names {
+          if not bytes.equal(name, "_") { report_imported_const_rebind(c, name, st.line) }
+        }
+      },
+      _ => unit,
+    }
+  }
+}
+
+fn report_imported_const_rebind(c: Checker, name: Str, line: I64) {
+  ensure_plain_imports(c)
+  match dict_get(c.imported_consts, name) {
+    Some(ic) => report(c, line, bytes.concat(name,
+      bytes.concat(" is declared const in ",
+      bytes.concat(str_quote(ic.path),
+      bytes.concat(" on line ",
+      bytes.concat(str(ic.line),
+      bytes.concat(", so this file may not bind the name again: a plain import brings ",
+      bytes.concat(name, " into this scope, and a second binding is what every other importer then reads. Rename this binding.")))))))),
+    None => unit,
+  }
 }
 
 # dedupe removes repeated diagnostics. A body is checked once at its definition
@@ -2195,16 +2499,87 @@ fn stmt_line(s: ast.Stmt) -> I64 {
 # `x[i]` and for `a.d[i]`. An assignment through a call or any other expression
 # has no base name, and reports nothing.
 fn lvalue_base(target: ast.Expr) -> Opt[Str] {
+  match lvalue_path(target) {
+    Some(p) => Some(p.base),
+    None => None,
+  }
+}
+
+# The base name plus the field nearest it: `theme`, `HEX` for `theme.HEX[0]`.
+# That pair is what an assignment through a namespaced import looks like, and
+# the field is empty when the target reaches the base without one.
+struct LPath {
+  base: Str,
+  field: Str,
+}
+
+fn lvalue_path(target: ast.Expr) -> Opt[LPath] {
   let cur: ast.Expr = target
+  let field: Str = ""
   while true {
     match cur {
-      EIdent(x) => return Some(x.name),
-      EField(x) => cur = x.target,
+      EIdent(x) => return Some(LPath { base: x.name, field: field }),
+      EField(x) => {
+        field = x.name
+        cur = x.target
+      },
       EIndex(x) => cur = x.target,
       _ => return None,
     }
   }
   None
+}
+
+# The name an imported const is known by here, paired with where it was
+# declared.
+struct ConstHit {
+  name: Str,
+  at: ImportedConst,
+}
+
+# The `const` an assignment target reaches in another file, if it reaches one.
+# A plain import puts the name in this scope, so `HEX` and `HEX[0]` reach it
+# directly; a namespaced import puts it behind the alias, so `theme.HEX` and
+# `theme.HEX[0]` do. A nearer binding wins in both shapes: a parameter or a
+# local `let` named after an imported const is a different binding in a
+# different scope, and writing to it has nothing to do with the imported table.
+fn imported_const_for(c: Checker, target: ast.Expr, env: CheckEnv) -> Opt[ConstHit] {
+  match lvalue_path(target) {
+    Some(p) => {
+      if not env_binds_at_root(env, p.base) { return None }
+      if len(p.field) > 0 {
+        ensure_alias_imports(c, p.base)
+        match dict_get(c.alias_consts, p.base) {
+          Some(under) => {
+            match dict_get(under, p.field) {
+              Some(ic) => return Some(ConstHit { name: p.field, at: ic }),
+              None => return None,
+            }
+          },
+          None => unit,
+        }
+      }
+      ensure_plain_imports(c)
+      match dict_get(c.imported_consts, p.base) {
+        Some(ic) => Some(ConstHit { name: p.base, at: ic }),
+        None => None,
+      }
+    },
+    None => None,
+  }
+}
+
+# The message an assignment through an imported const gets. The advice differs
+# from the same-file one because the ways out differ: the reader of an imported
+# table cannot decide that it is writable.
+fn imported_const_msg(name: Str, ic: ImportedConst) -> Str {
+  bytes.concat(name,
+    bytes.concat(" is declared const in ",
+    bytes.concat(str_quote(ic.path),
+    bytes.concat(" on line ",
+    bytes.concat(str(ic.line),
+      bytes.concat(", so nothing may be assigned through that name: not the binding, and not an element or field of it. The handle is shared, so this write is what every other importer then reads. Bind a new name for the changed value; whether ",
+      bytes.concat(name, " may change is that file's decision.")))))))
 }
 
 # check_let_tuple judges `let (lo, hi) = span(xs)`. The names are bound whatever
@@ -2361,17 +2736,28 @@ fn infer_stmt(c: Checker, s: ast.Stmt, env: CheckEnv) {
       # function handed the handle, because `Arr` has reference semantics and
       # nothing tracks where a handle goes. docs/language-guide.md says so where
       # `const` is introduced; docs/roadmap.md entry 28.
+      let const_reported: Bool = false
       match lvalue_base(st.target) {
         Some(base) => {
           match env_const_line(env, base) {
-            Some(at) => report(c, st.line, bytes.concat(base,
-              bytes.concat(" is declared const on line ",
-              bytes.concat(str(at),
-                ", so nothing may be assigned through that name: not the binding, and not an element or field of it. Bind a new name for the changed value, or declare it with let if it is meant to change.")))),
+            Some(at) => {
+              report(c, st.line, bytes.concat(base,
+                bytes.concat(" is declared const on line ",
+                bytes.concat(str(at),
+                  ", so nothing may be assigned through that name: not the binding, and not an element or field of it. Bind a new name for the changed value, or declare it with let if it is meant to change."))))
+              const_reported = true
+            },
             None => unit,
           }
         },
         None => unit,
+      }
+      # The same rule for a const this file imported rather than declared.
+      if not const_reported {
+        match imported_const_for(c, st.target, env) {
+          Some(hit) => report(c, st.line, imported_const_msg(hit.name, hit.at)),
+          None => unit,
+        }
       }
       match st.target {
         # A bare name rebinds where it was defined, walking outward.
