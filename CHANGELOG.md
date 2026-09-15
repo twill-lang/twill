@@ -37,6 +37,12 @@
 
 ### Fixed
 
+- **`sort` orders an element read out of a tensor.** `t[i]` on a tensor is a
+  rank-0 tensor at runtime. It prints as a number, adds as a number and checks
+  as F64, and an `Arr[F64]` filled from it was refused by `sort` with the
+  message for records, on both implementations. heddle's `diag.sorted_copy`
+  passes `fn(a, b) = a < b` for no other reason. A rank-0 tensor now orders as
+  the number it is.
 - **A tuple type on a parameter is a type in numeric mode.** Without a
   `mode systems` line, `fn g(t: (F64, F64))` was refused as `unknown type
   "(F64, F64)" on parameter "t"` while the same annotation on a return or a
