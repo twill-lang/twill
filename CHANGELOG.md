@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.13.0] - 2026-09-15
+
 ### Added
 
 - **`const` reaches across a file boundary.** A `const` declared at the top
