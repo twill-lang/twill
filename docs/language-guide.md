@@ -586,19 +586,33 @@ fn f() -> I64 {
 }
 ```
 
-Two things `const` deliberately does not do.
-
-**It does not cross a file boundary yet.** The checker reads one file, so it
-refuses a write to `HEX` in the file that declares it and accepts the same write
-in a file that imports it:
+The rule crosses a file boundary, which is the case `const` is for. A file that
+imports the theme is held to the theme's promise, whichever way it imports:
 
 ```rust
 import "theme.tw"
-HEX = other()       # accepted today, though theme.tw declared HEX const
+HEX = other()       # refused: HEX is declared const in "theme.tw"
+HEX[0] = "#eee"     # refused
+let HEX = other()   # refused: a plain import brought HEX into this scope
+
+import "theme.tw" as th
+th.HEX = other()    # refused
+th.HEX[0] = "#eee"  # refused
 ```
 
-That is the case `const` is eventually for, and it is not done. `docs/roadmap.md`
-entry 28 tracks it.
+The message names the file and the line the const was declared on, and says
+whether the name may change is that file's decision. A plain import is followed
+through plain imports, eight levels deep, so a const two modules down is seen. A
+nearer binding still wins: a parameter or a local `let` named after an imported
+const is a different binding, and mutable. And an imported `let` stays writable,
+because `const` is the opt-in.
+
+Two things `const` deliberately does not do.
+
+**It does not follow a namespaced import inside an imported file.** If `mid.tw`
+says `import "theme.tw" as th` and you import `mid.tw` plainly, the theme's names
+would be spelled `th.HEX` in your file through `mid`'s alias, and no rule reads
+that. Import the theme yourself if you want the rule.
 
 **It is not a deep freeze.** It guards what is written through the name, so
 `HEX[0] = ...` is refused, but `push(HEX, x)` is not, and neither is a function
@@ -1295,9 +1309,10 @@ enum Verdict { Faster, Slower, Same, Noisy }
 enum Tok { Ident(Str), Num(F64), Punct(Str), Eof }
 ```
 
-**A case carries zero payloads or one. Not two.** Twill has no tuple type, and
-adding positional payloads would introduce `v.0` as a second field syntax beside
-`.name`. A case that needs several values carries a struct:
+**A case carries zero payloads or one. Not two.** Twill has a tuple type (see
+**Tuples**), but a tuple has no `.0` and no names, and adding positional
+payloads would introduce `v.0` as a second field syntax beside `.name`. A case
+that needs several values carries a struct:
 
 ```rust
 struct BinOp { op: Str, lhs: Expr, rhs: Expr }

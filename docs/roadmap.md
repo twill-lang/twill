@@ -30,13 +30,14 @@ in the sources" at the end.
 
 ---
 
-## Status, as of 1.9.0 plus unreleased `main` (checked 2026-09-04)
+## Status, as of 1.12.0 plus unreleased `main` (checked 2026-09-15)
 
 This document was written when none of it was built, and it went stale without
 saying so: entries kept being delivered and only two of them (5 and 21) were
-ever marked. Twenty-six of the thirty-two are now delivered, two are half
-delivered, and four are untouched. One of the twenty-six, entry 30, is delivered
-on `main` and unreleased; the other twenty-five are in a tagged release.
+ever marked. Twenty-seven of the thirty-two are now delivered, two are half
+delivered, and three are untouched. One of the twenty-seven, entry 28, is
+delivered on `main` and unreleased; the other twenty-six are in a tagged
+release.
 
 The ranking is left exactly as it was. It is an argument about evidence, not a
 queue of open work, and rewriting the order now that the work is done would
@@ -51,7 +52,7 @@ Delivery was verified by running the current binary, not by reading the
 changelog, which is how the two half-done entries and the still-open `record()`
 were caught. The release named in each row is where the feature first shipped,
 taken from the changelog and, where the changelog was silent, from the tag the
-defining commit first appears in. The four still open are 24, 28, 29 and 32.
+defining commit first appears in. The three still open are 24, 29 and 32.
 The two half done are 17 and 31.
 
 "Delivered" throughout means delivered by the Go bootstrap, which is the binary
@@ -210,7 +211,7 @@ names, which is the part a test can hold.
 
 | # | Feature | Callers | Repos | Delivered |
 |---|---|---|---|---|
-| 1 | `Res[T, E]`, `Opt[T]`, or any way to return two values | 6 | twill, spool, loom, bobbin, weft, warp | 1.3.0, checked in 1.6.0; tuple returns unreleased |
+| 1 | `Res[T, E]`, `Opt[T]`, or any way to return two values | 6 | twill, spool, loom, bobbin, weft, warp | 1.3.0, checked in 1.6.0; tuple returns 1.12.0 |
 | 2 | Function values with a declared type, as parameters and struct fields | 6 | twill, spool, loom, bobbin, weft, warp | 1.5.0 spelled, 1.7.0 as values |
 | 3 | `enum` with payloads and exhaustive `match` | 5 | twill, spool, loom, bobbin, warp | 1.3.0, exhaustive 1.6.0, patterns 1.7.0 |
 | 4 | The bitwise operators, spelled, and `shr` on a negative `I64` defined | 5 | twill, spool, loom, weft, warp | 1.3.0, infix in 1.5.0 |
@@ -237,9 +238,9 @@ names, which is the part a test can hold.
 | 25 | A way to fail that cannot be ignored | 1 | twill | 1.4.0, `abort` |
 | 26 | Allocation and memory counters | 1 | bobbin | 1.6.0 |
 | 27 | Ranged reads | 1 | warp | 1.6.0 |
-| 28 | Immutable top-level bindings | 1 | weft | **half**: `const` in one file, cross-file open |
-| 29 | Optional and named arguments, or record update | 1 | weft | **half**: record update unreleased, named arguments open |
-| 30 | A compiler barrier | 1 | bobbin | unreleased, `black_box` |
+| 28 | Immutable top-level bindings | 1 | weft | 1.10.0 in one file, across files unreleased |
+| 29 | Optional and named arguments, or record update | 1 | weft | **half**: record update 1.11.0, named arguments open |
+| 30 | A compiler barrier | 1 | bobbin | 1.10.0, `black_box` |
 | 31 | `Dict` keyed by something other than `Str` | 1 | twill | **half**: `I64` keys, not identity |
 | 32 | An empty record, and removing a field | 1 | twill | **open** |
 
@@ -253,7 +254,7 @@ names, which is the part a test can hold.
 > rather than a runtime surprise. The three workarounds below are no longer
 > forced; each satellite carries its own until it adopts the replacement.
 >
-> **The third workaround is answered separately, by tuple returns (unreleased).**
+> **The third workaround is answered separately, by tuple returns (1.12.0).**
 > `Res` addressed failure, and a struct declared for one call site is not a
 > failure: `fn span(xs) -> (F64, F64)` and `let (lo, hi) = span(xs)` are what
 > `Batch`, `StepResult` and weft's four span types were standing in for. A tuple
@@ -1082,8 +1083,8 @@ profiler can do.
 and every other part of `stream.tw` is written against it. The smallest possible
 addition that makes out-of-core data possible: no file handles, no seeking API.
 
-**28. Immutable top-level bindings** (weft entry 9). **Partly delivered:
-`const` binds, and is not yet enforced across a file boundary.**
+**28. Immutable top-level bindings** (weft entry 9). **Delivered: `const` in
+1.10.0, and enforced across a file boundary on `main`, unreleased.**
 `src/canvas.tw` `QUADRANTS`, `src/theme.tw` `DENSITY`, `src/sparkline.tw`
 `LEVELS`, `src/svg.tw` `HEX` are lookup tables that any importer can reassign,
 because `Arr` has reference semantics and `let` binds a handle. A library whose
@@ -1112,40 +1113,39 @@ refuse an assignment through the name -- the binding itself, an element of it, a
 field of it, and any nesting of those. A second binding of a const name in the
 same scope is refused too, so the guarantee cannot be revoked with nothing said.
 
-**A caller in another file can still assign to an imported `const`, and that is
-this entry's actual complaint.** It is not delivered. A plain `import` copies the
-name into the importing scope and the handle is shared, so a second file's
-`HEX = ...` and `HEX[0] = ...` are both still accepted by both checkers, and
-both are still what every other importer then reads. What `const` catches today
-is a library breaking its own promise inside its own file, which is not what weft
-reported.
+**A caller in another file is now refused too, which was this entry's actual
+complaint.** A plain `import` copies the name into the importing scope and the
+handle is shared, so a second file's `HEX = ...` and `HEX[0] = ...` were both
+accepted by both checkers and both were what every other importer then read.
+Both checkers now follow a file's imports far enough to know the top-level
+`const` names they declare, and refuse an assignment through one, an element or
+field write through one, and a top-level rebinding of one, whether the import
+is plain (`HEX = ...`) or namespaced (`th.HEX = ...`, which is how weft imports
+its theme). The message names the declaring file and line. Plain imports are
+followed through plain imports, eight levels deep, on both sides.
 
-A cross-file rule was written and withdrawn rather than shipped. It rode on the
-Go checker's import walk -- the walk that exists so a `match` on an enum
+The first cross-file rule was written and withdrawn before this one. It rode on
+the Go checker's import walk -- the walk that exists so a `match` on an enum
 declared in another module can be judged exhaustive -- and changing that walk
-broke it. A file importing nine or more siblings where a later one declared an
-enum stopped being followed, so a non-exhaustive `match` that `main` refuses was
-accepted, and whether it was accepted depended on the order the sibling imports
-were written in. The same change gave every nested aliased import its own copy
-of the cycle guard, which made the walk exponential in aliased fan-out. Neither
-was reachable from the ecosystem -- no `.tw` file in the swept corpus makes more
-than two plain imports -- so neither the differential sweep nor any test found
-them. `internal/checker/imports.go` is now
-byte-identical to the file on `main`, and `check()` in `src/check.tw` reads one
-file as it always did.
+broke it: a file importing nine or more siblings where a later one declared an
+enum stopped being followed, so a non-exhaustive `match` was accepted depending
+on the order the imports were written in. The rule that shipped rides on a
+walk of its own, `internal/checker/constimport.go`, and the enum walk is
+untouched; the nine-sibling program is now a test. The self-hosted checker
+gained `check_file(prog, path)` in `src/check.tw`, the entry point with the
+capability to read files, mirroring `CheckFile`; `check(prog)` still reads one
+AST. Its walk runs on demand, because an eager one cost the compiler's own
+entry points a factor of twelve for maps nothing read.
 
-Closing this entry properly means a cross-file rule that does not ride on the
-enum walk. Three things are open, and they are separate problems:
+Two things stay open, and neither is this entry's complaint:
 
-- **The binding across a file boundary**, which is the report. It needs the
-  checker to know an imported file's top-level `const` names, without changing
-  how the enum walk visits files, and it needs the self-hosted checker to learn
-  the same thing: `src/check.tw` reads one file and no imported ones at all.
 - **`const` is not a deep freeze.** It guards what is written through the name,
   so `HEX[0] = ...` is refused, but `push(HEX, x)` is not, and neither is a
   function handed the handle. Closing that needs a frozen aggregate, or an
   effects rule about where a handle may go, and neither is a checker rule about
-  one binding.
+  one binding. A namespaced import inside an imported file is not followed
+  either, because its names would be spelled `mid.th.HEX` in the importer and
+  no rule reads that.
 - **The self-hosted checker still reads no imported enums.** A `match` on an
   enum declared in another module is unjudged there while the Go checker judges
   it. That gap is older than this entry and is not closed by it.
@@ -1153,7 +1153,7 @@ enum walk. Three things are open, and they are separate problems:
 **29. Optional and named arguments, or record update**, **half** (weft entry
 10). The entry's "or" was doing real work, and the cheaper half is now
 delivered. Record update is `S { ..base, field: value }`, one new expression
-form, and it is in both implementations, unreleased. Named arguments are not:
+form, and it is in both implementations since 1.11.0. Named arguments are not:
 they reach every arity check on both sides and every builtin, whose arities are
 declared as word lists with no parameter names in them at all.
 
@@ -1171,7 +1171,7 @@ the one the entry describes: pass a record and update it. That is a smaller gap
 than the one the entry opened with, and it is the half that costs the arity
 rewrite, so the entry is half rather than delivered.
 
-**30. A compiler barrier** (bobbin entry 3). **Delivered, and the entry's
+**30. A compiler barrier** (bobbin entry 3). **Delivered, 1.10.0, and the entry's
 premise was wrong.** `black_box(x)` returns `x`, in both modes and on both
 implementations.
 
@@ -1346,8 +1346,9 @@ the best value in this stage.
 ### Stage 5: the design questions
 
 Entries 17, 24, 25, 28, 29, and 31. The tensor across the seam. Generators. A
-way to fail. `const` (the keyword landed; entry 28's cross-file half is still
-open). Named arguments. `Dict` keyed by identity.
+way to fail. `const` (the keyword landed in 1.10.0 and reaches across files on
+`main`; what stays open is that it is not a deep freeze). Named arguments.
+`Dict` keyed by identity.
 
 These are last because each needs a decision rather than an implementation, and
 because none of them stops a codebase running. Entry 17 is the largest of them

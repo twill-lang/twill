@@ -41,6 +41,10 @@ import (
 func CheckFile(prog *ast.Program, path string) []Diagnostic {
 	c := newChecker(prog)
 	c.loadImportedEnums(prog, path, map[string]bool{})
+	// A second, separate walk for top-level `const` bindings. It does not
+	// share this one's bound or its seen set, on purpose; constimport.go says
+	// what happened when it did.
+	c.loadImportedConsts(prog, path)
 	env := c.prelude(prog)
 	for _, s := range prog.Body {
 		c.inferStmt(s, env)
