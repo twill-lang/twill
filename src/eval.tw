@@ -3379,6 +3379,9 @@ fn list_order_kind(items: Arr[Value], line: I64) -> Res[I64, RuntimeError] {
       VStr(_) => strs = strs + 1,
       VNum(_) => nums = nums + 1,
       VInt(_) => nums = nums + 1,
+      # An element read out of a tensor with `t[i]` is a rank-0 tensor, and it
+      # prints, adds and checks as a number, so it orders as one.
+      VTensor(t) => { if len(t.shape) == 0 { nums = nums + 1 } },
       _ => unit,
     }
     i = i + 1

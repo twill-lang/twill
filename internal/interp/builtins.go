@@ -3410,6 +3410,12 @@ func (ip *Interp) sortList(l *value.List, rest []value.Value) (value.Value, erro
 // and a list of anything else -- records, lists, functions -- needs the caller
 // to say what the order is, which is what the comparison form is for. Both say
 // so rather than picking something.
+//
+// A rank-0 tensor is a number here. An element read out of a tensor with `t[i]`
+// is one at runtime, while it prints as a number, adds as a number and checks
+// as F64, so an `Arr[F64]` filled from a tensor was refused with the message
+// for records. heddle's `diag.sorted_copy` passes a comparison for no other
+// reason; `<` orders the same value, and so does this.
 func listOrder(items []value.Value) (func(i, j int) bool, error) {
 	if len(items) == 0 {
 		return func(i, j int) bool { return false }, nil
@@ -3417,11 +3423,15 @@ func listOrder(items []value.Value) (func(i, j int) bool, error) {
 	strs := 0
 	nums := 0
 	for _, it := range items {
-		switch it.(type) {
+		switch v := it.(type) {
 		case value.Str:
 			strs++
 		case value.Num, value.Int:
 			nums++
+		case *tensor.Tensor:
+			if v.IsScalar() {
+				nums++
+			}
 		}
 	}
 	switch {

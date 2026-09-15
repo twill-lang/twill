@@ -1846,3 +1846,21 @@ func TestNamespacedImportIsOneInstancePerProgram(t *testing.T) {
 		t.Errorf("self-hosted evaluator:\n  got  %q\n  want %q", selfOut, want)
 	}
 }
+
+// An element read out of a tensor with `t[i]` is a rank-0 tensor at runtime. It
+// prints as a number, adds as a number and checks as F64, and `sort` on a list
+// of them refused it with the message for records, on both implementations.
+// heddle's `diag.sorted_copy` passes `fn(a, b) = a < b` for no other reason.
+// The order is the numeric one, and the two implementations agree on it.
+func TestSortOrdersRank0TensorsAsNumbers(t *testing.T) {
+	goOut, selfOut := runBothWays(t, "mode systems\nlet t: Tensor = tensor([3.0, 1.0, 2.0])\n"+
+		"let a: F64 = t[0]\nlet b: F64 = t[1]\nlet c: F64 = t[2]\n"+
+		"let picked: Arr[F64] = [a, b, c]\nprint(str(sort(picked)))\nprint(str(sort(picked, true)))\n")
+	const want = "[1, 2, 3][3, 2, 1]"
+	if goOut != want {
+		t.Errorf("Go interpreter: got %q, want %q", goOut, want)
+	}
+	if selfOut != want {
+		t.Errorf("self-hosted evaluator: got %q, want %q", selfOut, want)
+	}
+}
