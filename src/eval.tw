@@ -1347,12 +1347,31 @@ fn is_i64_anno(type_name: Str, u: Opt[ast.UnitAnno]) -> Bool {
   }
 }
 
+# Every namespaced import already evaluated, by the key the bootstrap uses: a
+# "std/" path whole, anything else resolved against the program. A module is one
+# instance per program, so a second `import "x" as y` binds the record the first
+# one built rather than running the module again into a second one. std/test's
+# counters are the case that found this: a helper module importing it recorded
+# into its own copy, and the suite reported `passed 0 failed 0` and `OK`.
+let NAMESPACES: Dict[Str, Value] = dict_new()
+
 fn exec_import(st: ast.Import, env: Env) -> Res[Flow, RuntimeError] {
   # The source comes from the native `module_source`, which owns the resolution
   # policy (std embedded, else relative to the running program, `.ra` refused).
   # Everything after is twill: parse the module, run its top level in a fresh
   # scope, then either bind that scope under the alias as a record or, for a
   # plain import, copy its names into the importer's scope.
+  let key: Str = st.path
+  if not bytes.has_prefix(key, "std/") { key = base_resolve(key) }
+  if len(st.alias) > 0 {
+    match dict_get(NAMESPACES, key) {
+      Some(rec) => {
+        env_define(env, st.alias, rec)
+        return Ok(Normal(VUnit))
+      },
+      None => unit,
+    }
+  }
   let src: Str = ""
   match module_source(st.path) {
     Some(s) => src = s,
@@ -1384,7 +1403,9 @@ fn exec_import(st: ast.Import, env: Env) -> Res[Flow, RuntimeError] {
           j = j + 1
         }
       } else {
-        env_define(env, st.alias, VRecord(plain_record(mod_env.vars)))
+        let rec: Value = VRecord(plain_record(mod_env.vars))
+        dict_set(NAMESPACES, key, rec)
+        env_define(env, st.alias, rec)
       }
       Ok(Normal(VUnit))
     },

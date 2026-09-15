@@ -184,8 +184,12 @@ type Interp struct {
 	srcStack []srcFrame
 	loaded   map[string]bool // plain imports already loaded
 	loading  map[string]bool // namespaced imports currently loading (cycle guard)
-	rng      *rand.Rand      // deterministic RNG for randn/rand/seed
-	Args     []string        // program arguments, exposed by the args builtin
+	// namespaces holds every namespaced import already evaluated, by module
+	// key, so a second `import "x" as y` anywhere in the program binds the same
+	// record rather than running the module again into a second one.
+	namespaces map[string]*value.Record
+	rng        *rand.Rand // deterministic RNG for randn/rand/seed
+	Args       []string   // program arguments, exposed by the args builtin
 	// gbmModels holds fitted gradient-boosting models by integer handle. The Go
 	// interpreter passes a *gbm.Model as a value directly, but a twill value
 	// cannot hold a native pointer, so the self-hosted evaluator refers to a
@@ -271,6 +275,7 @@ func New(out func(string)) *Interp {
 		out:             out,
 		loaded:          map[string]bool{},
 		loading:         map[string]bool{},
+		namespaces:      map[string]*value.Record{},
 		rng:             rand.New(rand.NewSource(defaultSeed)),
 		gbmModels:       map[int64]*gbm.Model{},
 		variantNames:    map[string]bool{},
@@ -792,6 +797,18 @@ func (ip *Interp) doImport(st *ast.Import, env *value.Env) {
 	if st.Alias != "" {
 		// Namespaced import: evaluate into a fresh module scope and bind its
 		// definitions as a record under the alias. Guard against cycles.
+		//
+		// Evaluated once per program, not once per importer. A module with
+		// state at its top level -- std/test's counters are the case that
+		// found this -- is one instance, so a helper module that imports
+		// "std/test" as t records into the same counters the suite reports
+		// from. Before this, every `as` import ran the module again into a
+		// fresh scope, and a failure recorded through the helper never
+		// reached the suite's report: it printed `passed 0 failed 0` and `OK`.
+		if rec, ok := ip.namespaces[mod.key]; ok {
+			env.Define(st.Alias, rec)
+			return
+		}
 		if ip.loading[mod.key] {
 			return
 		}
@@ -821,6 +838,7 @@ func (ip *Interp) doImport(st *ast.Import, env *value.Env) {
 		for _, name := range modEnv.LocalNames() {
 			rec.Set(name, locals[name])
 		}
+		ip.namespaces[mod.key] = rec
 		env.Define(st.Alias, rec)
 		return
 	}
