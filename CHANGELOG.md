@@ -44,6 +44,14 @@
   systems mode. The parameter path admitted a bare type name and nothing else;
   it now admits a tuple and a function type too, on both implementations, and
   checks the argument against it.
+- **A namespaced import is one instance per program.** `import "std/test" as
+  t` in a helper module used to run std/test again into a fresh scope, so a
+  failure the helper recorded went into counters nobody reported: the suite
+  printed `passed 0 failed 0` and `OK` with a deliberate failure inside it.
+  Every satellite that moved to std/test could layer nothing on it. Now the
+  first `as` import of a module builds its record and every later one, from
+  any file, binds that same record, on both implementations. A plain import
+  is unchanged.
 
 ## [1.12.0] - 2026-09-05
 

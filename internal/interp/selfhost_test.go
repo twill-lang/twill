@@ -1810,3 +1810,39 @@ func TestBothCheckersFollowEightImportLevelsAndStopAtNine(t *testing.T) {
 	bothCheckersAgree(t, "eight levels", writeChain(t, t.TempDir(), 8), true)
 	bothCheckersAgree(t, "nine levels", writeChain(t, t.TempDir(), 9), false)
 }
+
+// A namespaced import is one instance per program, on both implementations.
+//
+// std/test keeps its counters at the top level, and a helper module that
+// imports it must record into the counters the suite reports from. Before this,
+// every `import "std/test" as t` ran the module again into a fresh scope, so a
+// failure recorded through the helper was counted in a copy nobody reported:
+// the suite printed `passed 0 failed 0` and `OK` with a deliberate failure in
+// it. The two implementations have to agree, since a suite that is green on one
+// and red on the other is a suite nobody can trust.
+//
+// The layered shape, a helper file beside the suite, runs on the Go interpreter
+// only: the self-hosted CLI resolves a sibling import of the file it is running
+// against src/ rather than against that file, which predates this and is not
+// what this test is about. The same defect through two aliases in one file is
+// what runs both ways.
+func TestNamespacedImportIsOneInstancePerProgram(t *testing.T) {
+	dir := t.TempDir()
+	writeModule(t, dir, "helper", "mode systems\nimport \"std/test\" as t\n"+
+		"fn deliberate() { t.check(\"helper records a failure\", false) }\n")
+	got := strings.Join(runFile(t, dir, "mode systems\nimport \"std/test\" as t\nimport \"helper.tw\" as h\n"+
+		"fn main() -> I64 {\n  h.deliberate()\n  t.check(\"suite passes one\", true)\n  t.report(\"layer\")\n}\n"), "|")
+	if want := "  FAIL  helper records a failure|layer passed 1 failed 1|FAILED"; got != want {
+		t.Errorf("layered:\n  got  %q\n  want %q", got, want)
+	}
+
+	goOut, selfOut := runBothWays(t, "mode systems\nimport \"std/test\" as t\nimport \"std/test\" as u\n"+
+		"u.check(\"recorded through the second alias\", false)\nt.check(\"recorded through the first\", true)\nt.report(\"twice\")\n")
+	const want = "  FAIL  recorded through the second aliastwice passed 1 failed 1FAILED"
+	if goOut != want {
+		t.Errorf("Go interpreter:\n  got  %q\n  want %q", goOut, want)
+	}
+	if selfOut != want {
+		t.Errorf("self-hosted evaluator:\n  got  %q\n  want %q", selfOut, want)
+	}
+}
