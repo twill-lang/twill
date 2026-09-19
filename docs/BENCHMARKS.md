@@ -519,7 +519,67 @@ verify_deterministic 1.17x, and the matmul-bound workloads flat.
 
 ---
 
-## 10. Related
+## 10. The 1.15.0 deterministic matmul default and the fast kernel
+
+Measured on 2026-09-20, on this machine (Apple silicon, arm64), with go1.27.0
+darwin/arm64. These are twill-against-twill numbers at `GOMAXPROCS=1`: the same
+workloads and the same harness, run on the 1.14.0 baseline and on this branch
+under each of the two kernels. They are not a PyTorch comparison.
+
+Until this change twill's matmul was tolerance-tested and never byte-pinned. On
+arm64 the Go compiler contracts the inner product `s += a*b` into a fused
+multiply-add, and amd64 does not, so the same program could answer a different
+low bit on the two machines, hidden because no byte-exact test exercised a
+matmul. The default kernel now rounds every product before it is added, the same
+non-fused rule the gradient accumulation already used, so the pure-Go, arm64 and
+amd64 paths agree bit-for-bit. That default is `strict`. The `fast` kernel, which
+you opt into with `TWILL_MATMUL=fast` or `--matmul=fast`, fuses each term through
+`math.FMA` (one hardware instruction on both arms) and runs eight accumulators
+instead of four to fill the longer fused-op latency; its result may differ by a
+low bit and is not guaranteed identical between architectures.
+
+Median milliseconds, lower is better, taken as the best of three interleaved
+rounds so thermal drift does not favour whichever kernel ran last.
+
+| workload | 1.14.0 baseline | strict (default) | fast | fast vs baseline |
+|---|---|---|---|---|
+| matmul_128 | 0.794 | 0.740 | 0.702 | 1.13x |
+| matmul_256 | 5.922 | 5.693 | 5.401 | 1.10x |
+| matmul_512 | 46.712 | 44.337 | 41.243 | 1.13x |
+| matmul_1024 | 357.050 | 336.610 | 317.615 | 1.12x |
+| matmul_512_grad | 92.225 | 86.663 | 81.316 | 1.13x |
+| attention_head | 3.287 | 3.376 | 2.966 | 1.11x |
+| mlp_train_step | 7.221 | 8.196 | 7.074 | 1.02x |
+
+Two things are worth reading off this table honestly. First, the fast kernel is
+about 1.1x on arm64, not the larger figure a fused matmul buys on a machine
+starting from no fusion. arm64 already fused before this change, so fast only
+adds the extra instruction-level parallelism of the wider accumulator count. The
+larger gain from fusion is on amd64, where the baseline did not fuse and the
+fused instruction is new. CI runs the suite on amd64; this document does not
+carry an amd64 speed number because this machine cannot produce one.
+
+Second, the strict default is not a speed regression on the forward matmuls, and
+on several is a small win, because the non-fused kernel puts an independent
+multiply and a shorter-latency add on the pipeline where the fused form put one
+longer-latency op on the dependent accumulator chain. The exceptions are the
+workloads whose time is the general (non-transposed) `mm` kernel used in the
+backward pass, attention_head and mlp_train_step, where the fused form did one
+instruction per term and strict does two, so strict costs up to about 12 percent
+there. That is the price of a bit-identical default, and the fast kernel buys it
+back for anyone who does not need cross-architecture identity.
+
+The determinism claim is now pinned. `TestStrictMatMulIsBitIdentical` compares
+the strict kernel against a hand-written, architecture-independent reference
+bit-for-bit, and `TestStrictMatMulIsCoreCountInvariant` compares it across core
+counts. The tolerance suite (`linear_test.go`), the gradient-check suites, the
+byte-exact `determinism_test.go` and the codegen differential and finite
+difference checks all stay green under both `TWILL_MATMUL=strict` and
+`TWILL_MATMUL=fast`.
+
+---
+
+## 11. Related
 
 - `docs/CORRECTNESS.md`, the evidence that the numbers being computed are right,
   which is the prerequisite for caring how fast they are computed.

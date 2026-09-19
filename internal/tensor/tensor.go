@@ -1009,20 +1009,32 @@ func dotStrict(a, w []float64, k int) float64 {
 	return s
 }
 
-// dotFast is dotStrict with each multiply-add fused through math.FMA, which the
-// Go compiler lowers to one hardware fused instruction on both arm64 and amd64.
-// It rounds once per term instead of twice, so it is faster and its low bit can
-// differ from dotStrict and can differ by ULPs between architectures.
+// dotFast fuses each multiply-add through math.FMA, which the Go compiler lowers
+// to one hardware fused instruction (FMADD on arm64, VFMADD on amd64). It rounds
+// once per term instead of twice, so it is faster and its low bit can differ
+// from dotStrict and can differ by ULPs between architectures.
+//
+// It runs eight independent accumulators, not the strict kernel's four. A fused
+// multiply-add has a longer latency than a bare add, so four dependent chains do
+// not fill the FP pipeline and the four-accumulator FMA loop is actually slower
+// than the strict one; eight chains hide the latency and make the fusion pay.
+// The extra rounding freedom the fast path is allowed is what lets the grouping
+// change. Measured on Apple arm64, eight-wide FMA is the fastest of the widths
+// tried (four, eight, sixteen).
 func dotFast(a, w []float64, k int) float64 {
-	var s0, s1, s2, s3 float64
+	var s0, s1, s2, s3, s4, s5, s6, s7 float64
 	p := 0
-	for ; p+4 <= k; p += 4 {
+	for ; p+8 <= k; p += 8 {
 		s0 = math.FMA(a[p], w[p], s0)
 		s1 = math.FMA(a[p+1], w[p+1], s1)
 		s2 = math.FMA(a[p+2], w[p+2], s2)
 		s3 = math.FMA(a[p+3], w[p+3], s3)
+		s4 = math.FMA(a[p+4], w[p+4], s4)
+		s5 = math.FMA(a[p+5], w[p+5], s5)
+		s6 = math.FMA(a[p+6], w[p+6], s6)
+		s7 = math.FMA(a[p+7], w[p+7], s7)
 	}
-	s := (s0 + s1) + (s2 + s3)
+	s := ((s0 + s1) + (s2 + s3)) + ((s4 + s5) + (s6 + s7))
 	for ; p < k; p++ {
 		s = math.FMA(a[p], w[p], s)
 	}

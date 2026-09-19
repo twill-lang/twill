@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+### Added
+
+- **A strict, deterministic matrix-multiply kernel, now the default, and a fast
+  opt-in one.** twill's matmul was tolerance-tested and never byte-pinned, and on
+  arm64 the Go compiler contracts the inner product into a fused multiply-add
+  while amd64 does not, so the same program answered a different low bit per
+  architecture. The determinism claim covered reductions and gradients but never
+  matmul. The default kernel now rounds every product before adding it, the same
+  non-fused rule already used for gradient accumulation, so the pure-Go, arm64
+  and amd64 paths agree bit-for-bit. It keeps the four-accumulator grouping, so
+  it stays within tolerance of the general kernel. A new byte-exact test pins it
+  to an architecture-independent reference and to core-count invariance. Set
+  `TWILL_MATMUL=fast`, or pass `--matmul=fast`, to select a fused-FMA kernel that
+  is faster single-thread but may differ by a low bit between architectures; the
+  default is `strict`. On arm64 the fast kernel is about 1.1x on the larger
+  matmul workloads, since arm64 already fused before this change; its larger gain
+  is on amd64, where the fused instruction is new. docs/BENCHMARKS.md has the
+  three-way table and the exact contract.
+
 ## [1.14.0] - 2026-09-19
 
 ### Changed

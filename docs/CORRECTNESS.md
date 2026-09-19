@@ -398,6 +398,16 @@ contracted into a fused multiply-add on arm64 and not on amd64, and
 undefined out of range. What remains, after those, is `exp` and the operations
 built on it.
 
+**Matrix multiply had the same fused-multiply-add divergence, and it is now the
+default that avoids it.** The comparison above did not catch it because every
+matmul test compared with a tolerance and none pinned bits, so the arm64 kernel
+quietly fused its inner product while amd64 did not. As of 1.15.0 the default
+matmul kernel rounds every product before adding it, so it is bit-identical
+across architectures, pinned by `TestStrictMatMulIsBitIdentical`. The faster
+`TWILL_MATMUL=fast` kernel reintroduces the fused multiply-add on purpose and is
+not bit-identical across architectures; it is opt-in for exactly that reason.
+docs/BENCHMARKS.md section 10 has the numbers.
+
 **Why one bit matters here and usually does not.** A single tensor operation is
 off by an ULP and nobody can tell. An iterative method that feeds its own output
 back in is a different case: `twill-lang/heddle`'s NUTS test samples a
