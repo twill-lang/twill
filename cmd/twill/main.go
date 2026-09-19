@@ -13,6 +13,7 @@ import (
 	"github.com/twill-lang/twill/internal/interp"
 	"github.com/twill-lang/twill/internal/lexer"
 	"github.com/twill-lang/twill/internal/parser"
+	"github.com/twill-lang/twill/internal/tensor"
 	"github.com/twill-lang/twill/internal/value"
 )
 
@@ -20,6 +21,12 @@ const version = "1.14.0"
 
 func main() {
 	args := os.Args[1:]
+	// The matmul kernel defaults to strict (deterministic, non-FMA) and is set
+	// from TWILL_MATMUL at startup; --matmul=strict|fast overrides it for this
+	// run. It is stripped from args before dispatch so it works in front of any
+	// subcommand (twill --matmul=fast run x.tw) and is not forwarded to the
+	// program run or mistaken for a source path.
+	args = applyMatmulFlag(args)
 	if len(args) == 0 {
 		repl()
 		return
@@ -359,6 +366,35 @@ func showContext(src string, line, col int) {
 	if col > 0 {
 		fmt.Fprintf(os.Stderr, "%s^\n", strings.Repeat(" ", len(prefix)+col-1))
 	}
+}
+
+// applyMatmulFlag reads and removes a leading --matmul flag (either --matmul=v
+// or --matmul v) from args, setting the kernel accordingly. Only a leading
+// occurrence is honoured, so a --matmul among a program's own forwarded
+// arguments after `run <file>` is left untouched.
+func applyMatmulFlag(args []string) []string {
+	for len(args) > 0 && strings.HasPrefix(args[0], "--matmul") {
+		var v string
+		switch {
+		case args[0] == "--matmul" && len(args) > 1:
+			v, args = args[1], args[2:]
+		case strings.HasPrefix(args[0], "--matmul="):
+			v, args = strings.TrimPrefix(args[0], "--matmul="), args[1:]
+		default:
+			fmt.Fprintln(os.Stderr, "twill: --matmul needs a value: strict or fast")
+			os.Exit(2)
+		}
+		switch strings.ToLower(v) {
+		case "strict":
+			tensor.SetFastMatmul(false)
+		case "fast":
+			tensor.SetFastMatmul(true)
+		default:
+			fmt.Fprintf(os.Stderr, "twill: --matmul must be strict or fast, got %q\n", v)
+			os.Exit(2)
+		}
+	}
+	return args
 }
 
 func hasFlag(args []string, flag string) bool {
