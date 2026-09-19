@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.14.0] - 2026-09-19
+
 ### Changed
 
 - **The elementwise and autodiff hot paths are faster, with no change to any
