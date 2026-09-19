@@ -12,6 +12,13 @@ explains why it is wrong to. Being slower is the expected result and it is not a
 defect. Section 6 says where the gap comes from, which is more useful than how
 large it is.
 
+Those PyTorch ratios are the 2026-08-15 Windows measurement and are left as
+they were taken. Release 1.14.0 then made the elementwise and autodiff hot
+paths faster, so the gap on those workloads is narrower than the figures above
+say. Section 9 records that speedup as a twill-against-twill before and after on
+this macOS machine; it does not restate the PyTorch ratio, which would need the
+PyTorch side re-run on the same machine.
+
 ---
 
 ## 1. Environment
@@ -449,7 +456,70 @@ a trade this document is happy to record.
 
 ---
 
-## 9. Related
+## 9. The 1.14.0 elementwise and autodiff speedup
+
+Measured on 2026-09-19, on this machine (Apple silicon, arm64), with go1.27.0
+darwin/arm64. These are twill-against-twill numbers: the same workloads and the
+same harness, run on the 1.13.0 baseline (commit 67a09be) and on the 1.14.0
+branch, back to back so the machine is in the same thermal state for both. They
+are not a PyTorch comparison.
+
+The changes are three. The forward pass of a cheap elementwise op ran its
+arithmetic through a closure called once per element, an indirect call the
+compiler could not inline or vectorise; add, subtract, multiply, divide,
+negate, relu and square now run a direct loop. The equal-shape backward pass
+accumulated add, subtract and multiply gradients through the same kind of
+closure, and now runs them directly, keeping the explicit non-fused multiply so
+the gradient stays bit-identical. The general matmul gained the cache tiling the
+transposed kernel already had. No change alters a computed value: every result
+column in the harness is identical before and after.
+
+The commands:
+
+```
+GOMAXPROCS=1 go run ./bench/cmd/twillbench -procs 1
+go run ./bench/cmd/twillbench
+```
+
+Median milliseconds, lower is better. The speedup is baseline over 1.14.0.
+
+At `GOMAXPROCS=1`, the single-thread comparison:
+
+| workload | 1.13.0 | 1.14.0 | speedup |
+|---|---|---|---|
+| mc_option_fwd | 2.476 | 1.463 | 1.69x |
+| elementwise_10000 | 0.105 | 0.081 | 1.29x |
+| elementwise_grad_100000 | 2.429 | 1.900 | 1.28x |
+| mc_option_grad | 9.638 | 7.665 | 1.26x |
+| elementwise_grad_1000000 | 23.561 | 18.908 | 1.25x |
+| elementwise_100000 | 1.359 | 1.119 | 1.21x |
+| elementwise_1000000 | 13.590 | 11.479 | 1.18x |
+| elementwise_10000000 | 130.672 | 111.282 | 1.17x |
+| verify_deterministic | 0.612 | 0.537 | 1.14x |
+| matmul_512 | 46.128 | 44.090 | 1.05x |
+| matmul_512_grad | 93.600 | 89.430 | 1.05x |
+| matmul_1024 | 360.34 | 347.77 | 1.04x |
+| matmul_256 | 5.941 | 5.788 | 1.03x |
+| attention_head | 3.284 | 3.268 | 1.01x |
+| mlp_train_step | 7.138 | 7.092 | 1.01x |
+| matmul_128 | 0.761 | 0.760 | 1.00x |
+
+The workloads whose time is a matmul (matmul_*, attention_head, mlp_train_step)
+are essentially unchanged: they are floating-point-throughput bound in a kernel
+this release did not rewrite, and the tiling only helps a product too large to
+fit the last-level cache, which none of these are. The gain is on the
+elementwise and autodiff-bound workloads, where the per-element closure call was
+real cost. The flagship Monte Carlo pricer, forward-only, is 1.69x.
+
+The best-of-sweep run (the harness picking each workload's best thread count)
+shows the same shape, smaller because the parallel forward loops already hid
+some of the closure cost across cores: mc_option_fwd 1.32x, the elementwise
+workloads 1.06x to 1.20x, the autodiff workloads 1.10x to 1.13x,
+verify_deterministic 1.17x, and the matmul-bound workloads flat.
+
+---
+
+## 10. Related
 
 - `docs/CORRECTNESS.md`, the evidence that the numbers being computed are right,
   which is the prerequisite for caring how fast they are computed.

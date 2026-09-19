@@ -381,7 +381,132 @@ func effStrides(inShape, outShape []int) []int {
 	return eff
 }
 
-func broadcastBinary(a, b *Tensor, f func(x, y float64) float64,
+// ewOp names an elementwise binary operation whose forward loop is worth
+// running directly rather than through the f closure. A closure is an indirect
+// call the Go compiler cannot inline or vectorise, so on a large buffer the
+// per-element call costs more than the arithmetic. The four cheap arithmetic
+// ops carry a tag; everything else passes ewNone and keeps calling f. The tag
+// changes only how the forward buffer is filled, never the value, so results
+// stay bit-identical and the backward closures are untouched.
+type ewOp uint8
+
+const (
+	ewNone ewOp = iota
+	ewAdd
+	ewSub
+	ewMul
+	ewDiv
+)
+
+// ewForward fills out[lo:hi] for op over equal-length ad and bd with a direct,
+// vectorisable loop. It reports false for ewNone, leaving the caller to use f.
+func ewForward(op ewOp, out, ad, bd []float64, lo, hi int) bool {
+	switch op {
+	case ewAdd:
+		for i := lo; i < hi; i++ {
+			out[i] = ad[i] + bd[i]
+		}
+	case ewSub:
+		for i := lo; i < hi; i++ {
+			out[i] = ad[i] - bd[i]
+		}
+	case ewMul:
+		for i := lo; i < hi; i++ {
+			out[i] = ad[i] * bd[i]
+		}
+	case ewDiv:
+		for i := lo; i < hi; i++ {
+			out[i] = ad[i] / bd[i]
+		}
+	default:
+		return false
+	}
+	return true
+}
+
+// ewForwardScalar fills out[lo:hi] for op over ad and a fixed scalar bs, with
+// side telling whether the scalar is the right operand (scalarRHS) or the left.
+func ewForwardScalar(op ewOp, out, ad []float64, bs float64, scalarRHS bool, lo, hi int) bool {
+	if scalarRHS {
+		switch op {
+		case ewAdd:
+			for i := lo; i < hi; i++ {
+				out[i] = ad[i] + bs
+			}
+		case ewSub:
+			for i := lo; i < hi; i++ {
+				out[i] = ad[i] - bs
+			}
+		case ewMul:
+			for i := lo; i < hi; i++ {
+				out[i] = ad[i] * bs
+			}
+		case ewDiv:
+			for i := lo; i < hi; i++ {
+				out[i] = ad[i] / bs
+			}
+		default:
+			return false
+		}
+		return true
+	}
+	switch op {
+	case ewAdd:
+		for i := lo; i < hi; i++ {
+			out[i] = bs + ad[i]
+		}
+	case ewSub:
+		for i := lo; i < hi; i++ {
+			out[i] = bs - ad[i]
+		}
+	case ewMul:
+		for i := lo; i < hi; i++ {
+			out[i] = bs * ad[i]
+		}
+	case ewDiv:
+		for i := lo; i < hi; i++ {
+			out[i] = bs / ad[i]
+		}
+	default:
+		return false
+	}
+	return true
+}
+
+// ewBackwardEq accumulates one operand's gradient for an equal-shape add, sub
+// or mul into gdst over [lo,hi), without the per-element da/db closure call.
+// isA picks the left operand's rule; other is the opposite operand's data, read
+// only by mul (whose derivative in one argument is the other argument). noFMA is
+// kept so the product rounds before it is added, exactly as the closure path
+// does, which is what makes the result bit-identical on arm64 and amd64. It
+// reports false for div and the non-arithmetic ops, which keep the closure.
+func ewBackwardEq(op ewOp, isA bool, gdst, other, g []float64, lo, hi int) bool {
+	switch op {
+	case ewAdd:
+		for i := lo; i < hi; i++ {
+			gdst[i] += g[i]
+		}
+	case ewSub:
+		if isA {
+			for i := lo; i < hi; i++ {
+				gdst[i] += g[i]
+			}
+		} else {
+			for i := lo; i < hi; i++ {
+				gdst[i] += noFMA(-1, g[i])
+			}
+		}
+	case ewMul:
+		for i := lo; i < hi; i++ {
+			gdst[i] += noFMA(other[i], g[i])
+		}
+	default:
+		return false
+	}
+	return true
+}
+
+func broadcastBinary(a, b *Tensor, op ewOp, f func(x, y float64) float64,
 	da func(x, y, o float64) float64, db func(x, y, o float64) float64,
 	daa, dab, dbb func(x, y, o float64) float64) (*Tensor, error) {
 	// Two scalars with nothing to differentiate is what an interpreted loop is
@@ -423,8 +548,10 @@ func broadcastBinary(a, b *Tensor, f func(x, y float64) float64,
 	case shapeEqual(a.Shape, b.Shape):
 		ad, bd := a.Data, b.Data
 		parallelFor(n, func(lo, hi int) {
-			for i := lo; i < hi; i++ {
-				out[i] = f(ad[i], bd[i])
+			if !ewForward(op, out, ad, bd, lo, hi) {
+				for i := lo; i < hi; i++ {
+					out[i] = f(ad[i], bd[i])
+				}
 			}
 		})
 		res := roundedBinaryResult(out, shape, dt)
@@ -439,16 +566,20 @@ func broadcastBinary(a, b *Tensor, f func(x, y float64) float64,
 			if a.RequiresGrad {
 				ga := a.ensureGrad()
 				parallelFor(n, func(lo, hi int) {
-					for i := lo; i < hi; i++ {
-						ga[i] += noFMA(da(ad[i], bd[i], out[i]), g[i])
+					if !ewBackwardEq(op, true, ga, bd, g, lo, hi) {
+						for i := lo; i < hi; i++ {
+							ga[i] += noFMA(da(ad[i], bd[i], out[i]), g[i])
+						}
 					}
 				})
 			}
 			if b.RequiresGrad {
 				gb := b.ensureGrad()
 				parallelFor(n, func(lo, hi int) {
-					for i := lo; i < hi; i++ {
-						gb[i] += noFMA(db(ad[i], bd[i], out[i]), g[i])
+					if !ewBackwardEq(op, false, gb, ad, g, lo, hi) {
+						for i := lo; i < hi; i++ {
+							gb[i] += noFMA(db(ad[i], bd[i], out[i]), g[i])
+						}
 					}
 				})
 			}
@@ -457,8 +588,10 @@ func broadcastBinary(a, b *Tensor, f func(x, y float64) float64,
 	case len(b.Data) == 1: // scalar b broadcast over a
 		ad, bs := a.Data, b.Data[0]
 		parallelFor(n, func(lo, hi int) {
-			for i := lo; i < hi; i++ {
-				out[i] = f(ad[i], bs)
+			if !ewForwardScalar(op, out, ad, bs, true, lo, hi) {
+				for i := lo; i < hi; i++ {
+					out[i] = f(ad[i], bs)
+				}
 			}
 		})
 		res := roundedBinaryResult(out, shape, dt)
@@ -487,8 +620,10 @@ func broadcastBinary(a, b *Tensor, f func(x, y float64) float64,
 	case len(a.Data) == 1: // scalar a broadcast over b
 		as, bd := a.Data[0], b.Data
 		parallelFor(n, func(lo, hi int) {
-			for i := lo; i < hi; i++ {
-				out[i] = f(as, bd[i])
+			if !ewForwardScalar(op, out, bd, as, false, lo, hi) {
+				for i := lo; i < hi; i++ {
+					out[i] = f(as, bd[i])
+				}
 			}
 		})
 		res := roundedBinaryResult(out, shape, dt)
@@ -574,13 +709,53 @@ func broadcastBinary(a, b *Tensor, f func(x, y float64) float64,
 // the dtype, while a transcendental of an integer is not an integer and promotes
 // to f32 (docs/dtypes.md). A float input always keeps its dtype. For f64 -- every
 // tensor before dtypes -- the result is f64 with no rounding and no tag.
-func unary(a *Tensor, preservesInt bool, f func(x float64) float64, df func(x, o float64) float64, ddf func(x, o float64) float64) *Tensor {
+// uOp tags a cheap unary op whose forward loop is worth running directly rather
+// than through the f closure, for the same reason ewOp does for binary ops. Only
+// the cheap arithmetic ops are tagged: a transcendental (exp, tanh) spends all
+// its time inside math.Exp, which is not inlined either way, so tagging it would
+// not help. The tag changes only how the forward buffer is filled.
+type uOp uint8
+
+const (
+	uNone uOp = iota
+	uNeg
+	uRelu
+	uSquare
+)
+
+func uForward(op uOp, out, ad []float64, lo, hi int) bool {
+	switch op {
+	case uNeg:
+		for i := lo; i < hi; i++ {
+			out[i] = -ad[i]
+		}
+	case uRelu:
+		for i := lo; i < hi; i++ {
+			if ad[i] > 0 {
+				out[i] = ad[i]
+			} else {
+				out[i] = 0
+			}
+		}
+	case uSquare:
+		for i := lo; i < hi; i++ {
+			out[i] = ad[i] * ad[i]
+		}
+	default:
+		return false
+	}
+	return true
+}
+
+func unary(a *Tensor, op uOp, preservesInt bool, f func(x float64) float64, df func(x, o float64) float64, ddf func(x, o float64) float64) *Tensor {
 	n := len(a.Data)
 	out := make([]float64, n)
 	ad := a.Data
 	parallelFor(n, func(lo, hi int) {
-		for i := lo; i < hi; i++ {
-			out[i] = f(ad[i])
+		if !uForward(op, out, ad, lo, hi) {
+			for i := lo; i < hi; i++ {
+				out[i] = f(ad[i])
+			}
 		}
 	})
 	dt := unaryResultDType(preservesInt, a.DType())
@@ -624,28 +799,28 @@ func zero2(x, y, o float64) float64 { return 0 }
 
 func Add(a, b *Tensor) (*Tensor, error) {
 	one := func(x, y, o float64) float64 { return 1 }
-	return broadcastBinary(a, b, func(x, y float64) float64 { return x + y },
+	return broadcastBinary(a, b, ewAdd, func(x, y float64) float64 { return x + y },
 		one, one, zero2, zero2, zero2)
 }
 func Sub(a, b *Tensor) (*Tensor, error) {
-	return broadcastBinary(a, b, func(x, y float64) float64 { return x - y },
+	return broadcastBinary(a, b, ewSub, func(x, y float64) float64 { return x - y },
 		func(x, y, o float64) float64 { return 1 }, func(x, y, o float64) float64 { return -1 },
 		zero2, zero2, zero2)
 }
 func Mul(a, b *Tensor) (*Tensor, error) {
-	return broadcastBinary(a, b, func(x, y float64) float64 { return x * y },
+	return broadcastBinary(a, b, ewMul, func(x, y float64) float64 { return x * y },
 		func(x, y, o float64) float64 { return y }, func(x, y, o float64) float64 { return x },
 		zero2, func(x, y, o float64) float64 { return 1 }, zero2)
 }
 func Div(a, b *Tensor) (*Tensor, error) {
-	return broadcastBinary(a, b, func(x, y float64) float64 { return x / y },
+	return broadcastBinary(a, b, ewDiv, func(x, y float64) float64 { return x / y },
 		func(x, y, o float64) float64 { return 1 / y }, func(x, y, o float64) float64 { return -x / (y * y) },
 		zero2,
 		func(x, y, o float64) float64 { return -1 / (y * y) },
 		func(x, y, o float64) float64 { return 2 * x / (y * y * y) })
 }
 func Mod(a, b *Tensor) (*Tensor, error) {
-	return broadcastBinary(a, b, func(x, y float64) float64 { return x - math.Floor(x/y)*y },
+	return broadcastBinary(a, b, ewNone, func(x, y float64) float64 { return x - math.Floor(x/y)*y },
 		func(x, y, o float64) float64 { return 1 }, func(x, y, o float64) float64 { return -math.Floor(x / y) },
 		zero2, zero2, zero2)
 }
@@ -654,15 +829,15 @@ func Mod(a, b *Tensor) (*Tensor, error) {
 func zeroU(x, o float64) float64 { return 0 }
 
 func PowScalar(a *Tensor, p float64) *Tensor {
-	return unary(a, false, func(x float64) float64 { return math.Pow(x, p) },
+	return unary(a, uNone, false, func(x float64) float64 { return math.Pow(x, p) },
 		func(x, o float64) float64 { return p * math.Pow(x, p-1) },
 		func(x, o float64) float64 { return p * (p - 1) * math.Pow(x, p-2) })
 }
 func Neg(a *Tensor) *Tensor {
-	return unary(a, true, func(x float64) float64 { return -x }, func(x, o float64) float64 { return -1 }, zeroU)
+	return unary(a, uNeg, true, func(x float64) float64 { return -x }, func(x, o float64) float64 { return -1 }, zeroU)
 }
 func Relu(a *Tensor) *Tensor {
-	return unary(a, true, func(x float64) float64 {
+	return unary(a, uRelu, true, func(x float64) float64 {
 		if x > 0 {
 			return x
 		}
@@ -675,10 +850,10 @@ func Relu(a *Tensor) *Tensor {
 	}, zeroU)
 }
 func Exp(a *Tensor) *Tensor {
-	return unary(a, false, math.Exp, func(x, o float64) float64 { return o }, func(x, o float64) float64 { return o })
+	return unary(a, uNone, false, math.Exp, func(x, o float64) float64 { return o }, func(x, o float64) float64 { return o })
 }
 func Log(a *Tensor) *Tensor {
-	return unary(a, false, math.Log, func(x, o float64) float64 { return 1 / x }, func(x, o float64) float64 { return -1 / (x * x) })
+	return unary(a, uNone, false, math.Log, func(x, o float64) float64 { return 1 / x }, func(x, o float64) float64 { return -1 / (x * x) })
 }
 
 // Log1p is log(1+x) computed without forming 1+x, which is what keeps it
@@ -687,7 +862,7 @@ func Log(a *Tensor) *Tensor {
 // that way rather than as a function of the output, because recovering x from
 // log1p(x) would throw the accuracy away again.
 func Log1p(a *Tensor) *Tensor {
-	return unary(a, false, math.Log1p,
+	return unary(a, uNone, false, math.Log1p,
 		func(x, o float64) float64 { return 1 / (1 + x) },
 		func(x, o float64) float64 { return -1 / ((1 + x) * (1 + x)) })
 }
@@ -697,25 +872,25 @@ func Log1p(a *Tensor) *Tensor {
 // Its derivative is exp(x), which is the output plus one, so the rule is
 // written on o and costs no second exponential.
 func Expm1(a *Tensor) *Tensor {
-	return unary(a, false, math.Expm1,
+	return unary(a, uNone, false, math.Expm1,
 		func(x, o float64) float64 { return o + 1 },
 		func(x, o float64) float64 { return o + 1 })
 }
 
 func Sin(a *Tensor) *Tensor {
-	return unary(a, false, math.Sin, func(x, o float64) float64 { return math.Cos(x) }, func(x, o float64) float64 { return -o })
+	return unary(a, uNone, false, math.Sin, func(x, o float64) float64 { return math.Cos(x) }, func(x, o float64) float64 { return -o })
 }
 func Cos(a *Tensor) *Tensor {
-	return unary(a, false, math.Cos, func(x, o float64) float64 { return -math.Sin(x) }, func(x, o float64) float64 { return -o })
+	return unary(a, uNone, false, math.Cos, func(x, o float64) float64 { return -math.Sin(x) }, func(x, o float64) float64 { return -o })
 }
 func Sqrt(a *Tensor) *Tensor {
-	return unary(a, false, math.Sqrt, func(x, o float64) float64 { return 0.5 / o }, func(x, o float64) float64 { return -0.25 / (o * o * o) })
+	return unary(a, uNone, false, math.Sqrt, func(x, o float64) float64 { return 0.5 / o }, func(x, o float64) float64 { return -0.25 / (o * o * o) })
 }
 func Tanh(a *Tensor) *Tensor {
-	return unary(a, false, math.Tanh, func(x, o float64) float64 { return 1 - o*o }, func(x, o float64) float64 { return -2 * o * (1 - o*o) })
+	return unary(a, uNone, false, math.Tanh, func(x, o float64) float64 { return 1 - o*o }, func(x, o float64) float64 { return -2 * o * (1 - o*o) })
 }
 func Sigmoid(a *Tensor) *Tensor {
-	return unary(a, false, func(x float64) float64 { return 1 / (1 + math.Exp(-x)) },
+	return unary(a, uNone, false, func(x float64) float64 { return 1 / (1 + math.Exp(-x)) },
 		func(x, o float64) float64 { return o * (1 - o) },
 		func(x, o float64) float64 { return o * (1 - o) * (1 - 2*o) })
 }
@@ -792,18 +967,32 @@ func Mean(a *Tensor) *Tensor { return reduceAll(a, true) }
 
 func mm(a []float64, m, k int, b []float64, n int) []float64 {
 	c := make([]float64, m*n)
+	// Cache tiling, the same blocking mmNT uses. The ikj loop streams all of b
+	// once per row of a, so once b exceeds the last-level cache it is re-read
+	// from memory m times and the kernel goes memory-bound. Blocking j into
+	// panels that fit L2 keeps each b panel resident while the whole a-chunk
+	// streams through it. For a small n the panel is the whole width and this is
+	// the untiled kernel. Each c[i,j] is still accumulated over p in the same
+	// order, so the result is bit-identical to the untiled mm.
+	jb := blockNBytes(k, n, 8)
 	// Rows are independent, so split them across cores for large products.
 	runChunks(m, workersFor(m*k*n), func(lo, hi int) {
-		for i := lo; i < hi; i++ {
-			for p := 0; p < k; p++ {
-				aip := a[i*k+p]
-				if aip == 0 {
-					continue
-				}
-				bRow := p * n
+		for j0 := 0; j0 < n; j0 += jb {
+			j1 := j0 + jb
+			if j1 > n {
+				j1 = n
+			}
+			for i := lo; i < hi; i++ {
 				cRow := i * n
-				for j := 0; j < n; j++ {
-					c[cRow+j] += aip * b[bRow+j]
+				for p := 0; p < k; p++ {
+					aip := a[i*k+p]
+					if aip == 0 {
+						continue
+					}
+					bRow := p * n
+					for j := j0; j < j1; j++ {
+						c[cRow+j] += aip * b[bRow+j]
+					}
 				}
 			}
 		}
