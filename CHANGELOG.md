@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.15.0] - 2026-09-20
+
 ### Added
 
 - **A strict, deterministic matrix-multiply kernel, now the default, and a fast
