@@ -473,6 +473,39 @@ func ewForwardScalar(op ewOp, out, ad []float64, bs float64, scalarRHS bool, lo,
 	return true
 }
 
+// ewBackwardEq accumulates one operand's gradient for an equal-shape add, sub
+// or mul into gdst over [lo,hi), without the per-element da/db closure call.
+// isA picks the left operand's rule; other is the opposite operand's data, read
+// only by mul (whose derivative in one argument is the other argument). noFMA is
+// kept so the product rounds before it is added, exactly as the closure path
+// does, which is what makes the result bit-identical on arm64 and amd64. It
+// reports false for div and the non-arithmetic ops, which keep the closure.
+func ewBackwardEq(op ewOp, isA bool, gdst, other, g []float64, lo, hi int) bool {
+	switch op {
+	case ewAdd:
+		for i := lo; i < hi; i++ {
+			gdst[i] += g[i]
+		}
+	case ewSub:
+		if isA {
+			for i := lo; i < hi; i++ {
+				gdst[i] += g[i]
+			}
+		} else {
+			for i := lo; i < hi; i++ {
+				gdst[i] += noFMA(-1, g[i])
+			}
+		}
+	case ewMul:
+		for i := lo; i < hi; i++ {
+			gdst[i] += noFMA(other[i], g[i])
+		}
+	default:
+		return false
+	}
+	return true
+}
+
 func broadcastBinary(a, b *Tensor, op ewOp, f func(x, y float64) float64,
 	da func(x, y, o float64) float64, db func(x, y, o float64) float64,
 	daa, dab, dbb func(x, y, o float64) float64) (*Tensor, error) {
@@ -533,16 +566,20 @@ func broadcastBinary(a, b *Tensor, op ewOp, f func(x, y float64) float64,
 			if a.RequiresGrad {
 				ga := a.ensureGrad()
 				parallelFor(n, func(lo, hi int) {
-					for i := lo; i < hi; i++ {
-						ga[i] += noFMA(da(ad[i], bd[i], out[i]), g[i])
+					if !ewBackwardEq(op, true, ga, bd, g, lo, hi) {
+						for i := lo; i < hi; i++ {
+							ga[i] += noFMA(da(ad[i], bd[i], out[i]), g[i])
+						}
 					}
 				})
 			}
 			if b.RequiresGrad {
 				gb := b.ensureGrad()
 				parallelFor(n, func(lo, hi int) {
-					for i := lo; i < hi; i++ {
-						gb[i] += noFMA(db(ad[i], bd[i], out[i]), g[i])
+					if !ewBackwardEq(op, false, gb, ad, g, lo, hi) {
+						for i := lo; i < hi; i++ {
+							gb[i] += noFMA(db(ad[i], bd[i], out[i]), g[i])
+						}
 					}
 				})
 			}
