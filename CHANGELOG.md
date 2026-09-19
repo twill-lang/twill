@@ -2,6 +2,26 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **The elementwise and autodiff hot paths are faster, with no change to any
+  computed value.** A cheap elementwise op (add, subtract, multiply, divide,
+  negate, relu, square) ran its forward loop through a closure called once per
+  element, an indirect call the Go compiler can neither inline nor vectorise. On
+  a large buffer that call cost more than the arithmetic. Those ops now run a
+  direct loop; every other op keeps the closure. The equal-shape backward pass
+  did the same for the add, subtract and multiply gradients and now runs them
+  directly, keeping the explicit non-fused multiply so the gradient stays
+  bit-identical on arm64 and amd64. The general matmul gained the cache tiling
+  the transposed kernel already had, for products larger than the last-level
+  cache. Measured twill-against-twill on this machine, the forward Monte Carlo
+  pricer is 1.69x, the elementwise workloads 1.17x to 1.29x and the autodiff
+  workloads 1.25x to 1.28x at `GOMAXPROCS=1`; the matmul-bound workloads are
+  unchanged, being floating-point-throughput bound in a kernel this release did
+  not rewrite. docs/BENCHMARKS.md section 9 has the full before and after table.
+  The tensor test suite, the gradient-check suites and the differential checker
+  are unchanged and green.
+
 ## [1.13.0] - 2026-09-15
 
 ### Added
