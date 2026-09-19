@@ -157,6 +157,16 @@ engine is 4,700, the interpreter 7,100 and the static checker 4,700. Another
 15,400 lines are tests. Large tensor operations run across CPU cores,
 deterministically: parallelism never changes a result.
 
+**Matrix multiply is deterministic across architectures by default.** The
+default kernel rounds every product before it is added, so a program's matmul
+gives the same bits on arm64, amd64 and the pure-Go fallback. arm64 previously
+let the Go compiler fuse the inner product into a multiply-add while amd64 did
+not, so the same program could answer one low bit differently per machine; the
+default kernel closes that. For more single-thread speed at the cost of that
+guarantee, set `TWILL_MATMUL=fast` (or pass `--matmul=fast`) to use a fused-FMA
+kernel whose result may differ by a low bit between architectures. The default
+is `strict`. See docs/BENCHMARKS.md for the numbers.
+
 ## Install
 
 Download a prebuilt binary for your platform from the

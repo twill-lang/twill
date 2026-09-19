@@ -8,6 +8,8 @@ package tensor
 import (
 	"fmt"
 	"math"
+	"os"
+	"strings"
 )
 
 type Tensor struct {
@@ -962,6 +964,83 @@ func reduceAll(a *Tensor, mean bool) *Tensor {
 // answer both machines should have been giving.
 func noFMA(x, y float64) float64 { return float64(x * y) }
 
+// fastMatmul selects the matmul kernel. false (the default) is the strict,
+// non-FMA kernel whose result is bit-identical across arm64, amd64 and the
+// pure-Go fallback; true is the fused-FMA kernel that is faster but may differ
+// by ULPs between architectures. It is read once from the environment at
+// startup and can be overridden by SetFastMatmul (the cmd/twill --matmul flag).
+//
+// The default matters. Go lets a compiler contract `x*y + z` into a single
+// fused multiply-add, and arm64 takes it where amd64 does not, so the naive
+// `s += a*b` inner product answered one number on Apple silicon and another on
+// x86 -- hidden until now because no byte-exact test pins a matmul. The strict
+// kernel rounds every product before it is added (the noFMA rule), so the three
+// paths agree to the bit; the fast kernel calls math.FMA, which is one hardware
+// instruction on both arm64 (FMADD) and amd64 (VFMADD), for the speed.
+var fastMatmul = strings.EqualFold(os.Getenv("TWILL_MATMUL"), "fast")
+
+// SetFastMatmul selects the fast (fused-FMA) kernel when on is true, or the
+// strict (deterministic, non-FMA) kernel when false. It exists so a CLI flag can
+// override the TWILL_MATMUL environment variable. It is not safe to call
+// concurrently with a matmul.
+func SetFastMatmul(on bool) { fastMatmul = on }
+
+// FastMatmulEnabled reports whether the fast kernel is selected.
+func FastMatmulEnabled() bool { return fastMatmul }
+
+// dotStrict is the four-accumulator inner product with every product rounded
+// before it is added (the noFMA rule). No `a*b + c` remains for a compiler to
+// fuse, so arm64, amd64 and the pure-Go fallback return the same bits. The
+// grouping is mmNT's documented one: four independent chains hide the FP adder's
+// latency, then combined as (s0+s1)+(s2+s3).
+func dotStrict(a, w []float64, k int) float64 {
+	var s0, s1, s2, s3 float64
+	p := 0
+	for ; p+4 <= k; p += 4 {
+		s0 += float64(a[p] * w[p])
+		s1 += float64(a[p+1] * w[p+1])
+		s2 += float64(a[p+2] * w[p+2])
+		s3 += float64(a[p+3] * w[p+3])
+	}
+	s := (s0 + s1) + (s2 + s3)
+	for ; p < k; p++ {
+		s += float64(a[p] * w[p])
+	}
+	return s
+}
+
+// dotFast fuses each multiply-add through math.FMA, which the Go compiler lowers
+// to one hardware fused instruction (FMADD on arm64, VFMADD on amd64). It rounds
+// once per term instead of twice, so it is faster and its low bit can differ
+// from dotStrict and can differ by ULPs between architectures.
+//
+// It runs eight independent accumulators, not the strict kernel's four. A fused
+// multiply-add has a longer latency than a bare add, so four dependent chains do
+// not fill the FP pipeline and the four-accumulator FMA loop is actually slower
+// than the strict one; eight chains hide the latency and make the fusion pay.
+// The extra rounding freedom the fast path is allowed is what lets the grouping
+// change. Measured on Apple arm64, eight-wide FMA is the fastest of the widths
+// tried (four, eight, sixteen).
+func dotFast(a, w []float64, k int) float64 {
+	var s0, s1, s2, s3, s4, s5, s6, s7 float64
+	p := 0
+	for ; p+8 <= k; p += 8 {
+		s0 = math.FMA(a[p], w[p], s0)
+		s1 = math.FMA(a[p+1], w[p+1], s1)
+		s2 = math.FMA(a[p+2], w[p+2], s2)
+		s3 = math.FMA(a[p+3], w[p+3], s3)
+		s4 = math.FMA(a[p+4], w[p+4], s4)
+		s5 = math.FMA(a[p+5], w[p+5], s5)
+		s6 = math.FMA(a[p+6], w[p+6], s6)
+		s7 = math.FMA(a[p+7], w[p+7], s7)
+	}
+	s := ((s0 + s1) + (s2 + s3)) + ((s4 + s5) + (s6 + s7))
+	for ; p < k; p++ {
+		s = math.FMA(a[p], w[p], s)
+	}
+	return s
+}
+
 func Sum(a *Tensor) *Tensor  { return reduceAll(a, false) }
 func Mean(a *Tensor) *Tensor { return reduceAll(a, true) }
 
@@ -975,6 +1054,7 @@ func mm(a []float64, m, k int, b []float64, n int) []float64 {
 	// the untiled kernel. Each c[i,j] is still accumulated over p in the same
 	// order, so the result is bit-identical to the untiled mm.
 	jb := blockNBytes(k, n, 8)
+	fast := fastMatmul
 	// Rows are independent, so split them across cores for large products.
 	runChunks(m, workersFor(m*k*n), func(lo, hi int) {
 		for j0 := 0; j0 < n; j0 += jb {
@@ -990,8 +1070,17 @@ func mm(a []float64, m, k int, b []float64, n int) []float64 {
 						continue
 					}
 					bRow := p * n
-					for j := j0; j < j1; j++ {
-						c[cRow+j] += aip * b[bRow+j]
+					// Strict rounds each product before adding it (the noFMA
+					// rule) so the three arches agree bit-for-bit; fast fuses
+					// through math.FMA for speed at the cost of a low bit.
+					if fast {
+						for j := j0; j < j1; j++ {
+							c[cRow+j] = math.FMA(aip, b[bRow+j], c[cRow+j])
+						}
+					} else {
+						for j := j0; j < j1; j++ {
+							c[cRow+j] += float64(aip * b[bRow+j])
+						}
 					}
 				}
 			}
@@ -1070,11 +1159,18 @@ func transpose2d(a []float64, rows, cols int) []float64 {
 // FP adder; four chains keep it busy and give a ~1.7x speedup on square inputs.
 // This reorders the summation, so the result differs from a naive left-to-right
 // sum (and from mm) by a rounding step — within tolerance, not bit-identical.
-// Every numeric test that exercises it compares with a tolerance, and no
-// byte-exact differential test does a matmul, so the reorder is safe; the
+// Every numeric test that exercises it compares with a tolerance; the
 // self-hosted src/tensor.tw stays the naive reference and agrees to tolerance.
+//
+// The multiply-add itself has two kernels, chosen by fastMatmul. dotStrict
+// (the default) rounds every product before adding it, so its result is
+// bit-identical across arm64, amd64 and the pure-Go fallback -- pinned by
+// TestStrictMatMulIsBitIdentical. dotFast fuses through math.FMA for speed and
+// may differ by a low bit. Only the arithmetic per term changes; the four
+// accumulators, the k-order and the cache tiling are the same for both.
 func mmNT(a []float64, m, k int, w []float64, n int) []float64 {
 	c := make([]float64, m*n)
+	fast := fastMatmul
 	// Cache tiling. Without it, the inner j-loop walks all n rows of w for every
 	// row of x, so w is re-read from memory m times; once w exceeds the L2 cache
 	// (a 2048x2048 weight is 32 MB) the kernel becomes memory-bound and throughput
@@ -1095,21 +1191,14 @@ func mmNT(a []float64, m, k int, w []float64, n int) []float64 {
 			for i := lo; i < hi; i++ {
 				aRow := a[i*k : i*k+k]
 				cRow := i * n
-				for j := j0; j < j1; j++ {
-					wRow := w[j*k : j*k+k]
-					var s0, s1, s2, s3 float64
-					p := 0
-					for ; p+4 <= k; p += 4 {
-						s0 += aRow[p] * wRow[p]
-						s1 += aRow[p+1] * wRow[p+1]
-						s2 += aRow[p+2] * wRow[p+2]
-						s3 += aRow[p+3] * wRow[p+3]
+				if fast {
+					for j := j0; j < j1; j++ {
+						c[cRow+j] = dotFast(aRow, w[j*k:j*k+k], k)
 					}
-					s := (s0 + s1) + (s2 + s3)
-					for ; p < k; p++ {
-						s += aRow[p] * wRow[p]
+				} else {
+					for j := j0; j < j1; j++ {
+						c[cRow+j] = dotStrict(aRow, w[j*k:j*k+k], k)
 					}
-					c[cRow+j] = s
 				}
 			}
 		}
