@@ -930,18 +930,32 @@ func Mean(a *Tensor) *Tensor { return reduceAll(a, true) }
 
 func mm(a []float64, m, k int, b []float64, n int) []float64 {
 	c := make([]float64, m*n)
+	// Cache tiling, the same blocking mmNT uses. The ikj loop streams all of b
+	// once per row of a, so once b exceeds the last-level cache it is re-read
+	// from memory m times and the kernel goes memory-bound. Blocking j into
+	// panels that fit L2 keeps each b panel resident while the whole a-chunk
+	// streams through it. For a small n the panel is the whole width and this is
+	// the untiled kernel. Each c[i,j] is still accumulated over p in the same
+	// order, so the result is bit-identical to the untiled mm.
+	jb := blockNBytes(k, n, 8)
 	// Rows are independent, so split them across cores for large products.
 	runChunks(m, workersFor(m*k*n), func(lo, hi int) {
-		for i := lo; i < hi; i++ {
-			for p := 0; p < k; p++ {
-				aip := a[i*k+p]
-				if aip == 0 {
-					continue
-				}
-				bRow := p * n
+		for j0 := 0; j0 < n; j0 += jb {
+			j1 := j0 + jb
+			if j1 > n {
+				j1 = n
+			}
+			for i := lo; i < hi; i++ {
 				cRow := i * n
-				for j := 0; j < n; j++ {
-					c[cRow+j] += aip * b[bRow+j]
+				for p := 0; p < k; p++ {
+					aip := a[i*k+p]
+					if aip == 0 {
+						continue
+					}
+					bRow := p * n
+					for j := j0; j < j1; j++ {
+						c[cRow+j] += aip * b[bRow+j]
+					}
 				}
 			}
 		}
