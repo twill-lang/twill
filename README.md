@@ -164,8 +164,11 @@ let the Go compiler fuse the inner product into a multiply-add while amd64 did
 not, so the same program could answer one low bit differently per machine; the
 default kernel closes that. For more single-thread speed at the cost of that
 guarantee, set `TWILL_MATMUL=fast` (or pass `--matmul=fast`) to use a fused-FMA
-kernel whose result may differ by a low bit between architectures. The default
-is `strict`. See docs/BENCHMARKS.md for the numbers.
+kernel whose result may differ by a low bit between architectures. On arm64 that
+fast kernel is a hand-written NEON, register-blocked and packed microkernel for
+both f64 and f32, several times faster than the earlier fast kernel on the large
+sizes (amd64 to follow). The default is `strict`. See docs/BENCHMARKS.md for the
+numbers.
 
 ## Install
 
