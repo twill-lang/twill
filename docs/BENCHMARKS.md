@@ -649,7 +649,35 @@ finite-difference checks all stay green under both `TWILL_MATMUL=strict` and
 
 ---
 
-## 12. Related
+## 12. The 1.17.0 amd64 AVX2/FMA3 matmul microkernel (2026-09-20)
+
+Phase 2 adds hand-written amd64 assembly microkernels for f64 and f32, using
+AVX2 loads with FMA3, registered through the same dispatch table as the arm64
+NEON kernels. They compute the same register tiles the framework already
+declares, 4x8 for f64 and 8x8 for f32, so the packing and edge handling from
+section 11 are reused without change. A YMM register holds four f64, so the 4x8
+f64 tile is eight accumulators, two per row; it holds eight f32, so the 8x8 f32
+tile is eight accumulators, one per row. Both leave half of the sixteen YMM
+registers free to hide load and broadcast latency. The kernels are selected at
+runtime by `golang.org/x/sys/cpu`: when a CPU lacks AVX2 or FMA the pure-Go
+reference microkernel stays installed, so the binary still runs on old amd64.
+
+The arm64 numbers in section 11 are unchanged, because the NEON kernels were not
+touched. This work was developed on an arm64 machine, which cannot run or
+benchmark the amd64 assembly. Correctness of the amd64 kernels is validated on
+the linux/amd64 CI job, where the same tolerance and fuzz tests listed in
+section 11 run against the AVX2 kernels through the dispatch pointers. amd64
+speed was not benchmarked here; benchmark it on amd64 hardware with the same
+commands as section 11.
+
+The fast path is fused on both arches but sums in a different order, so a fast
+result may differ from strict by a few ULPs and may now also differ between
+arm64 and amd64. That is allowed on the tolerance-tested fast path. The strict
+default is unchanged and stays bit-identical across all arches.
+
+---
+
+## 13. Related
 
 - `docs/CORRECTNESS.md`, the evidence that the numbers being computed are right,
   which is the prerequisite for caring how fast they are computed.
