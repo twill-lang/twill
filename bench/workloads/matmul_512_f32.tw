@@ -1,0 +1,7 @@
+# Square f32 matmul, the fast path's native-f32 microkernel. On the strict
+# default this runs the per-step-rounded f32 contraction instead.
+seed(1)
+let A = randn(512, 512).to(f32)
+let B = randn(512, 512).to(f32)
+fn work() = sum(A @ B)
+work

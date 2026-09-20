@@ -579,7 +579,77 @@ difference checks all stay green under both `TWILL_MATMUL=strict` and
 
 ---
 
-## 11. Related
+## 11. The 1.16.0 arm64 NEON matmul microkernel
+
+Measured on 2026-09-20, on this machine (Apple silicon, arm64), with go1.27.0
+darwin/arm64, at `GOMAXPROCS=1`. The baseline here is the 1.15.0 fast kernel (the
+eight-accumulator `math.FMA` inner product), and the final column is the new fast
+kernel on this branch: a hand-written NEON, register-blocked and packed
+microkernel. Both are the `TWILL_MATMUL=fast` path; the strict default is
+unchanged and is not in this table.
+
+The earlier fast kernel computed one dot product at a time and re-streamed the
+weight for every row of the input, so on the large sizes it was memory-bound. The
+new path packs A and B into contiguous, cache-blocked panels and computes a
+register tile at a time (4x8 for f64, 8x8 for f32), keeping the accumulators in
+NEON registers and cutting the memory traffic by the tile factor. That is where
+the several-fold gain comes from. It fuses through FMLA and reorders the
+summation, so it is within tolerance of strict, not bit-identical; the workload
+checksums are unchanged to the six figures the harness prints.
+
+f64, median milliseconds, lower is better:
+
+| workload | 1.15.0 fast | 1.16.0 fast | speedup |
+|---|---|---|---|
+| matmul_128 | 0.898 | 0.759 | 1.18x |
+| matmul_256 | 6.810 | 1.069 | 6.37x |
+| matmul_512 | 53.012 | 7.765 | 6.83x |
+| matmul_1024 | 412.471 | 59.382 | 6.95x |
+| matmul_512_grad | 102.500 | 17.107 | 5.99x |
+| attention_head | 3.371 | 2.246 | 1.50x |
+| mlp_train_step | 8.408 | 4.455 | 1.89x |
+
+matmul_128 is below the size gate and falls back to the earlier fast kernel, so
+its small change is measurement noise, by design: packing does not pay there.
+attention_head and mlp_train_step gain less than the square matmuls because only
+part of their time is in a matmul large enough to cross the gate.
+
+f32 gained a native fast kernel where it had none. Before this change every f32
+matmul ran `mmAccNT`, the scalar contraction that rounds each multiply-add to f32
+as it accumulates, on the strict and fast paths alike. The new path packs into
+float32 and computes in float32 NEON registers, a true f32 compute path. The
+baseline column is therefore that earlier f32 contraction, not a prior f32 fast
+kernel, which is why the ratio is large:
+
+| workload | previous f32 (`mmAccNT`) | 1.16.0 fast f32 | speedup |
+|---|---|---|---|
+| matmul_512_f32 | 328.613 | 6.631 | 49.6x |
+| matmul_1024_f32 | 3502.600 | 45.824 | 76.4x |
+
+The microkernel is arm64-only in this release. amd64 (AVX2, then AVX-512) is the
+next phase and drops into the same packing and dispatch framework by implementing
+one microkernel function and a build-tagged file; the pure-Go reference kernel is
+what every non-arm64 build runs until then, and it is the correctness oracle the
+assembly is tested against. Reproduce with, for example:
+
+```
+go build -o /tmp/twillbench ./bench/cmd/twillbench
+TWILL_MATMUL=fast /tmp/twillbench -procs 1 -only matmul_512
+TWILL_MATMUL=fast /tmp/twillbench -procs 1 -only matmul_512_f32
+```
+
+Correctness: `TestPackedMatmulF64MatchesReference`, `TestPackedMatmulF32MatchesReference`,
+`TestPackedMatmulFuzzShapes` and `TestKernelReferenceMatchesAsm` compare the
+kernels against a naive oracle and the pure-Go reference across a spread of shapes
+(non-multiples of the tile and the KC block, odd K, a dimension of 1). The strict
+byte-exact `TestStrictMatMulIsBitIdentical`, the core-count invariance test, the
+gradient-check suites, `determinism_test.go` and the codegen differential and
+finite-difference checks all stay green under both `TWILL_MATMUL=strict` and
+`TWILL_MATMUL=fast`.
+
+---
+
+## 12. Related
 
 - `docs/CORRECTNESS.md`, the evidence that the numbers being computed are right,
   which is the prerequisite for caring how fast they are computed.

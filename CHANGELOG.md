@@ -2,6 +2,28 @@
 
 ## [Unreleased]
 
+### Added
+
+- **A hand-written arm64 NEON matrix-multiply microkernel on the fast path, for
+  both f64 and f32.** The opt-in fast kernel (`TWILL_MATMUL=fast`,
+  `--matmul=fast`) computed one dot product at a time and re-streamed the weight
+  for every input row, so on the large sizes it was memory-bound and only about
+  1.1x on arm64. It now packs A and B into contiguous, cache-blocked panels and
+  runs a register-blocked NEON microkernel a tile at a time (4x8 for f64, 8x8 for
+  f32), the GotoBLAS/BLIS structure, keeping the accumulators in registers. At
+  `GOMAXPROCS=1` that is about 6.8x on matmul_512 and 6.9x on matmul_1024 over the
+  earlier fast kernel, with the workload checksums unchanged. f32 also gains a
+  native compute path: it packs into float32 and computes in float32 registers
+  rather than running the scalar per-step-rounded contraction it used before. The
+  kernel fuses through FMLA and reorders the summation, so the fast path stays
+  within tolerance of strict and is not bit-identical, exactly as before. The
+  strict default is completely unchanged and its byte-exact test still passes. A
+  packing and dispatch framework wraps a pure-Go reference microkernel that every
+  non-arm64 build runs and that the assembly is tested against; amd64 (AVX2, then
+  AVX-512) is the next phase and slots into the same framework. The microkernel is
+  arm64-only in this release. docs/BENCHMARKS.md section 11 has the before/after
+  tables and the exact commands.
+
 ## [1.15.0] - 2026-09-20
 
 ### Added

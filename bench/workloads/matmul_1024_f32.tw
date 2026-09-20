@@ -1,0 +1,6 @@
+# Square f32 matmul at 1024, native-f32 fast microkernel.
+seed(1)
+let A = randn(1024, 1024).to(f32)
+let B = randn(1024, 1024).to(f32)
+fn work() = sum(A @ B)
+work
