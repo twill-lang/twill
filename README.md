@@ -166,10 +166,13 @@ default kernel closes that. For more single-thread speed at the cost of that
 guarantee, set `TWILL_MATMUL=fast` (or pass `--matmul=fast`) to use a fused-FMA
 kernel whose result may differ by a low bit between architectures. That fast
 kernel is a hand-written, register-blocked and packed microkernel for both f64
-and f32, on arm64 using NEON and on amd64 using AVX2 with FMA3 (selected at
-runtime, falling back to pure Go when a CPU lacks AVX2 or FMA), several times
-faster than the earlier fast kernel on the large sizes. The default is `strict`.
-See docs/BENCHMARKS.md for the numbers.
+and f32, on arm64 using NEON and on amd64 using AVX2 with FMA3 or AVX-512 when
+present (selected at runtime: AVX-512 if available, else AVX2, else the pure-Go
+reference), several times faster than the earlier fast kernel on the large sizes.
+The arm64 NEON path is measured on real hardware; the amd64 AVX2 path is
+correctness-validated on CI; the amd64 AVX-512 path is compiled and gated behind
+runtime detection and awaits AVX-512 hardware to validate at runtime. The default
+is `strict`. See docs/BENCHMARKS.md for the numbers.
 
 ## Install
 

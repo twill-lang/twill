@@ -2,6 +2,29 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Hand-written amd64 AVX-512 matrix-multiply microkernels on the fast path,
+  for both f64 and f32.** This completes the three-phase kernel arc: phase 1
+  (1.16.0) added the arm64 NEON kernels and the packing and dispatch framework,
+  phase 2 (1.17.0) added the amd64 AVX2/FMA3 kernels, and this adds the amd64
+  AVX-512 kernels into the same dispatch table. They compute the same shared
+  register tiles the framework declares (4x8 for f64, 8x8 for f32), so the packing
+  and edge handling are reused unchanged. The f64 tile's eight columns are exactly
+  one ZMM, so the AVX-512 f64 kernel is four ZMM accumulators and halves the f64
+  vector op count of AVX2 at double the width; the f32 tile is narrower than a ZMM
+  and keeps AVX2's arithmetic width, since widening it would change the shared
+  packing. Selection is a runtime fallback chain via `golang.org/x/sys/cpu`:
+  AVX-512F installs the AVX-512 kernels, else AVX2 with FMA installs the AVX2
+  kernels, else the pure-Go reference stays, so a machine without AVX-512 is
+  unaffected. The strict default is unchanged and stays bit-identical across
+  arches. This work was developed on arm64, which cannot execute AVX-512: the
+  assembly is compiled and vetted (cross-build, `go vet` asmdecl, deadcode,
+  staticcheck) and the tolerance and fuzz tests exercise it wherever AVX-512 is
+  present, but it awaits AVX-512 hardware to validate and benchmark at runtime. A
+  CI step records in the log which kernel the runner selected and its `HasAVX512F`
+  flag. docs/BENCHMARKS.md section 13 has the details.
+
 ## [1.17.0] - 2026-09-20
 
 ### Added

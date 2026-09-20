@@ -408,14 +408,19 @@ across architectures, pinned by `TestStrictMatMulIsBitIdentical`. The faster
 not bit-identical across architectures; it is opt-in for exactly that reason.
 As of 1.16.0 the fast path also runs a hand-written, register-blocked and packed
 microkernel for both f64 and f32, several times faster than the earlier fast
-kernel on the large sizes: on arm64 using NEON, and as of 1.17.0 on amd64 using
-AVX2 with FMA3, selected at runtime and falling back to pure Go when a CPU lacks
-AVX2 or FMA. It fuses through FMA and reorders the summation, so it is within
-tolerance of strict and not bit-identical, and a fast result may now also differ
-between arm64 and amd64 since the two fuse in a different order. The strict
-default is unchanged. The amd64 kernel is validated for correctness on the
-linux/amd64 CI job, not on the arm64 development machine. docs/BENCHMARKS.md
-sections 10, 11 and 12 have the numbers.
+kernel on the large sizes: on arm64 using NEON, as of 1.17.0 on amd64 using AVX2
+with FMA3, and as of 1.18.0 on amd64 using AVX-512 when the CPU has it. Selection
+is a runtime fallback chain: AVX-512 if present, else AVX2 with FMA, else the
+pure-Go reference. It fuses through FMA and reorders the summation, so it is
+within tolerance of strict and not bit-identical, and a fast result may also
+differ between arm64 and amd64 since the two fuse in a different order. The strict
+default is unchanged. The amd64 AVX2 kernel is validated for correctness on the
+linux/amd64 CI job, not on the arm64 development machine. The amd64 AVX-512
+kernel is compiled and vetted and the tolerance and fuzz tests exercise it on any
+machine that has AVX-512; whether that happened on CI is recorded in the CI log,
+since a GitHub-hosted runner may not expose AVX-512, in which case the AVX-512
+path is compiled and vetted but not executed. docs/BENCHMARKS.md sections 10, 11,
+12 and 13 have the numbers.
 
 **Why one bit matters here and usually does not.** A single tensor operation is
 off by an ULP and nobody can tell. An iterative method that feeds its own output

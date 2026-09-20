@@ -677,7 +677,76 @@ default is unchanged and stays bit-identical across all arches.
 
 ---
 
-## 13. Related
+## 13. The 1.18.0 amd64 AVX-512 matmul microkernel (2026-09-20)
+
+Phase 3 adds hand-written amd64 AVX-512 assembly microkernels for f64 and f32,
+registered through the same dispatch table as the arm64 NEON and amd64 AVX2
+kernels. They compute the same register tiles the framework declares, 4x8 for f64
+and 8x8 for f32, so the packing and edge handling from section 11 are reused
+without change.
+
+The tile choice was made against the shared tile constants, which drive the
+packing every arch consumes. A ZMM register holds eight f64, so the f64 tile's
+eight columns are exactly one ZMM: the 4x8 tile is four ZMM accumulators, one per
+row, and each depth step is one ZMM b load, four a broadcasts and four FMAs. The
+AVX2 f64 kernel needed two YMM loads and eight FMAs per depth step for the same
+tile, so keeping the shared 4x8 tile still halves the f64 vector op count on
+AVX-512 at double the width, with no framework change. The f32 tile is only eight
+columns wide, narrower than a ZMM's sixteen f32, and the packed B micropanel
+holds exactly eight f32 per depth step, so a full 512-bit column load would
+over-read. The f32 kernel therefore accumulates in ZMM but loads the eight
+columns at 256 bits, which is the same arithmetic width AVX2 uses for f32.
+Widening the f32 tile to sixteen columns would let AVX-512 fill a ZMM, but the
+tile constants are shared with the NEON and AVX2 packing, so that would be a
+framework change made to speed up a path that cannot be benchmarked on any
+hardware available here. It was rejected; the shared 8x8 f32 tile is kept.
+
+Selection is a fallback chain, decided at runtime by `golang.org/x/sys/cpu`:
+AVX-512F installs the AVX-512 kernels, otherwise AVX2 with FMA installs the AVX2
+kernels of section 12, otherwise the pure-Go reference microkernel stays
+installed. A machine without AVX-512 is therefore unaffected by this change.
+
+Validation status, stated plainly. The arm64 numbers in section 11 are unchanged,
+confirmed by re-running the fast bench before and after this change on the arm64
+development machine: identical workload checksums. This work was developed on that
+arm64 machine, which cannot execute AVX-512 at all. The AVX-512 assembly is
+compiled and vetted (it cross-builds for linux/amd64 and passes `go vet` asmdecl,
+deadcode and staticcheck), and the same tolerance and fuzz tests from section 11
+run against whatever kernel the dispatch installs, so they exercise the AVX-512
+kernels on any machine that has AVX-512. Whether that happened on CI is recorded
+in the CI log by the "Report selected matmul kernel" step, which prints the
+selected kernel and the runner's `HasAVX512F` flag. GitHub-hosted amd64 runners
+do not reliably expose AVX-512, so the AVX-512 path may be compiled and vetted
+but not executed in any environment observable here. No AVX-512 speed number is
+given, because none was produced: the kernel requires AVX-512 hardware to
+validate at runtime and to benchmark. Run it on such hardware with the section 11
+commands to validate and measure it.
+
+### The arm64 fast-matmul gains across 1.15 to 1.18, consolidated
+
+Every arm64 number below is measured on this machine (Apple silicon, arm64,
+go1.27.0 darwin/arm64) at `GOMAXPROCS=1`, on the `TWILL_MATMUL=fast` path. The
+1.15.0 column is the eight-accumulator `math.FMA` fast kernel; 1.16.0 onward is
+the packed, register-blocked NEON microkernel, unchanged since 1.16.0 (1.17.0 and
+1.18.0 added the amd64 AVX2 and AVX-512 kernels, which do not touch arm64). f64,
+median milliseconds, lower is better:
+
+| workload | 1.15.0 fast | 1.16.0-1.18.0 fast | speedup |
+|---|---|---|---|
+| matmul_256 | 6.810 | 1.069 | 6.37x |
+| matmul_512 | 53.012 | 7.765 | 6.83x |
+| matmul_1024 | 412.471 | 59.382 | 6.95x |
+| matmul_512_grad | 102.500 | 17.107 | 5.99x |
+
+The per-arch validation status of the whole effort: arm64 NEON is measured and
+benchmarked on real hardware; amd64 AVX2 is validated for correctness on the
+linux/amd64 CI job but not benchmarked here; amd64 AVX-512 is compiled and vetted
+and gated behind runtime detection, awaiting AVX-512 hardware to validate and
+benchmark at runtime.
+
+---
+
+## 14. Related
 
 - `docs/CORRECTNESS.md`, the evidence that the numbers being computed are right,
   which is the prerequisite for caring how fast they are computed.
