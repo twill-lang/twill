@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Hand-written amd64 AVX2/FMA3 matrix-multiply microkernels on the fast path,
+  for both f64 and f32.** Phase 1 added arm64 NEON kernels behind a packing and
+  dispatch framework; this adds the amd64 half. The kernels compute the same
+  register tiles the framework declares (4x8 for f64, 8x8 for f32) with AVX2
+  loads and FMA3, so the packing and edge handling are reused unchanged and only
+  the kernel pointers differ. They are selected at runtime by
+  `golang.org/x/sys/cpu`, and fall back to the pure-Go reference microkernel when
+  a CPU lacks AVX2 or FMA, so the binary still runs on old amd64. The strict
+  default is unchanged and stays bit-identical across arches. The fast path is
+  fused on both arm64 and amd64 but sums in a different order, so a fast result
+  may differ from strict by a few ULPs and may now also differ between the two
+  arches, within the tested tolerance. This work was developed on arm64 and the
+  amd64 assembly is validated for correctness on the linux/amd64 CI job, not
+  benchmarked locally. docs/BENCHMARKS.md section 12 has the details.
+
 ## [1.16.0] - 2026-09-20
 
 ### Added
