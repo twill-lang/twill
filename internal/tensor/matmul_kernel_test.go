@@ -65,9 +65,6 @@ var shapeSet = [][3]int{
 func TestPackedMatmulF64MatchesReference(t *testing.T) {
 	for _, s := range shapeSet {
 		m, k, n := s[0], s[1], s[2]
-		if !packedMatmulProfitable(m, k, n) {
-			// still exercise the packer directly on small shapes for coverage
-		}
 		a := randSlice(m*k, int64(m*7+k*13+n*17))
 		b := randSlice(k*n, int64(m*3+k*5+n*11))
 		w := randSlice(n*k, int64(m*19+k*23+n*29))
