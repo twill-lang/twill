@@ -406,7 +406,11 @@ matmul kernel rounds every product before adding it, so it is bit-identical
 across architectures, pinned by `TestStrictMatMulIsBitIdentical`. The faster
 `TWILL_MATMUL=fast` kernel reintroduces the fused multiply-add on purpose and is
 not bit-identical across architectures; it is opt-in for exactly that reason.
-docs/BENCHMARKS.md section 10 has the numbers.
+As of 1.16.0 the fast path on arm64 also runs a hand-written NEON, register-blocked
+and packed microkernel for both f64 and f32, several times faster than the earlier
+fast kernel on the large sizes. It fuses through FMA and reorders the summation, so
+it is within tolerance of strict and not bit-identical; the strict default is
+unchanged. docs/BENCHMARKS.md sections 10 and 11 have the numbers.
 
 **Why one bit matters here and usually does not.** A single tensor operation is
 off by an ULP and nobody can tell. An iterative method that feeds its own output
