@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.16.0] - 2026-09-20
+
 ### Added
 
 - **A hand-written arm64 NEON matrix-multiply microkernel on the fast path, for
