@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.17.0] - 2026-09-20
+
 ### Added
 
 - **Hand-written amd64 AVX2/FMA3 matrix-multiply microkernels on the fast path,
