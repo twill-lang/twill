@@ -1045,6 +1045,13 @@ func Sum(a *Tensor) *Tensor  { return reduceAll(a, false) }
 func Mean(a *Tensor) *Tensor { return reduceAll(a, true) }
 
 func mm(a []float64, m, k int, b []float64, n int) []float64 {
+	// Fast path: the register-blocked, packed microkernel (arm64 assembly, pure-Go
+	// reference elsewhere). It fuses through FMA and reorders the summation, so it
+	// is used only when the fast kernel is selected and the product is large enough
+	// to pay for packing; small products and the strict default keep the loop below.
+	if fastMatmul && packedMatmulProfitable(m, k, n) {
+		return packedMatmulF64(a, m, k, b, n, false)
+	}
 	c := make([]float64, m*n)
 	// Cache tiling, the same blocking mmNT uses. The ikj loop streams all of b
 	// once per row of a, so once b exceeds the last-level cache it is re-read
@@ -1169,6 +1176,9 @@ func transpose2d(a []float64, rows, cols int) []float64 {
 // may differ by a low bit. Only the arithmetic per term changes; the four
 // accumulators, the k-order and the cache tiling are the same for both.
 func mmNT(a []float64, m, k int, w []float64, n int) []float64 {
+	if fastMatmul && packedMatmulProfitable(m, k, n) {
+		return packedMatmulF64(a, m, k, w, n, true)
+	}
 	c := make([]float64, m*n)
 	fast := fastMatmul
 	// Cache tiling. Without it, the inner j-loop walks all n rows of w for every
@@ -1254,9 +1264,14 @@ func MatMulNT(a, b *Tensor) (*Tensor, error) {
 	// f64 keeps the fast four-accumulator, cache-tiled mmNT.
 	dt := Promote(a.DType(), b.DType())
 	var outData []float64
-	if dt == DTF64 {
+	switch {
+	case dt == DTF64:
 		outData = mmNT(a.Data, m, k, b.Data, n)
-	} else {
+	case dt == DTF32 && fastMatmul && packedMatmulProfitable(m, k, n) && m >= mrF32:
+		// Native f32 compute on the fast path: pack to float32, accumulate in
+		// float32, widen back. contractionResult rounds to f32 (idempotent here).
+		outData = packedMatmulF32(a.Data, m, k, b.Data, n, true)
+	default:
 		outData = mmAccNT(a.Data, m, k, b.Data, n, AccDType(dt))
 	}
 	var outShape []int
@@ -1324,9 +1339,12 @@ func MatMul(a, b *Tensor) (*Tensor, error) {
 	}
 	dt := Promote(a.DType(), b.DType())
 	var outData []float64
-	if dt == DTF64 {
+	switch {
+	case dt == DTF64:
 		outData = mm(a.Data, m, k, b.Data, n)
-	} else {
+	case dt == DTF32 && fastMatmul && packedMatmulProfitable(m, k, n) && m >= mrF32:
+		outData = packedMatmulF32(a.Data, m, k, b.Data, n, false)
+	default:
 		outData = mmAcc(a.Data, m, k, b.Data, n, AccDType(dt))
 	}
 	var outShape []int
