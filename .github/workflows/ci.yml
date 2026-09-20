@@ -32,6 +32,15 @@ jobs:
       - name: Test
         run: go test ./...
 
+      # Records, in the log, which matmul microkernel the dispatch table selected
+      # on this runner and the amd64 CPU feature flags behind it. This is the only
+      # place the AVX-512 path's runtime status is observable: if the runner has
+      # AVX-512 the log shows the AVX-512 kernels installed and exercised, and if
+      # not it shows the AVX2 (or reference) path ran and the AVX-512 assembly was
+      # compiled and vetted but not executed. Run verbose so the print is shown.
+      - name: Report selected matmul kernel
+        run: go test -v -run 'TestKernelSelectionDiagnostic|TestAmd64KernelFeatureFlags' ./internal/tensor/
+
       - name: Test with race detector
         # 10m is the go default and the tracer's differential tests run the whole
         # example corpus twice, which the race detector makes several times
