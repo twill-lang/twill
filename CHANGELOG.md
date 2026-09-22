@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.18.1] - 2026-09-22
+
 ### Removed
 
 - `twill_tr.exe`, a 5.6MB prebuilt Windows tracer binary committed at the repo
