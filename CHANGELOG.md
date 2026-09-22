@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### Removed
+
+- `twill_tr.exe`, a 5.6MB prebuilt Windows tracer binary committed at the repo
+  root. It was already listed in `.gitignore`, nothing referenced it, and the
+  real CLI is `cmd/twill`. Removed from tracking and deleted.
+
+### Fixed
+
+- The `tw` and `tw.cmd` wrapper scripts (the self-hosted "pretty" CLI) ran a
+  `twill.exe` that does not exist in the repo, so `./tw` failed immediately for
+  a newcomer. They now find a real binary robustly: `twill` on PATH, else a
+  locally built `./twill`, else `go run ./cmd/twill`, then run
+  `src/cli/main.tw`.
+- Corrected the "What is not done yet" note that claimed no vectorized backend.
+  Matmul has had an opt-in SIMD fast kernel (NEON, AVX2, AVX-512) since 1.16.0.
+
 ## [1.18.0] - 2026-09-20
 
 ### Added
