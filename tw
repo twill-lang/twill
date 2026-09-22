@@ -1,5 +1,16 @@
 #!/usr/bin/env bash
-# tw - the pretty twill CLI, written in twill and run on the bootstrap binary.
+# tw - the pretty twill CLI, written in twill and run on a real twill binary.
 # Pathed relative to this script so it works from any directory.
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-exec "$here/twill.exe" run "$here/src/cli/main.tw" "$@"
+main="$here/src/cli/main.tw"
+
+# Find a twill binary: one on PATH, then a locally built ./twill, else fall
+# back to `go run ./cmd/twill` from the repo. Whichever we find runs the
+# self-hosted CLI in src/cli/main.tw.
+if command -v twill >/dev/null 2>&1; then
+  exec twill run "$main" "$@"
+elif [ -x "$here/twill" ]; then
+  exec "$here/twill" run "$main" "$@"
+else
+  exec go run "$here/cmd/twill" run "$main" "$@"
+fi

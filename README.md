@@ -561,10 +561,12 @@ own list of what is missing.
 
 This is a prototype, and some of it is deliberately left for later.
 
-- It is interpreted. Tensor ops loop in Go, and there is no vectorized or GPU
-  backend. The interpreter is the reference for the semantics.
-  [docs/gpu-feasibility.md](docs/gpu-feasibility.md) measures what a GPU backend
-  would actually buy and recommends against it for now.
+- It is interpreted. Most tensor ops loop in Go, and there is no GPU backend.
+  Matmul is the exception: its opt-in fast kernel is a hand-written SIMD
+  microkernel (NEON, AVX2 or AVX-512), described above. The interpreter is the
+  reference for the semantics. [docs/gpu-feasibility.md](docs/gpu-feasibility.md)
+  measures what a GPU backend would actually buy and recommends against it for
+  now.
 - **There is a compiler, and it is off.** `TWILL_TRACE=1` turns on a tracer that
   records tensor operations as the interpreter runs them, compiles the graph to
   C and calls it. It is correct, and on every program measured it is *slower*
