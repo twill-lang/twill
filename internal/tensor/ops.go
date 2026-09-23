@@ -1403,10 +1403,62 @@ func TopKAxis(t *Tensor, k, axis int, largest bool) (*Tensor, error) {
 	out := make([]float64, before*k*after)
 	origin := make([]int, before*k*after)
 
+	// When k is small next to the axis length, a full O(L log L) sort is mostly
+	// wasted: only the k extremes are kept. Select them in one O(L) pass into a
+	// kept list held in output order (a token sampler asking for the top 20 of a
+	// 150k vocabulary is the case that matters, and it ran a 150k-element sort per
+	// step). The full sort stays as the path for a large k. Both keep the stable
+	// tie-break of the original: on equal values the smaller axis index ranks
+	// first, which falls out of scanning n ascending and only displacing on a
+	// strict improvement.
+	partial := k <= 2048 && k < L
 	idx := make([]int, L)
+	kept := make([]int, 0, k) // axis indices n, best-first, len grows to k
 	for i := 0; i < before; i++ {
 		for j := 0; j < after; j++ {
 			base := i*L*after + j
+			if partial {
+				kept = kept[:0]
+				for n := 0; n < L; n++ {
+					v := t.Data[base+n*after]
+					// Displace the current worst only on a strict improvement, so
+					// an equal value that arrives later keeps the earlier index.
+					if len(kept) == k {
+						w := t.Data[base+kept[k-1]*after]
+						if largest {
+							if !(v > w) {
+								continue
+							}
+						} else if !(v < w) {
+							continue
+						}
+					}
+					// Insert n into kept, keeping it ordered best-first.
+					pos := len(kept)
+					if pos == k {
+						pos = k - 1
+					} else {
+						kept = append(kept, 0)
+					}
+					for pos > 0 {
+						pv := t.Data[base+kept[pos-1]*after]
+						better := (largest && v > pv) || (!largest && v < pv)
+						if !better {
+							break
+						}
+						kept[pos] = kept[pos-1]
+						pos--
+					}
+					kept[pos] = n
+				}
+				for n := 0; n < k; n++ {
+					dst := i*k*after + n*after + j
+					src := base + kept[n]*after
+					out[dst] = t.Data[src]
+					origin[dst] = src
+				}
+				continue
+			}
 			for n := range idx {
 				idx[n] = n
 			}
