@@ -2818,6 +2818,11 @@ func (c *checker) inferBuiltinCall(name string, ex *ast.Call, argTypes []Type, d
 		// from the checker. Typing it Unknown keeps it from being used in tensor
 		// arithmetic by accident while not inventing a type the language lacks.
 		return tUnknown{}
+	case "quantize_packed":
+		// Builds a quantised weight directly from packed codes and a per-row
+		// scale. Like `quantize`, the result is the opaque frozen weight that
+		// only flows into `linear`, so it types Unknown and carries no shape.
+		return tUnknown{}
 	case "nbytes":
 		return scalar()
 	case "dtype":
@@ -3867,7 +3872,7 @@ var builtinNames = map[string]bool{
 	// SHA-256 of a Str and of a Bytes, lower-case hex.
 	"sha256": true, "sha256_bytes": true,
 	"cos": true, "tanh": true, "sigmoid": true, "sqrt": true, "sum": true, "prod": true, "median": true,
-	"mean": true, "abs": true, "pow": true, "matmul": true, "dot": true, "linear": true, "quantize": true, "nbytes": true, "dtype": true,
+	"mean": true, "abs": true, "pow": true, "matmul": true, "dot": true, "linear": true, "quantize": true, "quantize_packed": true, "nbytes": true, "dtype": true,
 	"grad": true, "grads": true, "stop_grad": true, "value_and_grad": true, "map": true, "zip": true,
 	// The barrier. docs/roadmap.md entry 30.
 	"black_box": true,
