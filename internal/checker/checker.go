@@ -2828,6 +2828,11 @@ func (c *checker) inferBuiltinCall(name string, ex *ast.Call, argTypes []Type, d
 	case "dtype":
 		// The element type as its surface name, a string.
 		return tStr{}
+	case "read_file", "read_file_at", "read_text_or":
+		// The file's contents, a string. The self-hosted checker already types
+		// these as Str; the Go checker left them Unknown, so concatenating a
+		// file's contents with another string was wrongly rejected.
+		return tStr{}
 	case "shape":
 		return tList{}
 	case "transpose":

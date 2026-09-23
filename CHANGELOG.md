@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- The checker now types `read_file`, `read_file_at`, and `read_text_or` as
+  strings. They return a string at run time and the self-hosted checker already
+  typed them so, but the Go checker left them Unknown, so concatenating a file's
+  contents with another string was wrongly rejected.
+
 ## [1.18.4] - 2026-09-22
 
 ### Changed
