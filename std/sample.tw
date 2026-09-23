@@ -112,12 +112,29 @@ fn top_p_filter(logits, p) {
   if p >= 1.0 { logits }
   else {
     let probs = softmax(logits, 0)
-    let ordered = sort(probs, 0, 1)
-    let cum = cumsum(ordered, 0)
-    let below = int(item(sum(less(cum, p), 0)))
-    let cut = if below >= n { n - 1 } else { below }
-    let thresh = item(ordered[cut])
-    where(greater_equal(probs, thresh), logits, REJECTED)
+    # The nucleus is almost always a short prefix of the sorted probabilities, so
+    # take a bounded top set (topk is a partial selection, not a full sort) and
+    # read the cutoff from it. Fall back to sorting the whole vocabulary only when
+    # that set does not yet hold p of the mass, which needs a very flat
+    # distribution. In the fast path the threshold is identical to the full sort:
+    # every probability past the prefix is already inside the nucleus and so adds
+    # nothing to the count of entries below p.
+    let cap = if n < 2048 { n } else { 2048 }
+    let top = topk(probs, cap, 0)
+    let ctop = cumsum(top, 0)
+    if cap >= n or item(ctop[cap - 1]) >= p {
+      let below = int(item(sum(less(ctop, p), 0)))
+      let cut = if below >= cap { cap - 1 } else { below }
+      let thresh = item(top[cut])
+      where(greater_equal(probs, thresh), logits, REJECTED)
+    } else {
+      let ordered = sort(probs, 0, 1)
+      let cum = cumsum(ordered, 0)
+      let below = int(item(sum(less(cum, p), 0)))
+      let cut = if below >= n { n - 1 } else { below }
+      let thresh = item(ordered[cut])
+      where(greater_equal(probs, thresh), logits, REJECTED)
+    }
   }
 }
 
