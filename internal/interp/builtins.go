@@ -1309,6 +1309,50 @@ func (ip *Interp) installBuiltins() {
 			return nil, fmt.Errorf("quantize supports 4 or 8 bits, got %d", bits)
 		}
 	})
+	// quantize_packed(codes, scale, rows, cols) builds an int8 weight directly
+	// from a host's stored form: `codes` is one byte per element offset by 128
+	// (so a signed int8 rides in a 0..255 byte), `scale` is one f64 per row, and
+	// the result is the same QTensor `quantize` produces. It exists because
+	// loading a quantized model should be cheap: rebuilding the f64 matrix and
+	// calling `quantize` again is linear in the parameters and copy-heavy, while
+	// this reads the codes straight into the kernel's own form in one pass.
+	def("quantize_packed", 4, false, func(a []value.Value) (value.Value, error) {
+		var codes []byte
+		switch c := a[0].(type) {
+		case value.Str:
+			codes = []byte(string(c))
+		case *value.Bytes:
+			codes = c.Data
+		default:
+			return nil, fmt.Errorf("quantize_packed expects codes as a string or bytes")
+		}
+		sc, err := asTensor(a[1], "quantize_packed")
+		if err != nil {
+			return nil, err
+		}
+		rows64, err := scalarOf(a[2], "quantize_packed")
+		if err != nil {
+			return nil, err
+		}
+		cols64, err := scalarOf(a[3], "quantize_packed")
+		if err != nil {
+			return nil, err
+		}
+		rows, cols := int(rows64), int(cols64)
+		if rows < 0 || cols < 0 || rows*cols != len(codes) {
+			return nil, fmt.Errorf("quantize_packed: rows*cols (%d) does not match code length (%d)", rows*cols, len(codes))
+		}
+		if len(sc.Data) != rows {
+			return nil, fmt.Errorf("quantize_packed: scale length (%d) does not match rows (%d)", len(sc.Data), rows)
+		}
+		q := make([]int8, rows*cols)
+		for i, b := range codes {
+			q[i] = int8(int(b) - 128)
+		}
+		scale := make([]float64, rows)
+		copy(scale, sc.Data)
+		return &tensor.QTensor{Q: q, Scale: scale, Rows: rows, Cols: cols}, nil
+	})
 	// nbytes(v) reports the in-memory footprint of a value in bytes, walking into
 	// records and lists. It exists so a model's memory is a number the language
 	// can print — the question a host actually asks — and so the saving from

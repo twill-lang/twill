@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Added
+
+- `quantize_packed(codes, scale, rows, cols)` builds an int8 weight directly from
+  a host's stored form: `codes` is one byte per element offset by 128, `scale` is
+  one f64 per row, and the result is the same frozen weight `quantize` produces,
+  for `linear`'s int8 kernel. It exists so loading a quantized model is cheap:
+  rebuilding the f64 matrix and re-quantizing it is linear in the parameters and
+  copy-heavy, while this reads the codes into the kernel's own form in one pass.
+  Measured on a GPT-2 124M host, it cut int8 load-and-generate from about six
+  times slower than f64 to on par, at a fraction of the memory.
+
 ## [1.18.1] - 2026-09-22
 
 ### Removed

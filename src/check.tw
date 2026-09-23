@@ -4998,6 +4998,11 @@ fn infer_builtin_call(c: Checker, name: Str, ex: ast.Call, arg_types: Arr[Type],
     }
     return TUnknown
   }
+  if bytes.equal(name, "quantize_packed") {
+    # Builds a quantised weight from packed codes and a per-row scale; the result
+    # is the same opaque frozen weight `quantize` yields, so it types Unknown.
+    return TUnknown
+  }
   if bytes.equal(name, "nbytes") { return scalar() }
   if bytes.equal(name, "linear") {
     if len(arg_types) == 2 {
