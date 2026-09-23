@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.18.3] - 2026-09-22
+
 ### Added
 
 - `read_line()` reads standard input one line at a time as an Opt: Some(line)
