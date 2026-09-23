@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Changed
+
+- The int8 `linear` kernel (QLinear) has a matrix-vector path for a one-row
+  input, parallelised over the weight rows. A one-row input is the whole of
+  autoregressive decoding, and the general kernel parallelised over the input
+  rows, so it ran on one core for a single row. The new path uses every core and
+  is bit-identical to the general one. On a 0.5B int8 model each decode step went
+  from about 119ms to about 40ms, roughly 3x.
+
 ## [1.18.3] - 2026-09-22
 
 ### Added
