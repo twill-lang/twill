@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.18.2] - 2026-09-22
+
 ### Added
 
 - `quantize_packed(codes, scale, rows, cols)` builds an int8 weight directly from
