@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+## [1.18.5] - 2026-09-23
+
+### Changed
+
+- `topk` selects the k largest along an axis in one O(L) pass into a k-length
+  list when k is small, instead of a full O(L log L) sort of the whole axis. It
+  keeps the stable tie-break and the gradient origin mapping, and the full sort
+  remains for a large k. `top_p` (nucleus) in `std/sample` no longer sorts the
+  whole vocabulary either: it takes a bounded top set with `topk` and reads the
+  cutoff from it, falling back to the full sort only when that set does not hold
+  p of the mass. On a 0.5B int8 model the token sampler dropped from about 55ms
+  to about 4ms per step with the default top-k, and nucleus-only sampling from
+  about 59ms to about 9ms, lifting end-to-end generation from roughly 6.5 to
+  roughly 16 tokens per second. Bit-identical token choices.
+
 ## [1.18.4] - 2026-09-22
 
 ### Changed
