@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Added
+
+- `read_line()` reads standard input one line at a time as an Opt: Some(line)
+  with the trailing newline removed, or None at end of input. It buffers input
+  across calls, so a Twill program can drive an interactive read-eval loop, a
+  REPL or a chat, rather than only reading a whole file.
+
 ## [1.18.2] - 2026-09-22
 
 ### Added

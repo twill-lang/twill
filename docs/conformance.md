@@ -51,10 +51,10 @@ guessed at.
 
 | | count |
 |---|---|
-| names in the shared table | 256 |
-| implemented by the Go bootstrap | 255 |
+| names in the shared table | 257 |
+| implemented by the Go bootstrap | 256 |
 | implemented by the self-hosted evaluator | 195 |
-| **missing from the self-hosted evaluator** | **60** |
+| **missing from the self-hosted evaluator** | **61** |
 | missing from the Go bootstrap | 0 |
 | inconclusive (see below) | 1 |
 
@@ -77,9 +77,10 @@ gpu_free                gpu_kernel              gpu_launch              gpu_prog
 gpu_read                gpu_set_arg_buffer      gpu_set_arg_f64         gpu_set_arg_i64
 gpu_set_arg_local       gpu_write               i64_of_f64              is_same
 mem_allocs              mem_bytes               mem_counters_available  mem_live_bytes
-mem_tensors             quantize                quantize_packed         rng_close
-rng_f64                 rng_norm                rng_normal              rng_open
-rng_perm                rng_seed                rng_u53                 rng_uniform
+mem_tensors             quantize                quantize_packed         read_line
+rng_close               rng_f64                 rng_norm                rng_normal
+rng_open                rng_perm                rng_seed                rng_u53
+rng_uniform
 ```
 
 ## Inconclusive
@@ -291,6 +292,7 @@ implementation is broken. The evidence column says what came back.
 | `read_file` | yes | yes |
 | `read_file_at` | yes | yes |
 | `read_frame` | yes | yes |
+| `read_line` | yes | no |
 | `read_text_or` | yes | yes |
 | `relu` | yes | yes |
 | `remove_all` | yes | yes |
