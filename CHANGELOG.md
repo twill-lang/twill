@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.18.4] - 2026-09-22
+
 ### Changed
 
 - The int8 `linear` kernel (QLinear) has a matrix-vector path for a one-row
