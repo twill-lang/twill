@@ -1,6 +1,7 @@
 package interp
 
 import (
+	"bufio"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -967,6 +968,21 @@ func (ip *Interp) installBuiltins() {
 			return &value.Variant{Name: "None"}, nil
 		}
 		return &value.Variant{Name: "Some", Payload: value.Str(v), HasPayload: true}, nil
+	})
+
+	// read_line reads one line from standard input as an Opt: Some(line) with the
+	// trailing newline removed, or None at end of input (a closed pipe or Ctrl-D).
+	// It buffers input across calls, so it drives an interactive read-eval loop, a
+	// REPL or a chat, from a Twill program.
+	def("read_line", 0, false, func(a []value.Value) (value.Value, error) {
+		if stdinReader == nil {
+			stdinReader = bufio.NewReader(os.Stdin)
+		}
+		line, err := stdinReader.ReadString('\n')
+		if len(line) == 0 && err != nil {
+			return &value.Variant{Name: "None"}, nil
+		}
+		return &value.Variant{Name: "Some", Payload: value.Str(strings.TrimRight(line, "\r\n")), HasPayload: true}, nil
 	})
 
 	// clock_now_ms is wall-clock time in milliseconds, for the progress and
@@ -3501,6 +3517,11 @@ func listOrder(items []value.Value) (func(i, j int) bool, error) {
 // clock a Time carries, so a duration from a Time taken once at startup is a
 // monotonic reading and not a wall-clock subtraction.
 var processStart = time.Now()
+
+// stdinReader is a single buffered reader over standard input, shared across
+// read_line calls so a line consumed by one call is not lost to the next. It is
+// created on first use.
+var stdinReader *bufio.Reader
 
 // bitFuncs is the one definition of what each bitwise word computes. The
 // operators are reachable two ways, infix (`x shr 8`) and called (`shr(x, 8)`),

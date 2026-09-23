@@ -3943,7 +3943,7 @@ var builtinNames = map[string]bool{
 	"gpu_alloc": true, "gpu_free": true, "gpu_write": true, "gpu_read": true,
 	"gpu_copy": true, "gpu_program_build": true, "gpu_kernel": true,
 	"gpu_set_arg_buffer": true, "gpu_set_arg_local": true, "gpu_launch": true,
-	"gpu_finish": true, "gpu_device_info_i64": true, "env": true,
+	"gpu_finish": true, "gpu_device_info_i64": true, "env": true, "read_line": true,
 	"gpu_set_arg_i64": true, "gpu_set_arg_f64": true, "clock_now_ms": true,
 	"str_to_f64": true, "f64_to_str": true, "num_to_text": true, "module_source": true, "f64_hex": true, "gbm_describe": true,
 }
@@ -3967,7 +3967,7 @@ var builtinArity = map[string]int{
 	"sqrt": 1, "square": 1, "floor": 1, "ceil": 1, "round": 1,
 	"abort": 1, "abs": 1, "arr_clear": 1, "bnot": 1, "buf_len": 1, "buf_new": 1,
 	"bytes_to_str": 1, "chr": 1, "columns": 1, "dict_keys": 1, "emit_line": 1,
-	"enumerate": 1, "env": 1, "eye": 1, "f64_bits": 1, "f64_from_bits": 1,
+	"enumerate": 1, "env": 1, "read_line": 0, "eye": 1, "f64_bits": 1, "f64_from_bits": 1,
 	"f64_hex": 1, "f64_of_i64": 1, "f64_signbit": 1, "f64_to_str": 1,
 	"gbm_describe": 1, "grad": 1, "grads": 1, "hessian": 1, "dtype": 1, "i64_of_f64": 1,
 	"i64_of_str": 1, "int": 1, "item": 1, "jacobian": 1, "jvp": 1, "vjp": 1, "hvp": 1,
