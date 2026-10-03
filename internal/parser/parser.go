@@ -526,11 +526,11 @@ func (p *parser) parsePostfix() (ast.Expr, error) {
 			x = &ast.Field{Target: x, Name: name, Line: line}
 		} else if p.check("(") {
 			line := p.peek(0).Line
-			args, err := p.parseArgs()
+			args, names, err := p.parseArgs()
 			if err != nil {
 				return nil, err
 			}
-			x = &ast.Call{Callee: x, Args: args, Line: line}
+			x = &ast.Call{Callee: x, Args: args, ArgNames: names, Line: line}
 		} else if p.check("[") {
 			line := p.next().Line // '['
 			node, err := p.parseIndexOrSlice(x, line)
@@ -1208,6 +1208,15 @@ func (p *parser) parseParam() (ast.Param, error) {
 			}
 		}
 	}
+	// An optional parameter: `name = expr` or `name: Type = expr`. The default is
+	// held as an expression and evaluated per call that omits the argument.
+	if p.match("=") {
+		def, err := p.parseExpr()
+		if err != nil {
+			return ast.Param{}, err
+		}
+		param.Default = def
+	}
 	return param, nil
 }
 
@@ -1649,34 +1658,58 @@ func (p *parser) parseDim() (ast.Dim, error) {
 	return ast.Dim{}, p.errf(t, "expected a dimension size or name")
 }
 
-func (p *parser) parseArgs() ([]ast.Expr, error) {
+func (p *parser) parseArgs() ([]ast.Expr, []string, error) {
 	if _, err := p.expect("("); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	p.groupDepth++
 	defer func() { p.groupDepth-- }()
 	var args []ast.Expr
+	var names []string
 	if !p.check(")") {
-		a, err := p.parseExpr()
+		name, a, err := p.parseArg()
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		args = append(args, a)
+		names = append(names, name)
 		for p.match(",") {
 			if p.check(")") {
 				break
 			}
-			a, err := p.parseExpr()
+			name, a, err := p.parseArg()
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			args = append(args, a)
+			names = append(names, name)
 		}
 	}
 	if _, err := p.expect(")"); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return args, nil
+	return args, names, nil
+}
+
+// parseArg parses one call argument, returning its name for a named argument
+// `k: v` or "" for a positional one. A leading `IDENT :` is the only shape a
+// named argument takes, and `:` has no other meaning at the top of an argument,
+// so a bare name followed by a colon is unambiguous.
+func (p *parser) parseArg() (string, ast.Expr, error) {
+	if p.peek(0).Kind == lexer.IDENT && p.peek(1).Value == ":" {
+		name := p.next().Value // the identifier
+		p.next()               // the ':'
+		a, err := p.parseExpr()
+		if err != nil {
+			return "", nil, err
+		}
+		return name, a, nil
+	}
+	a, err := p.parseExpr()
+	if err != nil {
+		return "", nil, err
+	}
+	return "", a, nil
 }
 
 func (p *parser) expectIdent() (string, error) {

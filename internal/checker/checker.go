@@ -2293,10 +2293,104 @@ func isKnownTypeName(name string) bool {
 }
 
 func (c *checker) inferUserCall(fn tFn, ex *ast.Call, argTypes []Type) Type {
-	if len(fn.params) != len(argTypes) {
-		c.report(ex.Line, "function expects %d argument(s), got %d", len(fn.params), len(argTypes))
-		return tUnknown{}
+	// Resolve named arguments and defaults into one type per parameter, in
+	// parameter order, so the per-parameter loop below is unchanged. argExprs is
+	// the source expression per parameter, nil for one filled by its default, so
+	// a diagnostic that reads the argument's syntax reads the right one.
+	n := len(fn.params)
+	bound := make([]Type, n)
+	argExprs := make([]ast.Expr, n)
+	hasNames := false
+	for _, nm := range ex.ArgNames {
+		if nm != "" {
+			hasNames = true
+			break
+		}
 	}
+	hasDefaults := false
+	for _, p := range fn.params {
+		if p.Default != nil {
+			hasDefaults = true
+			break
+		}
+	}
+	if !hasNames && !hasDefaults {
+		// The ordinary positional call: one argument per parameter, in order.
+		// Kept on its own exact path so its arity message is unchanged and so the
+		// self-hosted implementation, which has only this case, agrees.
+		if n != len(argTypes) {
+			c.report(ex.Line, "function expects %d argument(s), got %d", n, len(argTypes))
+			return tUnknown{}
+		}
+		copy(bound, argTypes)
+		for i := range argTypes {
+			if i < len(ex.Args) {
+				argExprs[i] = ex.Args[i]
+			}
+		}
+	} else {
+		provided := make([]bool, n)
+		pos := 0
+		namedSeen := false
+		for i := range argTypes {
+			name := ""
+			if i < len(ex.ArgNames) {
+				name = ex.ArgNames[i]
+			}
+			if name == "" {
+				if namedSeen {
+					c.report(ex.Line, "a positional argument cannot follow a named one")
+					return tUnknown{}
+				}
+				if pos >= n {
+					c.report(ex.Line, "function expects at most %d argument(s), got %d", n, len(argTypes))
+					return tUnknown{}
+				}
+				bound[pos] = argTypes[i]
+				if i < len(ex.Args) {
+					argExprs[pos] = ex.Args[i]
+				}
+				provided[pos] = true
+				pos++
+				continue
+			}
+			namedSeen = true
+			idx := -1
+			for j, p := range fn.params {
+				if p.Name == name {
+					idx = j
+					break
+				}
+			}
+			if idx < 0 {
+				c.report(ex.Line, "function has no parameter named %q", name)
+				return tUnknown{}
+			}
+			if provided[idx] {
+				c.report(ex.Line, "argument %q given more than once", name)
+				return tUnknown{}
+			}
+			bound[idx] = argTypes[i]
+			if i < len(ex.Args) {
+				argExprs[idx] = ex.Args[i]
+			}
+			provided[idx] = true
+		}
+		defEnv := newEnv(fn.env)
+		for j := 0; j < n; j++ {
+			if provided[j] {
+				continue
+			}
+			if fn.params[j].Default != nil {
+				bound[j] = c.inferExpr(fn.params[j].Default, defEnv)
+				provided[j] = true
+				continue
+			}
+			c.report(ex.Line, "function is missing an argument for %q", fn.params[j].Name)
+			return tUnknown{}
+		}
+	}
+	argTypes = bound
 	// subst maps shape variables (n, k, ...) to the concrete sizes learned from
 	// the arguments, so a variable used in several places must agree.
 	subst := map[string]int{}
@@ -2334,8 +2428,8 @@ func (c *checker) inferUserCall(fn tFn, ex *ast.Call, argTypes []Type) Type {
 					strings.HasPrefix(p.TypeName, "(") || strings.HasPrefix(p.TypeName, "fn(") {
 					want := c.parseType(p.TypeName)
 					what := fmt.Sprintf("argument %d (%q)", i+1, p.Name)
-					if c.checkAssignable(ex.Line, what, want, argTypes[i]) && i < len(ex.Args) {
-						c.fractionalLiteralAtInt(ex.Line, what, want, ex.Args[i])
+					if c.checkAssignable(ex.Line, what, want, argTypes[i]) && argExprs[i] != nil {
+						c.fractionalLiteralAtInt(ex.Line, what, want, argExprs[i])
 					}
 					scope.define(p.Name, want)
 				} else {
@@ -2510,6 +2604,16 @@ func substitute(dims []ast.Dim, subst map[string]int) []int {
 // trailing name asked for, or dtUnknown; a constructor without one builds f64,
 // the documented default (docs/dtypes.md).
 func (c *checker) inferBuiltinCall(name string, ex *ast.Call, argTypes []Type, dt tensor.DType) Type {
+	// Builtins take positional arguments only: their arities are nameless word
+	// lists, so there is no parameter name to bind to. Named arguments are a
+	// user-function feature, and silently dropping the name would be worse than
+	// saying so.
+	for _, nm := range ex.ArgNames {
+		if nm != "" {
+			c.report(ex.Line, "%s is a builtin and takes positional arguments only, not a named argument %q", name, nm)
+			return tUnknown{}
+		}
+	}
 	ctorDType := tensor.DTF64
 	if dtypeKnown(dt) {
 		ctorDType = dt

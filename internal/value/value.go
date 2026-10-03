@@ -193,9 +193,13 @@ type Closure struct {
 	// none), so an `I64` or `F64` parameter converts its argument at the call the
 	// way a `let` converts its bound value. Parallel to Params.
 	ParamTypes []string
-	Body       ast.Expr
-	Env        *Env
-	Name       string
+	// Defaults is parallel to Params: the default expression for an optional
+	// parameter, or nil for a required one. It is evaluated in Env (the closure's
+	// definition environment) at each call that omits the argument.
+	Defaults []ast.Expr
+	Body     ast.Expr
+	Env      *Env
+	Name     string
 	// The return annotation, kept so that `-> I64` truncates the returned value
 	// the way `let n: I64 = ...` truncates a bound one. Both spellings reach the
 	// annotation the same way the parser records it: a bare `I64` arrives as a

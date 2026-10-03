@@ -69,6 +69,12 @@ type Param struct {
 	Shape    *ShapeAnno // non-nil for a shape annotation
 	TypeName string     // a bare name: a record type or a unit (resolved by the checker)
 	Unit     *UnitAnno  // a compound unit expression (has operators)
+	// Default is the expression after `= ` on an optional parameter, nil for a
+	// required one. It is evaluated at each call that omits the argument, in the
+	// function's definition environment, so a default sees the same names the
+	// body's free variables do and not the caller's locals. Once a parameter has
+	// a default every parameter after it must too, which the parser enforces.
+	Default Expr
 }
 
 type Program struct {
@@ -302,7 +308,12 @@ type Binary struct {
 type Call struct {
 	Callee Expr
 	Args   []Expr
-	Line   int
+	// ArgNames is parallel to Args: the name on a named argument `f(x, k: v)`,
+	// or "" for a positional one. Empty (or all "") means an ordinary positional
+	// call. Named arguments must follow the positional ones, which the parser
+	// enforces, so the non-empty entries are always a suffix.
+	ArgNames []string
+	Line     int
 }
 
 type Index struct {

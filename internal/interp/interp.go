@@ -432,12 +432,14 @@ func (ip *Interp) hoistFns(body []ast.Stmt, env *value.Env) {
 	for _, s := range body {
 		if fn, ok := s.(*ast.FnDecl); ok {
 			env.Prebind(fn.Name, &value.Closure{
-				Params:  paramNames(fn.Params),
-				Body:    fn.Body,
-				Env:     env,
-				Name:    fn.Name,
-				RetUnit: fn.RetUnit,
-				RetType: fn.RetType,
+				Params:     paramNames(fn.Params),
+				ParamTypes: paramTypes(fn.Params),
+				Defaults:   paramDefaults(fn.Params),
+				Body:       fn.Body,
+				Env:        env,
+				Name:       fn.Name,
+				RetUnit:    fn.RetUnit,
+				RetType:    fn.RetType,
 			})
 		}
 	}
@@ -557,6 +559,7 @@ func (ip *Interp) execStmt(s ast.Stmt, env *value.Env) value.Value {
 		env.Define(st.Name, &value.Closure{
 			Params:     paramNames(st.Params),
 			ParamTypes: paramTypes(st.Params),
+			Defaults:   paramDefaults(st.Params),
 			Body:       st.Body,
 			Env:        env,
 			Name:       st.Name,
@@ -1003,6 +1006,7 @@ func (ip *Interp) evalExpr(e ast.Expr, env *value.Env) value.Value {
 		return &value.Closure{
 			Params:     paramNames(ex.Params),
 			ParamTypes: paramTypes(ex.Params),
+			Defaults:   paramDefaults(ex.Params),
 			Body:       ex.Body,
 			Env:        env,
 			Name:       "",
@@ -1615,7 +1619,15 @@ func (ip *Interp) evalCall(ex *ast.Call, env *value.Env) value.Value {
 			return out
 		}
 	}
-	return ip.Apply(callee, ip.evalArgs(ex.Args, env), ex.Line)
+	argv := ip.evalArgs(ex.Args, env)
+	// A direct call is the one place named arguments are resolved, because it is
+	// the one place the argument names survive to. A closure reached any other
+	// way (a method call, a record field) still gets its defaults filled, in
+	// Apply, but takes its arguments positionally.
+	if c, ok := callee.(*value.Closure); ok {
+		return ip.callClosureNamed(c, argv, ex.ArgNames, ex.Line)
+	}
+	return ip.Apply(callee, argv, ex.Line)
 }
 
 // matchPattern matches one pattern against one value, defining the pattern's
@@ -1795,18 +1807,85 @@ func (ip *Interp) Apply(callee value.Value, args []value.Value, line int) value.
 		}
 		return v
 	case *value.Closure:
-		if len(fn.Params) != len(args) {
-			name := fn.Name
-			if name == "" {
-				name = "function"
-			}
-			ip.panicf(line, "%s expects %d argument(s), got %d", name, len(fn.Params), len(args))
-		}
-		return ip.callClosure(fn, args, line)
+		// Positional only here (names do not reach Apply), but defaults are still
+		// filled, so a closure with optional parameters can be applied with fewer
+		// arguments through a method call or a higher-order function.
+		return ip.callClosureNamed(fn, args, nil, line)
 	default:
 		ip.panicf(line, "value is not callable: %s", value.Format(callee))
 		return value.TheUnit
 	}
+}
+
+// callClosureNamed binds args to c's parameters, honouring named arguments and
+// filling omitted optional ones from their defaults, then calls the closure.
+// names is parallel to args: "" for a positional argument, the parameter name
+// for a named one, or nil for an all-positional call.
+func (ip *Interp) callClosureNamed(c *value.Closure, args []value.Value, names []string, line int) value.Value {
+	return ip.callClosure(c, ip.bindClosureArgs(c, args, names, line), line)
+}
+
+// bindClosureArgs resolves a call's arguments into one value per parameter, in
+// parameter order. Positional arguments fill the parameters left to right; a
+// named argument fills the parameter it names; an omitted parameter takes its
+// default, evaluated in the closure's definition environment; and anything left
+// unfilled with no default, a positional argument after a named one, an unknown
+// name, a parameter given twice, or too many positional arguments, is an error.
+func (ip *Interp) bindClosureArgs(c *value.Closure, args []value.Value, names []string, line int) []value.Value {
+	name := c.Name
+	if name == "" {
+		name = "function"
+	}
+	n := len(c.Params)
+	slots := make([]value.Value, n)
+	filled := make([]bool, n)
+	pos := 0
+	namedSeen := false
+	for i, a := range args {
+		argName := ""
+		if i < len(names) {
+			argName = names[i]
+		}
+		if argName == "" {
+			if namedSeen {
+				ip.panicf(line, "%s: a positional argument cannot follow a named one", name)
+			}
+			if pos >= n {
+				ip.panicf(line, "%s expects at most %d argument(s), got %d", name, n, len(args))
+			}
+			slots[pos] = a
+			filled[pos] = true
+			pos++
+			continue
+		}
+		namedSeen = true
+		idx := -1
+		for j, pn := range c.Params {
+			if pn == argName {
+				idx = j
+				break
+			}
+		}
+		if idx < 0 {
+			ip.panicf(line, "%s has no parameter named %q", name, argName)
+		}
+		if filled[idx] {
+			ip.panicf(line, "%s: argument %q given more than once", name, argName)
+		}
+		slots[idx] = a
+		filled[idx] = true
+	}
+	for j := 0; j < n; j++ {
+		if filled[j] {
+			continue
+		}
+		if j < len(c.Defaults) && c.Defaults[j] != nil {
+			slots[j] = ip.evalExpr(c.Defaults[j], c.Env)
+			continue
+		}
+		ip.panicf(line, "%s: missing argument for %q", name, c.Params[j])
+	}
+	return slots
 }
 
 // callClosure calls c with args. line is the source line of the call, used to
@@ -2212,4 +2291,25 @@ func paramNames(params []ast.Param) []string {
 		names[i] = p.Name
 	}
 	return names
+}
+
+// paramDefaults is the default expression per parameter, nil where there is
+// none. Parallel to paramNames, so the closure can fill an omitted optional
+// argument by evaluating its default.
+func paramDefaults(params []ast.Param) []ast.Expr {
+	hasAny := false
+	for _, p := range params {
+		if p.Default != nil {
+			hasAny = true
+			break
+		}
+	}
+	if !hasAny {
+		return nil
+	}
+	defs := make([]ast.Expr, len(params))
+	for i, p := range params {
+		defs[i] = p.Default
+	}
+	return defs
 }
