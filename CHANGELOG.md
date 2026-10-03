@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.19.0] - 2026-10-03
+
 ### Added
 
 - Lazy iteration. `for x in it` now accepts an iterator, a zero-argument
