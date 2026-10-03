@@ -51,9 +51,9 @@ guessed at.
 
 | | count |
 |---|---|
-| names in the shared table | 257 |
-| implemented by the Go bootstrap | 256 |
-| implemented by the self-hosted evaluator | 195 |
+| names in the shared table | 259 |
+| implemented by the Go bootstrap | 258 |
+| implemented by the self-hosted evaluator | 197 |
 | **missing from the self-hosted evaluator** | **61** |
 | missing from the Go bootstrap | 0 |
 | inconclusive (see below) | 1 |
@@ -93,7 +93,7 @@ implementation is broken. The evidence column says what came back.
 
 | builtin | bootstrap | self-hosted | evidence |
 |---|---|---|---|
-| `clip` | yes | unknown | main.tw:2809: runtime error: no match arm for {shape: [], data: \x00\x00\x00\x00\x00\x00\x00\x00, dtype: 6} |
+| `clip` | yes | unknown | main.tw:2931: runtime error: no match arm for {shape: [], data: \x00\x00\x00\x00\x00\x00\x00\x00, dtype: 6} |
 
 ## Every name
 
@@ -294,6 +294,7 @@ implementation is broken. The evidence column says what came back.
 | `read_frame` | yes | yes |
 | `read_line` | yes | no |
 | `read_text_or` | yes | yes |
+| `record` | yes | yes |
 | `relu` | yes | yes |
 | `remove_all` | yes | yes |
 | `remove_dir` | yes | yes |
@@ -347,6 +348,7 @@ implementation is broken. The evidence column says what came back.
 | `where` | yes | yes |
 | `window_size` | yes | yes |
 | `with_field` | yes | yes |
+| `without_field` | yes | yes |
 | `write_err` | yes | yes |
 | `write_file` | yes | yes |
 | `write_frame` | yes | yes |
