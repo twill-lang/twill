@@ -6,28 +6,30 @@
 
 ### Added
 
-- Lazy iteration. `for x in it` now accepts an iterator, a zero-argument
-  function returning Opt: it is called until the result is None, so a sequence
-  is consumed one element at a time and never materialised as a whole list. A
-  list or a tensor keeps the eager path unchanged. The new `std/iter` builds on
-  it with `from_list`, `upto`, `map`, `filter` and `take`, each an ordinary
-  closure that pulls from the one it wraps, so a pipeline over a dataset too
-  large to hold at once is written the same way as one over a list. Both the Go
-  bootstrap and the self-hosted implementation carry it, pinned by a conformance
-  case, and it needs no coroutines. This closes roadmap entry 24.
+- **Lazy iteration, `for` over an iterator.** `for x in it` now accepts an
+  iterator, a zero-argument function returning Opt: it is called until the
+  result is None, so a sequence is consumed one element at a time and never
+  materialised as a whole list. A list or a tensor keeps the eager path
+  unchanged. The new `std/iter` builds on it with `from_list`, `upto`, `map`,
+  `filter` and `take`, each an ordinary closure that pulls from the one it
+  wraps, so a pipeline over a dataset too large to hold at once is written the
+  same way as one over a list. Both the Go bootstrap and the self-hosted
+  implementation carry it, pinned by a conformance case, and it needs no
+  coroutines. This closes roadmap entry 24.
 
-- Named and optional arguments on user-defined functions. A parameter can carry
-  a default, `fn f(a, b = 10.0)`, and a call can name its arguments,
-  `f(x, k: v)`. An omitted optional parameter takes its default, evaluated at the
-  call in the function's definition scope; a named argument binds to the
-  parameter it names, in any order after the positional ones. Builtins stay
-  positional, since their arities are nameless word lists, and a named argument
-  to one is a checker error rather than a silently dropped name. The ordinary
-  positional call is unchanged, including its arity message. Both the Go
-  bootstrap and the self-hosted implementation carry it, and a conformance case
-  pins that the two agree. This closes the open half of roadmap entry 29.
+- **Named and optional arguments on user functions.** A parameter can carry a
+  default, `fn f(a, b = 10.0)`, and a call can name its arguments, `f(x, k: v)`.
+  An omitted optional parameter takes its default, evaluated at the call in the
+  function's definition scope; a named argument binds to the parameter it names,
+  in any order after the positional ones. Builtins stay positional, since their
+  arities are nameless word lists, and a named argument to one is a checker error
+  rather than a silently dropped name. The ordinary positional call is unchanged,
+  including its arity message. Both the Go bootstrap and the self-hosted
+  implementation carry it, and a conformance case pins that the two agree. This
+  closes the open half of roadmap entry 29.
 
-- `record()` is an empty record, and `without_field(rec, name)` is a copy of a
+- **`record()` and `without_field`, and the frame operations they unlock.**
+  `record()` is an empty record, and `without_field(rec, name)` is a copy of a
   record with one field removed, the counterpart to `with_field`. Together they
   close roadmap entry 32: a record whose field names come from a list at run
   time can now be built from nothing and have fields dropped, not only added.
