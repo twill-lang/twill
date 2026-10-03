@@ -52,8 +52,9 @@ Delivery was verified by running the current binary, not by reading the
 changelog, which is how the two half-done entries and the still-open `record()`
 were caught. The release named in each row is where the feature first shipped,
 taken from the changelog and, where the changelog was silent, from the tag the
-defining commit first appears in. The one still open is 24 (29 and 32 are
-delivered on `main` and unreleased). The two half done are 17 and 31.
+defining commit first appears in. Nothing ranked is fully open now: 24, 29 and
+32 are delivered on `main` and unreleased, and the two that remain, 17 and 31,
+are each half done.
 
 "Delivered" throughout means delivered by the Go bootstrap, which is the binary
 users run. It does not mean delivered by both implementations: the section below
@@ -1013,7 +1014,16 @@ repeated `+`.
 
 ### 24. Iteration that does not materialise
 
-> **Open.** There is no iterator protocol. `for x in ...` takes a list or a
+> **Delivered on `main`, unreleased.** The protocol is chosen: an iterator is a
+> zero-argument function returning Opt, and `for x in it` calls it until None,
+> so a sequence is consumed one element at a time. A list or a 1-D tensor keeps
+> the eager path. `std/iter` provides `from_list`, `upto`, `map`, `filter` and
+> `take` on top of it, and a conformance case pins that both implementations
+> agree. `std/batch.tw`'s `epoch_batches` still returns the whole epoch and
+> could now be offered lazily, which is follow-on work in that module rather
+> than in the language. What follows is what the entry said while it was open.
+>
+> There is no iterator protocol. `for x in ...` takes a list or a
 > 1-D tensor and is eager, and `std/batch.tw`'s `epoch_batches` still returns
 > the whole epoch. The prerequisite this entry names is now met, since `Opt`
 > arrived in 1.3.0, so the `next() -> Opt[T]` shape is buildable; what has not

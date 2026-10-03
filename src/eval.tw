@@ -639,6 +639,13 @@ fn exec_for(st: ast.For, env: Env) -> Res[Flow, RuntimeError] {
   }
 
   let it: Value = eval_expr(st.iter, env)?
+  # A lazy iterator is a zero-argument closure returning Opt: `for x in it` calls
+  # it until the result is None, so a sequence is consumed one element at a time
+  # and never materialised. A list or a tensor keeps the eager path below.
+  match it {
+    VClosure(c) => return exec_for_iter(c, st, env),
+    _ => unit,
+  }
   let items: Arr[Value] = iterate(it, st.line)?
   let k: I64 = 0
   while k < len(items) {
@@ -652,6 +659,39 @@ fn exec_for(st: ast.For, env: Env) -> Res[Flow, RuntimeError] {
       Normal(_) => unit,
     }
     k = k + 1
+  }
+  Ok(Normal(VUnit))
+}
+
+# Drive a lazy iterator: call the closure for each element, binding the Some
+# payload and stopping on None. interp.go does the same inline in its For case.
+fn exec_for_iter(c: Closure, st: ast.For, env: Env) -> Res[Flow, RuntimeError] {
+  while true {
+    let nx: Value = call_closure_named(c, arr_new(), arr_new(), st.line)?
+    match nx {
+      VVariant(v) => {
+        if bytes.equal(v.name, "None") {
+          return Ok(Normal(VUnit))
+        }
+        if not bytes.equal(v.name, "Some") {
+          return Err(runtime_error(st.line, bytes.concat("an iterator must return Some(x) or None, got ", type_name(nx))))
+        }
+        let payload: Value = match v.payload {
+          Some(p) => p,
+          None => VUnit,
+        }
+        let scope: Env = new_env(Some(env))
+        env_define(scope, st.name, payload)
+        let f: Flow = exec_block(st.body, scope)?
+        match f {
+          Returned(rv) => return Ok(Returned(rv)),
+          BreakF => return Ok(Normal(VUnit)),
+          ContinueF => unit,
+          Normal(_) => unit,
+        }
+      },
+      _ => return Err(runtime_error(st.line, bytes.concat("an iterator must return Some(x) or None, got ", type_name(nx)))),
+    }
   }
   Ok(Normal(VUnit))
 }

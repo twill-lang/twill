@@ -1,0 +1,28 @@
+mode systems
+
+# A lazy iterator is a zero-argument closure returning Opt. `for x in it` calls
+# it until None, so the sequence is consumed one element at a time and never
+# materialised as a list.
+fn count_to(n: I64) {
+  let st = { v: 0 }
+  fn() {
+    if st.v >= n {
+      None
+    } else {
+      st.v = st.v + 1
+      Some(st.v)
+    }
+  }
+}
+
+fn main() {
+  let total = { s: 0 }
+  for x in count_to(5) {
+    total.s = total.s + x
+    write_out(str(x))
+    write_out(" ")
+  }
+  write_out("\n")
+  write_out(str(total.s))
+  write_out("\n")
+}

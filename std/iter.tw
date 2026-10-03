@@ -1,0 +1,88 @@
+# iter.tw: lazy iteration.
+#
+# An iterator is a zero-argument function that returns Opt: each call yields
+# Some(x) for the next element and None once there are no more. `for x in it`
+# consumes one directly, calling it until None, so a sequence can be produced
+# and consumed a step at a time and never has to exist as a whole list. That is
+# the point of the module: a pipeline over a dataset that does not fit in memory,
+# or one whose length is not known in advance, is written the same way as one
+# over a list.
+#
+# State lives in a record the returned closure captures, because a record is a
+# reference and a field written through one capture is seen through the call
+# that advances it. Nothing here is a coroutine: an iterator is an ordinary
+# closure, and these combinators are ordinary closures that wrap it.
+
+# An iterator over the elements of a list, in order.
+fn from_list(xs) {
+  let st = { i: 0 }
+  fn() {
+    if st.i >= len(xs) {
+      None
+    } else {
+      let v = xs[st.i]
+      st.i = st.i + 1
+      Some(v)
+    }
+  }
+}
+
+# The integers 0, 1, ... n - 1, without building the list `range(n)` would.
+fn upto(n) {
+  let st = { i: 0 }
+  fn() {
+    if st.i >= n {
+      None
+    } else {
+      let v = st.i
+      st.i = st.i + 1
+      Some(v)
+    }
+  }
+}
+
+# A new iterator whose elements are f applied to each of this one's. Lazy: f runs
+# as the consumer pulls, not up front.
+fn map(it, f) {
+  fn() {
+    match it() {
+      Some(x) => Some(f(x)),
+      None => None,
+    }
+  }
+}
+
+# The elements of `it` for which pred is true, skipping the rest. The skipped
+# elements are pulled and dropped inside one call, so the consumer sees only the
+# ones that pass.
+fn filter(it, pred) {
+  fn() {
+    let r = { done: false, out: None }
+    while not r.done {
+      match it() {
+        None => r.done = true,
+        Some(x) => {
+          if pred(x) {
+            r.done = true
+            r.out = Some(x)
+          }
+        },
+      }
+    }
+    r.out
+  }
+}
+
+# At most the first n elements of `it`, then None. Stops pulling `it` once n have
+# been taken, which is what makes it safe over an endless iterator.
+fn take(it, n) {
+  let st = { k: 0 }
+  fn() {
+    if st.k >= n {
+      None
+    } else {
+      st.k = st.k + 1
+      it()
+    }
+  }
+}

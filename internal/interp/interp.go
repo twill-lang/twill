@@ -599,7 +599,30 @@ func (ip *Interp) execStmt(s ast.Stmt, env *value.Env) value.Value {
 			}
 			return value.TheUnit
 		}
-		items := ip.iterate(ip.tracedStmt(func() value.Value { return ip.evalExpr(st.Iter, env) }), st.Line)
+		iterVal := ip.tracedStmt(func() value.Value { return ip.evalExpr(st.Iter, env) })
+		// A lazy iterator is a zero-argument closure returning Opt: `for x in it`
+		// calls it until the result is None, so a sequence is consumed one element
+		// at a time and never materialised. A list or a tensor keeps the eager
+		// path below.
+		if c, ok := iterVal.(*value.Closure); ok {
+			for {
+				next := ip.callClosureNamed(c, nil, nil, st.Line)
+				v, ok := next.(*value.Variant)
+				if !ok || (v.Name != "Some" && v.Name != "None") {
+					ip.panicf(st.Line, "an iterator must return Some(x) or None, got %s", value.Format(next))
+				}
+				if v.Name == "None" {
+					break
+				}
+				scope := value.NewEnv(env)
+				scope.Define(st.Name, v.Payload)
+				if ip.runLoopBody(st.Body, scope) {
+					break
+				}
+			}
+			return value.TheUnit
+		}
+		items := ip.iterate(iterVal, st.Line)
 		for _, item := range items {
 			scope := value.NewEnv(env)
 			scope.Define(st.Name, item)

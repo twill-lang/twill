@@ -4,6 +4,16 @@
 
 ### Added
 
+- Lazy iteration. `for x in it` now accepts an iterator, a zero-argument
+  function returning Opt: it is called until the result is None, so a sequence
+  is consumed one element at a time and never materialised as a whole list. A
+  list or a tensor keeps the eager path unchanged. The new `std/iter` builds on
+  it with `from_list`, `upto`, `map`, `filter` and `take`, each an ordinary
+  closure that pulls from the one it wraps, so a pipeline over a dataset too
+  large to hold at once is written the same way as one over a list. Both the Go
+  bootstrap and the self-hosted implementation carry it, pinned by a conformance
+  case, and it needs no coroutines. This closes roadmap entry 24.
+
 - Named and optional arguments on user-defined functions. A parameter can carry
   a default, `fn f(a, b = 10.0)`, and a call can name its arguments,
   `f(x, k: v)`. An omitted optional parameter takes its default, evaluated at the
