@@ -1,0 +1,46 @@
+mode systems
+
+# record() and without_field close the pair with_field opened: an empty record
+# to start from, and a way to drop a field. Field values are all strings so
+# every line is fixed text and a divergence is unambiguous. It stays in main so
+# no parameter has to name the type of a record built at run time.
+fn main() {
+  let empty = record()
+  write_out("empty =")
+  for c in columns(empty) {
+    write_out(" ")
+    write_out(str(c))
+  }
+  write_out("\n")
+
+  let a = with_field(empty, "x", "1")
+  let b = with_field(a, "y", "2")
+  let full = with_field(b, "z", "3")
+  write_out("built =")
+  for c in columns(full) {
+    write_out(" ")
+    write_out(str(c))
+  }
+  write_out("\n")
+
+  let dropped = without_field(full, "y")
+  write_out("dropped y =")
+  for c in columns(dropped) {
+    write_out(" ")
+    write_out(str(c))
+  }
+  write_out("\n")
+
+  # Dropping a name the record does not have changes nothing.
+  let same = without_field(full, "absent")
+  write_out("drop absent =")
+  for c in columns(same) {
+    write_out(" ")
+    write_out(str(c))
+  }
+  write_out("\n")
+
+  write_out("x stays ")
+  write_out(str(field(dropped, "x")))
+  write_out("\n")
+}

@@ -15,8 +15,10 @@
 #   columns(rec)              the field names, in declaration order
 #   field(rec, name)          a column by name
 #   with_field(rec, name, v)  a copy with one field set or replaced
+#   record()                  an empty record to build a frame up from
+#   without_field(rec, name)  a copy with one field removed
 #
-# Everything in this file is built from those six plus ordinary tensor
+# Everything in this file is built from those eight plus ordinary tensor
 # operations, and nothing here re-implements any of them. Reading and writing
 # CSV is therefore not wrapped: call the builtins.
 #
@@ -27,14 +29,11 @@
 #   integer code and a date is a number of days. Text lives in std/text and
 #   reaches a frame by being encoded into a code column first.
 #
-#   Columns can be added and replaced but not removed. `with_field` sets a
-#   field; nothing drops one, and there is no empty record to rebuild from,
-#   because `{}` is a block and evaluates to unit. So `select`, `drop`,
-#   `rename` and a general `from_columns` are not in this module: every one of
-#   them needs a record whose field names come from a list at run time, and that
-#   cannot be written in Twill today. docs/needs.md NEEDS-98 asks for the two
-#   primitives that would fix it. Where a name has to be chosen dynamically the
-#   functions below say so and use fixed names instead.
+#   Columns can be added, replaced and removed. `with_field` sets a field,
+#   `without_field` drops one, and `record()` is the empty record to rebuild
+#   from, so `select`, `drop`, `rename` and `from_columns` are all in this
+#   module now: each builds a record whose field names come from a list at run
+#   time, which the two primitives from docs/needs.md NEEDS-98 make expressible.
 #
 #   Every row operation goes through `map_leaves`, which rebuilds the record
 #   with the same field names. That is what makes filtering, sorting and slicing
@@ -64,6 +63,51 @@ fn has(df, name) {
 
 # Add or replace a column. `with_field` under a name that says what it is for.
 fn add_column(df, name, col) = with_field(df, name, col)
+
+# Keep only the named columns, in the order given. Built from `record()`: start
+# from nothing and copy across the columns asked for, so the result's column
+# order is the caller's list and not the input's.
+fn select(df, keep) {
+  let out = record()
+  for name in keep {
+    out = with_field(out, name, field(df, name))
+  }
+  out
+}
+
+# Drop the named columns, keeping the rest in their original order.
+fn drop(df, remove) {
+  let out = df
+  for name in remove {
+    out = without_field(out, name)
+  }
+  out
+}
+
+# Rename one column, keeping every column in its original position. Rebuilt from
+# `record()` so the renamed column stays where it was rather than moving to the
+# end, which a `without_field` then `with_field` would do.
+fn rename(df, old, new) {
+  let out = record()
+  for name in columns(df) {
+    if name == old {
+      out = with_field(out, new, field(df, old))
+    } else {
+      out = with_field(out, name, field(df, name))
+    }
+  }
+  out
+}
+
+# Build a frame from a list of column names and a matching list of column
+# tensors. The inverse of reading a frame apart into `columns` and `field`.
+fn from_columns(col_names, cols) {
+  let out = record()
+  for i in range(len(col_names)) {
+    out = with_field(out, col_names[i], cols[i])
+  }
+  out
+}
 
 # ── Row operations ──────────────────────────────────────────────────────────
 

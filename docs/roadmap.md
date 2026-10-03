@@ -52,8 +52,8 @@ Delivery was verified by running the current binary, not by reading the
 changelog, which is how the two half-done entries and the still-open `record()`
 were caught. The release named in each row is where the feature first shipped,
 taken from the changelog and, where the changelog was silent, from the tag the
-defining commit first appears in. The three still open are 24, 29 and 32.
-The two half done are 17 and 31.
+defining commit first appears in. The two still open are 24 and 29 (32 is
+delivered on `main` and unreleased). The two half done are 17 and 31.
 
 "Delivered" throughout means delivered by the Go bootstrap, which is the binary
 users run. It does not mean delivered by both implementations: the section below
@@ -1213,7 +1213,13 @@ every get, which is a decimal conversion per statement printed. The tape's
 forward pass over a tape of n entries costs O(n^2) identity comparisons. Both
 want the same relaxation of the key type.
 
-**32. An empty record, and removing a field**, **open** (twill NEEDS-98).
+**32. An empty record, and removing a field**, **delivered on `main`,
+unreleased** (twill NEEDS-98). `record()` is an empty record and
+`without_field(rec, name)` removes a field, the two primitives this asked for,
+and `std/frame` now has `select`, `drop`, `rename` and `from_columns` built on
+them. A conformance case pins that both implementations agree. What follows is
+what the entry said while it was open.
+
 `record()` is still an unknown name and `{}` is still a block. `dict_del`
 arrived in 1.4.0 and removes a *dict* key, which is not this: a record's fields
 are not a dict. `{}` is a block

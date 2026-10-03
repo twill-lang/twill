@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Added
+
+- `record()` is an empty record, and `without_field(rec, name)` is a copy of a
+  record with one field removed, the counterpart to `with_field`. Together they
+  close roadmap entry 32: a record whose field names come from a list at run
+  time can now be built from nothing and have fields dropped, not only added.
+  Both are in the Go bootstrap and the self-hosted implementation, and a
+  conformance case pins that the two agree. On the back of them `std/frame`
+  gains `select`, `drop`, `rename` and `from_columns`, which the module had
+  documented as impossible to write in Twill until these two primitives existed.
+
 ## [1.18.5] - 2026-09-23
 
 ### Changed

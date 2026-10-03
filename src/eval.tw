@@ -2578,7 +2578,7 @@ fn in_words(list: Str, name: Str) -> Bool {
 
 let ARITY1: Str = "black_box relu exp log log1p expm1 sin cos tanh sigmoid sqrt square abs grad grads value_and_grad jacobian hessian jvp vjp hvp tensor scalar seed permutation eye shape len item dtype str int floor ceil round read_csv read_frame load columns nbytes"
 
-let ARITY2: Str = "pow matmul dot linear conv2d maxpool2d gather maximum minimum greater less greater_equal less_equal equal concat map append gbm_predict write_frame save field map_leaves zip_leaves"
+let ARITY2: Str = "pow matmul dot linear conv2d maxpool2d gather maximum minimum greater less greater_equal less_equal equal concat map append gbm_predict write_frame save field map_leaves zip_leaves without_field"
 
 # The declared arity, or -1 for variadic. Go carries this on the Builtin value
 # and checks it in Apply before the body runs, so a wrong count never reaches
@@ -2590,7 +2590,7 @@ fn builtin_arity(name: Str) -> I64 {
   # The systems runtime's arities, from the same `def` calls the bodies below
   # are ported from. `arr` is the one variadic among them, so it is absent here
   # and takes whatever it is given.
-  if in_words("arr_new dict_new bytes_new", name) { return 0 }
+  if in_words("arr_new dict_new bytes_new record", name) { return 0 }
   if in_words("pop arr_clear arr_of_tensor numel dict_keys bytes_to_str buf_new buf_len chr str_quote i64_of_str str_to_f64 f64_to_str num_to_text f64_hex sha256 sha256_bytes", name) { return 1 }
   if in_words("push arr_push dict_get dict_has dict_must dict_del bytes_push buf_get8", name) { return 2 }
   if in_words("dict_set dict_or slice buf_set8", name) { return 3 }
@@ -2842,7 +2842,7 @@ let DICT_OPS: Str = "dict_new dict_set dict_get dict_has dict_must dict_or dict_
 # value on the Go side and the same value here.
 let BUF_OPS: Str = "bytes_new bytes_push bytes_to_str buf_new buf_get8 buf_set8 buf_len"
 let STR_OPS: Str = "chr slice str_quote i64_of_str str_to_f64 f64_to_str num_to_text f64_hex sha256 sha256_bytes"
-let FILE_OPS: Str = "read_csv read_frame write_frame save load columns field with_field"
+let FILE_OPS: Str = "read_csv read_frame write_frame save load columns field with_field record without_field"
 # The second half of that runtime: the filesystem, the clock and the process.
 # Same story as the three lists above -- every name here was in
 # src/builtins.tw and in no dispatch, so a systems-mode program that read a
@@ -6250,6 +6250,12 @@ fn bi_proc(name: Str, args: Arr[Value], line: I64) -> Res[Value, RuntimeError] {
 # ---- files, frames and records ---------------------------------------------
 
 fn bi_files(name: Str, args: Arr[Value], line: I64) -> Res[Value, RuntimeError] {
+  # record(): an empty record to build up with with_field. {} is a block that
+  # evaluates to unit, so there is no empty-record literal; this is the seed a
+  # record with run-time field names is constructed from.
+  if bytes.equal(name, "record") {
+    return Ok(VRecord(plain_record(dict_new())))
+  }
   if bytes.equal(name, "read_csv") {
     match args[0] {
       VStr(p) => return read_csv(p, line),
@@ -6332,6 +6338,29 @@ fn bi_files(name: Str, args: Arr[Value], line: I64) -> Res[Value, RuntimeError] 
         }
       },
       _ => return Err(runtime_error(line, "field expects a record")),
+    }
+  }
+  # without_field(record, name): a copy of the record with that field removed,
+  # the counterpart to with_field. The fields that remain keep their order. A
+  # copy for the same reason with_field copies: a record is a value.
+  if bytes.equal(name, "without_field") {
+    match args[0] {
+      VRecord(r) => {
+        match args[1] {
+          VStr(n) => {
+            let fields: Dict[Str, Value] = dict_new()
+            for k in dict_keys(r.fields) {
+              if bytes.equal(k, n) {
+              } else {
+                dict_set(fields, k, dict_must(r.fields, k))
+              }
+            }
+            return Ok(VRecord(plain_record(fields)))
+          },
+          _ => return Err(runtime_error(line, "without_field expects a string name")),
+        }
+      },
+      _ => return Err(runtime_error(line, "without_field expects a record")),
     }
   }
   # with_field(record, name, value): a copy of the record with the field set. A

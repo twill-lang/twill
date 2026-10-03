@@ -2377,6 +2377,37 @@ func (ip *Interp) installBuiltins() {
 		return out, nil
 	})
 
+	// record(): an empty record to build up with with_field. {} is a block that
+	// evaluates to unit, so there was no empty-record literal; this is the seed
+	// with_field needs to construct a record whose field names are known only at
+	// run time, which is what std/frame's select/drop/rename/from_columns want.
+	def("record", 0, false, func(a []value.Value) (value.Value, error) {
+		return value.NewRecord(), nil
+	})
+
+	// without_field(record, name): a copy of the record with that field removed,
+	// the counterpart to with_field. Key order is preserved for the fields that
+	// remain. Removing a field means the result is a plain record and no longer
+	// the nominal struct it may have started as, so the type name is dropped.
+	def("without_field", 2, false, func(a []value.Value) (value.Value, error) {
+		rec, ok := a[0].(*value.Record)
+		if !ok {
+			return nil, fmt.Errorf("without_field expects a record")
+		}
+		name, ok := a[1].(value.Str)
+		if !ok {
+			return nil, fmt.Errorf("without_field expects a string name")
+		}
+		out := value.NewRecord()
+		for _, k := range rec.Keys {
+			if k == string(name) {
+				continue
+			}
+			out.Set(k, rec.Fields[k])
+		}
+		return out, nil
+	})
+
 	// Cumulative scans over a sequence (a 1-D tensor's elements in order): each
 	// output element folds in the next input. Used to build signals, equity
 	// curves, and running peaks for backtests. Differentiable: the scan is a
