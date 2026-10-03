@@ -52,7 +52,7 @@ Delivery was verified by running the current binary, not by reading the
 changelog, which is how the two half-done entries and the still-open `record()`
 were caught. The release named in each row is where the feature first shipped,
 taken from the changelog and, where the changelog was silent, from the tag the
-defining commit first appears in. The two still open are 24 and 29 (32 is
+defining commit first appears in. The one still open is 24 (29 and 32 are
 delivered on `main` and unreleased). The two half done are 17 and 31.
 
 "Delivered" throughout means delivered by the Go bootstrap, which is the binary
@@ -1150,12 +1150,20 @@ Two things stay open, and neither is this entry's complaint:
   enum declared in another module is unjudged there while the Go checker judges
   it. That gap is older than this entry and is not closed by it.
 
-**29. Optional and named arguments, or record update**, **half** (weft entry
-10). The entry's "or" was doing real work, and the cheaper half is now
-delivered. Record update is `S { ..base, field: value }`, one new expression
-form, and it is in both implementations since 1.11.0. Named arguments are not:
-they reach every arity check on both sides and every builtin, whose arities are
-declared as word lists with no parameter names in them at all.
+**29. Optional and named arguments, or record update**, **delivered on `main`,
+unreleased** (weft entry 10). Both halves are now in. Record update,
+`S { ..base, field: value }`, has been in both implementations since 1.11.0.
+Named and optional arguments followed: a parameter can carry a default,
+`fn f(a, b = 10.0)`, and a call can name its arguments, `f(x, k: v)`, binding
+them in any order after the positional ones. Builtins stay positional, since
+their arities are nameless word lists with no parameter names to bind to, and a
+named argument to one is a checker error. Both implementations carry it and a
+conformance case pins that they agree. What follows is what the entry said while
+the second half was open.
+
+Named arguments are not: they reach every arity check on both sides and every
+builtin, whose arities are declared as word lists with no parameter names in
+them at all.
 
 What the update answers is the configuration half of the complaint. A chart
 has a dozen settings and almost every caller changes two. The constructor takes

@@ -4078,10 +4078,21 @@ fn infer_call(c: Checker, ex: ast.Call, env: CheckEnv) -> Type {
   }
   let call_ex: ast.Call = ex
   if dtype_known(ctor_dt) {
-    call_ex = ast.Call { id: ex.id, callee: ex.callee, args: call_args, line: ex.line }
+    call_ex = ast.Call { id: ex.id, callee: ex.callee, args: call_args, arg_names: ex.arg_names, line: ex.line }
   }
   match callee {
     TBuiltin(fn_) => {
+      # Builtins take positional arguments only: their arities are nameless word
+      # lists, so there is no parameter name to bind to, and a named argument is
+      # a mistake worth naming rather than silently dropping.
+      let bn: I64 = 0
+      while bn < len(ex.arg_names) {
+        if len(ex.arg_names[bn]) > 0 {
+          report(c, ex.line, bytes.concat(fn_.name, bytes.concat(" is a builtin and takes positional arguments only, not a named argument ", quoted(ex.arg_names[bn]))))
+          return TUnknown
+        }
+        bn = bn + 1
+      }
       # A builtin whose result type is fixed is typed from the table, so a value
       # from one of them can be checked where it lands. The arity check the
       # shape cases would have made still applies.
@@ -4335,11 +4346,116 @@ fn check_return_unit(c: Checker, line: I64, name: Str, ret_unit: ast.UnitAnno, b
 }
 
 fn infer_user_call(c: Checker, fn_: FnType, ex: ast.Call, arg_types: Arr[Type]) -> Type {
-  if len(fn_.params) != len(arg_types) {
-    report(c, ex.line, bytes.concat("function expects ", bytes.concat(str(len(fn_.params)),
-      bytes.concat(" argument(s), got ", str(len(arg_types))))))
-    return TUnknown
+  # Resolve named arguments and defaults into one type per parameter, in order,
+  # so the loop below is unchanged. arg_exprs is the source expression per
+  # parameter (None for one filled by its default), so a diagnostic that reads
+  # the argument's syntax reads the right one. Mirrors interp.inferUserCall.
+  let n: I64 = len(fn_.params)
+  let args_t: Arr[Type] = arr_new()
+  let arg_exprs: Arr[Opt[ast.Expr]] = arr_new()
+  let has_names: Bool = false
+  let hn: I64 = 0
+  while hn < len(ex.arg_names) {
+    if len(ex.arg_names[hn]) > 0 { has_names = true }
+    hn = hn + 1
   }
+  let has_defaults: Bool = false
+  let hd: I64 = 0
+  while hd < n {
+    match fn_.params[hd].default {
+      Some(_) => has_defaults = true,
+      None => unit,
+    }
+    hd = hd + 1
+  }
+  if not has_names and not has_defaults {
+    # The ordinary positional call, kept on its own exact path so its arity
+    # message is unchanged and the Go bootstrap agrees.
+    if n != len(arg_types) {
+      report(c, ex.line, bytes.concat("function expects ", bytes.concat(str(n),
+        bytes.concat(" argument(s), got ", str(len(arg_types))))))
+      return TUnknown
+    }
+    let q: I64 = 0
+    while q < len(arg_types) {
+      push(args_t, arg_types[q])
+      push(arg_exprs, Some(ex.args[q]))
+      q = q + 1
+    }
+  } else {
+    let z: I64 = 0
+    while z < n {
+      push(args_t, TUnknown)
+      push(arg_exprs, None)
+      z = z + 1
+    }
+    let provided: Arr[Bool] = arr_new()
+    let z2: I64 = 0
+    while z2 < n {
+      push(provided, false)
+      z2 = z2 + 1
+    }
+    let posn: I64 = 0
+    let named_seen: Bool = false
+    let a: I64 = 0
+    while a < len(arg_types) {
+      let nm: Str = ""
+      if a < len(ex.arg_names) { nm = ex.arg_names[a] }
+      if len(nm) == 0 {
+        if named_seen {
+          report(c, ex.line, "a positional argument cannot follow a named one")
+          return TUnknown
+        }
+        if posn >= n {
+          report(c, ex.line, bytes.concat("function expects at most ", bytes.concat(str(n),
+            bytes.concat(" argument(s), got ", str(len(arg_types))))))
+          return TUnknown
+        }
+        args_t[posn] = arg_types[a]
+        if a < len(ex.args) { arg_exprs[posn] = Some(ex.args[a]) }
+        provided[posn] = true
+        posn = posn + 1
+      } else {
+        named_seen = true
+        let idx: I64 = -1
+        let jj: I64 = 0
+        while jj < n {
+          if bytes.equal(fn_.params[jj].name, nm) { idx = jj }
+          jj = jj + 1
+        }
+        if idx < 0 {
+          report(c, ex.line, bytes.concat("function has no parameter named ", quoted(nm)))
+          return TUnknown
+        }
+        if provided[idx] {
+          report(c, ex.line, bytes.concat("argument ", bytes.concat(quoted(nm), " given more than once")))
+          return TUnknown
+        }
+        args_t[idx] = arg_types[a]
+        if a < len(ex.args) { arg_exprs[idx] = Some(ex.args[a]) }
+        provided[idx] = true
+      }
+      a = a + 1
+    }
+    let def_env: CheckEnv = new_env(Some(fn_.env))
+    let b: I64 = 0
+    while b < n {
+      if not provided[b] {
+        match fn_.params[b].default {
+          Some(d) => {
+            args_t[b] = infer_expr(c, d, def_env)
+            provided[b] = true
+          },
+          None => {
+            report(c, ex.line, bytes.concat("function is missing an argument for ", quoted(fn_.params[b].name)))
+            return TUnknown
+          },
+        }
+      }
+      b = b + 1
+    }
+  }
+  arg_types = args_t
 
   # subst maps shape variables (n, k, ...) to the concrete sizes learned from
   # the arguments, so a variable used in several places must agree.
@@ -4397,8 +4513,11 @@ fn infer_user_call(c: Checker, fn_: FnType, ex: ast.Call, arg_types: Arr[Type]) 
               let want: Type = parse_type(c, p.type_name)
               let what: Str = bytes.concat("argument ", bytes.concat(str(i + 1),
                 bytes.concat(" (", bytes.concat(quoted(p.name), ")"))))
-              if check_assignable(c, ex.line, what, want, arg_types[i]) and i < len(ex.args) {
-                fractional_literal_at_int(c, ex.line, what, want, ex.args[i])
+              if check_assignable(c, ex.line, what, want, arg_types[i]) {
+                match arg_exprs[i] {
+                  Some(e) => fractional_literal_at_int(c, ex.line, what, want, e),
+                  None => unit,
+                }
               }
               env_define(scope, p.name, want)
             } else {

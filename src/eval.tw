@@ -2261,7 +2261,13 @@ fn eval_call(x: ast.Call, env: Env) -> Res[Value, RuntimeError] {
     }
     return bi_make(maker, args, dt, x.line)
   }
-  apply(callee, args, x.line)
+  # A direct call is the one place argument names survive to, so it is where
+  # named arguments are resolved. A closure reached any other way still gets its
+  # defaults filled, in apply, but takes its arguments positionally.
+  match callee {
+    VClosure(c) => call_closure_named(c, args, x.arg_names, x.line),
+    _ => apply(callee, args, x.line),
+  }
 }
 
 # `t.to(f32)`: the explicit cast, docs/dtypes.md "The cast is spelled .to(dt)".
@@ -2312,7 +2318,7 @@ fn contextual_dtype(e: ast.Expr, env: Env) -> Opt[I64] {
 
 fn apply(callee: Value, args: Arr[Value], line: I64) -> Res[Value, RuntimeError] {
   match callee {
-    VClosure(c) => call_closure(c, args, line),
+    VClosure(c) => call_closure_named(c, args, arr_new(), line),
     VBuiltin(b) => {
       # The arity check happens here rather than inside each builtin, because
       # the Go side does it in Apply and the message names the builtin, not the
@@ -2363,6 +2369,82 @@ fn param_type_name(p: ast.Param) -> Str {
     },
     None => "",
   }
+}
+
+# call_closure_named binds args to c's parameters, honouring named arguments and
+# filling omitted optional ones from their defaults, then calls the closure.
+# names is parallel to args ("" for a positional argument), or empty for an
+# all-positional call. It is interp.callClosureNamed.
+fn call_closure_named(c: Closure, args: Arr[Value], names: Arr[Str], line: I64) -> Res[Value, RuntimeError] {
+  let bound: Arr[Value] = bind_closure_args(c, args, names, line)?
+  call_closure(c, bound, line)
+}
+
+# bind_closure_args resolves a call's arguments into one value per parameter, in
+# parameter order: positional arguments fill left to right, a named argument
+# fills the parameter it names, an omitted parameter takes its default evaluated
+# in the closure's definition environment, and anything left unfilled with no
+# default, a positional after a named one, an unknown name, a parameter given
+# twice, or too many positional arguments, is an error. It is interp.bindClosureArgs.
+fn bind_closure_args(c: Closure, args: Arr[Value], names: Arr[Str], line: I64) -> Res[Arr[Value], RuntimeError] {
+  let who: Str = "function"
+  if len(c.name) > 0 { who = c.name }
+  let n: I64 = len(c.params)
+  let slots: Arr[Value] = arr_new()
+  let filled: Arr[Bool] = arr_new()
+  let z: I64 = 0
+  while z < n {
+    push(slots, VUnit)
+    push(filled, false)
+    z = z + 1
+  }
+  let pos: I64 = 0
+  let named_seen: Bool = false
+  let i: I64 = 0
+  while i < len(args) {
+    let nm: Str = ""
+    if i < len(names) { nm = names[i] }
+    if len(nm) == 0 {
+      if named_seen {
+        return Err(runtime_error(line, bytes.concat(who, ": a positional argument cannot follow a named one")))
+      }
+      if pos >= n {
+        return Err(runtime_error(line, bytes.concat(who, bytes.concat(" expects at most ",
+          bytes.concat(str(n), bytes.concat(" argument(s), got ", str(len(args))))))))
+      }
+      slots[pos] = args[i]
+      filled[pos] = true
+      pos = pos + 1
+    } else {
+      named_seen = true
+      let idx: I64 = -1
+      let j: I64 = 0
+      while j < n {
+        if bytes.equal(c.params[j].name, nm) { idx = j }
+        j = j + 1
+      }
+      if idx < 0 {
+        return Err(runtime_error(line, bytes.concat(who, bytes.concat(" has no parameter named ", quoted(nm)))))
+      }
+      if filled[idx] {
+        return Err(runtime_error(line, bytes.concat(who, bytes.concat(": argument ", bytes.concat(quoted(nm), " given more than once")))))
+      }
+      slots[idx] = args[i]
+      filled[idx] = true
+    }
+    i = i + 1
+  }
+  let k: I64 = 0
+  while k < n {
+    if not filled[k] {
+      match c.params[k].default {
+        Some(d) => slots[k] = eval_expr(d, c.env)?,
+        None => return Err(runtime_error(line, bytes.concat(who, bytes.concat(": missing argument for ", quoted(c.params[k].name))))),
+      }
+    }
+    k = k + 1
+  }
+  Ok(slots)
 }
 
 fn call_closure(c: Closure, args: Arr[Value], line: I64) -> Res[Value, RuntimeError] {

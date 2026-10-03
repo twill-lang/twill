@@ -1,0 +1,18 @@
+mode systems
+
+# Optional parameters with defaults, and named arguments in any order after the
+# positional ones. Every line is fixed text so a divergence between the two
+# implementations is unambiguous.
+fn show(label: Str, x: I64, step: I64 = 1, scale: I64 = 10) {
+  write_out(label)
+  write_out(" ")
+  write_out(str(x * scale + step))
+  write_out("\n")
+}
+
+fn main() {
+  show("a", 1)
+  show("b", 1, step: 5)
+  show("c", 1, scale: 100)
+  show("d", 1, scale: 100, step: 7)
+}

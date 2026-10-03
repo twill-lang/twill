@@ -102,10 +102,14 @@ struct Param {
   shape: Opt[ShapeAnno],
   type_name: Str,
   unit: Opt[UnitAnno],
+  # The expression after `= ` on an optional parameter, None for a required one.
+  # Evaluated at each call that omits the argument, in the function's definition
+  # environment. Once a parameter has a default every one after it must too.
+  default: Opt[Expr],
 }
 
 fn plain_param(name: Str) -> Param =
-  Param { name: name, shape: None, type_name: "", unit: None }
+  Param { name: name, shape: None, type_name: "", unit: None, default: None }
 
 struct TypeField {
   name: Str,
@@ -150,7 +154,9 @@ struct Lambda {
 
 struct Unary { id: I64, op: Str, operand: Expr, line: I64 }
 struct Binary { id: I64, op: Str, left: Expr, right: Expr, line: I64 }
-struct Call { id: I64, callee: Expr, args: Arr[Expr], line: I64 }
+# arg_names is parallel to args: the name on a named argument `f(x, k: v)`, or
+# "" for a positional one. Named arguments follow the positional ones.
+struct Call { id: I64, callee: Expr, args: Arr[Expr], arg_names: Arr[Str], line: I64 }
 struct Index { id: I64, target: Expr, index: Expr, line: I64 }
 
 # Slice is target[start:end] along the first axis. Either side may be absent,
@@ -594,8 +600,8 @@ fn unary(ids: NodeIds, op: Str, operand: Expr, line: I64) -> Expr =
 fn binary(ids: NodeIds, op: Str, left: Expr, right: Expr, line: I64) -> Expr =
   EBinary(Binary { id: fresh(ids), op: op, left: left, right: right, line: line })
 
-fn call(ids: NodeIds, callee: Expr, args: Arr[Expr], line: I64) -> Expr =
-  ECall(Call { id: fresh(ids), callee: callee, args: args, line: line })
+fn call(ids: NodeIds, callee: Expr, args: Arr[Expr], arg_names: Arr[Str], line: I64) -> Expr =
+  ECall(Call { id: fresh(ids), callee: callee, args: args, arg_names: arg_names, line: line })
 
 fn index(ids: NodeIds, target: Expr, idx: Expr, line: I64) -> Expr =
   EIndex(Index { id: fresh(ids), target: target, index: idx, line: line })

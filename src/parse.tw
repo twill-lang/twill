@@ -648,9 +648,9 @@ fn parse_postfix(p: Parser) -> Res[ast.Expr, lex.SyntaxError] {
     if check(p, "(") {
       let line: I64 = peek(p, 0).line
       p.group_depth = p.group_depth + 1
-      let args: Arr[ast.Expr] = parse_args(p)?
+      let (args, names) = parse_args(p)?
       p.group_depth = p.group_depth - 1
-      x = ast.call(p.ids, x, args, line)
+      x = ast.call(p.ids, x, args, names, line)
       continue
     }
     if check(p, "[") {
@@ -1326,6 +1326,11 @@ fn parse_param(p: Parser) -> Res[ast.Param, lex.SyntaxError] {
       }
     }
   }
+  # An optional parameter: `name = expr` or `name: Type = expr`. The default is
+  # held as an expression and evaluated per call that omits the argument.
+  if accept(p, "=") {
+    param.default = Some(parse_expr(p)?)
+  }
   Ok(param)
 }
 
@@ -1433,18 +1438,36 @@ fn parse_dim(p: Parser) -> Res[ast.Dim, lex.SyntaxError] {
   Err(err_at(t, "expected a dimension size or name"))
 }
 
-fn parse_args(p: Parser) -> Res[Arr[ast.Expr], lex.SyntaxError] {
+fn parse_args(p: Parser) -> Res[(Arr[ast.Expr], Arr[Str]), lex.SyntaxError] {
   expect(p, "(")?
   let args: Arr[ast.Expr] = arr_new()
+  let names: Arr[Str] = arr_new()
   if not check(p, ")") {
-    push(args, parse_expr(p)?)
+    parse_one_arg(p, args, names)?
     while accept(p, ",") {
       if check(p, ")") {
         break
       }
-      push(args, parse_expr(p)?)
+      parse_one_arg(p, args, names)?
     }
   }
   expect(p, ")")?
-  Ok(args)
+  Ok((args, names))
+}
+
+# One call argument, pushed onto args with its name onto names. A leading
+# `IDENT :` is a named argument and the only shape one takes, since `:` has no
+# other meaning at the top of an argument; anything else is positional and its
+# name is "".
+fn parse_one_arg(p: Parser, args: Arr[ast.Expr], names: Arr[Str]) -> Res[Unit, lex.SyntaxError] {
+  if peek(p, 0).kind == lex.KIND_IDENT and bytes.equal(peek(p, 1).value, ":") {
+    let nm: Str = next_tok(p).value
+    next_tok(p)
+    push(args, parse_expr(p)?)
+    push(names, nm)
+    return Ok(unit)
+  }
+  push(args, parse_expr(p)?)
+  push(names, "")
+  Ok(unit)
 }
