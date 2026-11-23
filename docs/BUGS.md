@@ -644,6 +644,44 @@ replaced them.
 
 ---
 
+## 15. `tensor()` refused an `Arr[I64]` built from typed variables
+
+**Symptom.** A runtime error on a program the checker accepts:
+
+```
+mode systems
+let a: Arr[I64] = arr_new()
+let i: I64 = 0
+push(a, i)
+print(tensor(a))
+# runtime error: cannot convert value to a tensor
+```
+
+`tensor([0])` worked. So did the same array filled with `push(a, 0)`. Only an
+element that came from a typed binding was refused, which is every element of
+`std/random`'s `permutation`, so a held generator's permutation could not be
+used as a `gather` index. It was found in loom, moving `data.split` off the
+global generator.
+
+**Root cause.** A systems-mode `let i: I64` binds a `value.Int`; a bare small
+literal is a `value.Num` (`internal/value/value.go` says so beside `Int`).
+`valueToNested`, which `tensor()` uses to walk a nested list, had cases for
+`Num`, tensors and lists and nothing for `Int`. `src/eval.tw`'s
+`value_to_nested` was written from it and had the same three arms, so both
+implementations refused the same program and agreed on the error, which is why
+conformance never saw it.
+
+**Fix.** Both conversions take an `Int` as the number it is. A tensor stores
+float64 elements, so an `Int` past 2^53 rounds on the way in exactly as a `Num`
+of that size already did.
+
+**Regression test.** `testdata/conformance/cases/tensor_of_i64.tw` converts a
+literal array, one filled from a typed counter, one that mixes the two, and a
+nested one. Both implementations fail it on the parent commit and agree on it
+here.
+
+---
+
 ## Open
 
 **The self-hosted evaluator still refuses 30 of the 259 builtin names.** Entry
