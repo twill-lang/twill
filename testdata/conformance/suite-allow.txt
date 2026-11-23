@@ -44,12 +44,9 @@
 # Two more left with the f64_* intrinsics: linalg_test.tw and stats_test.tw
 # died on f64_of_i64 and now agree byte for byte, with nothing behind it.
 
-#   random_test.tw:85  builtin "rng_open" ... has no implementation
-#   sample_test.tw:85  builtin "rng_open" ... has no implementation
-# The two signatures differ because the bootstrap's first line does: the suites
-# report their own names and their own counts before the self-hosted side fails.
-random_test.tw           a5ad8a197b6f
-sample_test.tw           580ff949593f
+# Two more left with the generators: random_test.tw and sample_test.tw died on
+# rng_open, and now run. They did not join the agreeing suites; they moved to
+# "does not finish" below, which is a different claim and is made there.
 
 # --- The evaluator dispatches the builtin and then falls over ----------------
 # `clip` is dispatched by src/eval.tw and hands a bare tensor to `lift`, which
@@ -73,12 +70,19 @@ optim_test.tw            dd04fd5f0d78
 # agrees byte for byte.
 
 # --- The evaluator does not finish -------------------------------------------
-# Both of these complete on the bootstrap in under a second and do not finish
+# All four complete on the bootstrap in under a second and do not finish
 # self-hosted inside the budget, so they are recorded as divergences rather than
 # as slow passes. Their signatures are equal because the whole of what is known
-# about either is the same: the self-hosted side ran out of time, and everything
-# it printed before it did agrees with what the bootstrap printed. If one of
-# them starts printing something else on the way to the budget, that agreement
-# is what stops matching and the line stops covering it.
+# about any of them is the same: the self-hosted side ran out of time, and
+# everything it printed before it did agrees with what the bootstrap printed. If
+# one of them starts printing something else on the way to the budget, that
+# agreement is what stops matching and the line stops covering it.
+#
+# random_test.tw and sample_test.tw arrived here from the missing-builtin
+# section when the rng_* names were ported. Each draws thousands of values to
+# check a distribution, every draw a call through this evaluator, and both
+# were still printing agreeing verdict lines when the budget ran out.
 llama_test.tw            f5a0b1782033
+random_test.tw           f5a0b1782033
+sample_test.tw           f5a0b1782033
 transformer_test.tw      f5a0b1782033

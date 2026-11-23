@@ -53,8 +53,8 @@ guessed at.
 |---|---|
 | names in the shared table | 259 |
 | implemented by the Go bootstrap | 258 |
-| implemented by the self-hosted evaluator | 219 |
-| **missing from the self-hosted evaluator** | **39** |
+| implemented by the self-hosted evaluator | 228 |
+| **missing from the self-hosted evaluator** | **30** |
 | missing from the Go bootstrap | 0 |
 | inconclusive (see below) | 1 |
 
@@ -72,9 +72,7 @@ gpu_kernel              gpu_launch              gpu_program_build       gpu_read
 gpu_set_arg_buffer      gpu_set_arg_f64         gpu_set_arg_i64         gpu_set_arg_local
 gpu_write               is_same                 mem_allocs              mem_bytes
 mem_counters_available  mem_live_bytes          mem_tensors             quantize
-quantize_packed         read_line               rng_close               rng_f64
-rng_norm                rng_normal              rng_open                rng_perm
-rng_seed                rng_u53                 rng_uniform
+quantize_packed         read_line
 ```
 
 ## Inconclusive
@@ -296,15 +294,15 @@ implementation is broken. The evidence column says what came back.
 | `rename` | yes | yes |
 | `reshape` | yes | yes |
 | `resolve_path` | yes | yes |
-| `rng_close` | yes | no |
-| `rng_f64` | yes | no |
-| `rng_norm` | yes | no |
-| `rng_normal` | yes | no |
-| `rng_open` | yes | no |
-| `rng_perm` | yes | no |
-| `rng_seed` | yes | no |
-| `rng_u53` | yes | no |
-| `rng_uniform` | yes | no |
+| `rng_close` | yes | yes |
+| `rng_f64` | yes | yes |
+| `rng_norm` | yes | yes |
+| `rng_normal` | yes | yes |
+| `rng_open` | yes | yes |
+| `rng_perm` | yes | yes |
+| `rng_seed` | yes | yes |
+| `rng_u53` | yes | yes |
+| `rng_uniform` | yes | yes |
 | `roll` | yes | yes |
 | `round` | yes | yes |
 | `run` | yes | yes |
