@@ -20,6 +20,14 @@
   byte for byte across both implementations and left the conformance
   allow-list, and `testdata/conformance/cases/f64_scalar.tw` pins both changes.
 
+- **The generators run self-hosted.** The nine `rng_*` builtins dispatch in
+  `src/eval.tw`, on the host's streams, so handles, seeds and every draw match
+  the bootstrap, and a draw on a closed handle is reported at the program's
+  line in the bootstrap's words. Self-hosted coverage is 228 of 259.
+  `random_test.tw` and `sample_test.tw` no longer die on `rng_open`; they now
+  run out of time self-hosted while agreeing on all they print, and the
+  allow-list says so. `testdata/conformance/cases/rng.tw` pins the streams.
+
 ## [1.19.0] - 2026-10-03
 
 ### Added

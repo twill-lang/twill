@@ -1,0 +1,20 @@
+# The generators. Two independent streams by handle, the global generator
+# interleaved with randn and permutation, which share it, and a draw on a
+# closed handle, which is the program's error and has to be reported at the
+# program's line in the bootstrap's words. Draws print through f64_hex or as
+# the exact 53-bit integer, so the comparison is of the streams, not of a
+# rounding of them.
+
+let a = rng_open(42)
+let b = rng_open(7)
+print(a, b)
+print(rng_u53(a), f64_hex(rng_f64(b)), f64_hex(rng_norm(a)), rng_u53(b))
+rng_seed(3)
+print(f64_hex(rng_uniform()), f64_hex(rng_normal()))
+seed(3)
+let r = randn(2)
+print(f64_hex(r[0]), f64_hex(rng_uniform()))
+print(rng_perm(6), permutation(4))
+rng_close(a)
+print(rng_u53(b))
+print(rng_u53(a))
