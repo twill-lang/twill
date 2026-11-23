@@ -41,10 +41,8 @@
 # claim worth reading: those three suites had no second divergence waiting
 # behind the first.
 #
-#   linalg_test.tw:362 builtin "f64_of_i64" ... has no implementation
-#   stats_test.tw:165  builtin "f64_of_i64" ... has no implementation
-linalg_test.tw           53a1a865f09f
-stats_test.tw            463ecc24a31b
+# Two more left with the f64_* intrinsics: linalg_test.tw and stats_test.tw
+# died on f64_of_i64 and now agree byte for byte, with nothing behind it.
 
 #   random_test.tw:85  builtin "rng_open" ... has no implementation
 #   sample_test.tw:85  builtin "rng_open" ... has no implementation
@@ -66,14 +64,13 @@ nn_test.tw               047ff7c80fd0
 optim_test.tw            dd04fd5f0d78
 
 # --- The evaluator returns a different number --------------------------------
-# The most serious kind, because nothing errors and both sides exit 0.
-# gradcheck_test.tw passes 19 of 19 on the bootstrap and 17 of 19 self-hosted.
-# The worst absolute error of
-#   numeric_grad(fn(v) = sum(v * v), [1.0, -3.0, 0.5], 1e-5)
-# against the exact [2.0, -6.0, 1.0] is 3.9306336e-11 on the bootstrap and
-# 5.0524135986e-8 self-hosted. Both print as the same six significant figures,
-# so only an exact comparison finds it. That is why this gate has no tolerance.
-gradcheck_test.tw        9214b09c03e6
+# Empty. gradcheck_test.tw was the one line here: it passed 17 of 19 self-
+# hosted, with numeric_grad's worst error at 5.05e-8 against the bootstrap's
+# 3.93e-11. The cause was src/buf.tw storing an f64 element through f64_bits,
+# whose pattern travels as an F64 on the bootstrap and loses every bit past
+# 2^53, so each element of every self-hosted list and tensor was rounded to
+# about 40 bits. Storing the two exact 32-bit halves fixed it, and the suite now
+# agrees byte for byte.
 
 # --- The evaluator does not finish -------------------------------------------
 # Both of these complete on the bootstrap in under a second and do not finish

@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **The self-hosted evaluator no longer rounds list and tensor elements.**
+  `src/buf.tw` stored each f64 element through `f64_bits`, whose pattern
+  travels as a float64 on the bootstrap and loses every bit past 2^53, so
+  `[0.1][0]` read back as `0x1.9999999999ap-04` and `gradcheck_test.tw` passed
+  17 of 19 self-hosted. Elements now move as the two exact 32-bit halves, in
+  the same eight bytes. `docs/BUGS.md` entry 14.
+
+### Added
+
+- **The `f64_*` scalar intrinsics run self-hosted.** All 21 `f64_*` names and
+  `i64_of_f64` now dispatch in `src/eval.tw`, as calls to the host's own
+  builtins, so the self-hosted evaluator implements 219 of 259 builtins, up
+  from 197. `linalg_test.tw`, `stats_test.tw` and `gradcheck_test.tw` now agree
+  byte for byte across both implementations and left the conformance
+  allow-list, and `testdata/conformance/cases/f64_scalar.tw` pins both changes.
+
 ## [1.19.0] - 2026-10-03
 
 ### Added

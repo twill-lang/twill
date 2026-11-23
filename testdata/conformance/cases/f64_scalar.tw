@@ -1,0 +1,23 @@
+# The scalar f64 intrinsics, and an f64 stored in a list or a tensor.
+#
+# Everything is printed through f64_hex, so a value that is wrong in its last
+# bit is a different line. Before this case the self-hosted evaluator refused
+# every f64_* name, and stored each list and tensor element through f64_bits,
+# which on the bootstrap drops the bits of a pattern past 2^53: 0.1 read back
+# from a list as 0x1.9999999999ap-04. The values below are chosen to sit on
+# that edge: a decimal with a long mantissa, a signed zero, a subnormal, the
+# largest finite value, the infinities and a NaN.
+
+let xs = [0.1, -0.0, -2.5, 5e-324, 1.7976931348623157e308, f64_log(0.0), 0.0 - f64_log(0.0), f64_sqrt(-1.0)]
+for x in xs {
+  print(f64_hex(x), f64_signbit(x), f64_bits_hi(x), f64_bits_lo(x))
+  print(f64_hex(f64_from_halves(f64_bits_hi(x), f64_bits_lo(x))))
+  print(f64_hex(f64_floor(x)), f64_hex(f64_trunc(x)), f64_hex(f64_ceil(x)), f64_hex(f64_round(x)))
+  print(f64_hex(f64_sin(x)), f64_hex(f64_cos(x)), f64_hex(f64_tanh(x)))
+  print(f64_hex(f64_mod(x, 0.7)), f64_hex(f64_pow(x, 2.0)), f64_hex(i64_of_f64(x)))
+}
+print(f64_hex(f64_sqrt(2.0)), f64_hex(f64_exp(0.5)), f64_hex(f64_log(2.0)))
+print(f64_hex(f64_log1p(1e-10)), f64_hex(f64_expm1(1e-10)), f64_hex(f64_of_i64(3.0)))
+print(f64_hex(f64_from_bits(f64_bits(1.0))))
+let t = tensor([0.1, 0.2]) + tensor([0.2, 0.1])
+print(f64_hex(t[0]), f64_hex(sum(t)))
