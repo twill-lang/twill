@@ -53,8 +53,8 @@ guessed at.
 |---|---|
 | names in the shared table | 259 |
 | implemented by the Go bootstrap | 258 |
-| implemented by the self-hosted evaluator | 197 |
-| **missing from the self-hosted evaluator** | **61** |
+| implemented by the self-hosted evaluator | 219 |
+| **missing from the self-hosted evaluator** | **39** |
 | missing from the Go bootstrap | 0 |
 | inconclusive (see below) | 1 |
 
@@ -65,22 +65,16 @@ answer. They are listed here so that "the two implementations agree" can be
 read as the bounded claim it is.
 
 ```
-all_finite              f64_bits                f64_bits_hi             f64_bits_lo
-f64_ceil                f64_cos                 f64_exp                 f64_expm1
-f64_floor               f64_from_bits           f64_from_halves         f64_log
-f64_log1p               f64_mod                 f64_of_i64              f64_pow
-f64_round               f64_signbit             f64_sin                 f64_sqrt
-f64_tanh                f64_trunc               gbm_describe            gpu_alloc
-gpu_available           gpu_copy                gpu_device_close        gpu_device_count
-gpu_device_info         gpu_device_info_i64     gpu_device_open         gpu_finish
-gpu_free                gpu_kernel              gpu_launch              gpu_program_build
-gpu_read                gpu_set_arg_buffer      gpu_set_arg_f64         gpu_set_arg_i64
-gpu_set_arg_local       gpu_write               i64_of_f64              is_same
-mem_allocs              mem_bytes               mem_counters_available  mem_live_bytes
-mem_tensors             quantize                quantize_packed         read_line
-rng_close               rng_f64                 rng_norm                rng_normal
-rng_open                rng_perm                rng_seed                rng_u53
-rng_uniform
+all_finite              gbm_describe            gpu_alloc               gpu_available
+gpu_copy                gpu_device_close        gpu_device_count        gpu_device_info
+gpu_device_info_i64     gpu_device_open         gpu_finish              gpu_free
+gpu_kernel              gpu_launch              gpu_program_build       gpu_read
+gpu_set_arg_buffer      gpu_set_arg_f64         gpu_set_arg_i64         gpu_set_arg_local
+gpu_write               is_same                 mem_allocs              mem_bytes
+mem_counters_available  mem_live_bytes          mem_tensors             quantize
+quantize_packed         read_line               rng_close               rng_f64
+rng_norm                rng_normal              rng_open                rng_perm
+rng_seed                rng_u53                 rng_uniform
 ```
 
 ## Inconclusive
@@ -165,29 +159,29 @@ implementation is broken. The evidence column says what came back.
 | `expm1` | yes | yes |
 | `eye` | yes | yes |
 | `f64` | yes | yes |
-| `f64_bits` | yes | no |
-| `f64_bits_hi` | yes | no |
-| `f64_bits_lo` | yes | no |
-| `f64_ceil` | yes | no |
-| `f64_cos` | yes | no |
-| `f64_exp` | yes | no |
-| `f64_expm1` | yes | no |
-| `f64_floor` | yes | no |
-| `f64_from_bits` | yes | no |
-| `f64_from_halves` | yes | no |
+| `f64_bits` | yes | yes |
+| `f64_bits_hi` | yes | yes |
+| `f64_bits_lo` | yes | yes |
+| `f64_ceil` | yes | yes |
+| `f64_cos` | yes | yes |
+| `f64_exp` | yes | yes |
+| `f64_expm1` | yes | yes |
+| `f64_floor` | yes | yes |
+| `f64_from_bits` | yes | yes |
+| `f64_from_halves` | yes | yes |
 | `f64_hex` | yes | yes |
-| `f64_log` | yes | no |
-| `f64_log1p` | yes | no |
-| `f64_mod` | yes | no |
-| `f64_of_i64` | yes | no |
-| `f64_pow` | yes | no |
-| `f64_round` | yes | no |
-| `f64_signbit` | yes | no |
-| `f64_sin` | yes | no |
-| `f64_sqrt` | yes | no |
-| `f64_tanh` | yes | no |
+| `f64_log` | yes | yes |
+| `f64_log1p` | yes | yes |
+| `f64_mod` | yes | yes |
+| `f64_of_i64` | yes | yes |
+| `f64_pow` | yes | yes |
+| `f64_round` | yes | yes |
+| `f64_signbit` | yes | yes |
+| `f64_sin` | yes | yes |
+| `f64_sqrt` | yes | yes |
+| `f64_tanh` | yes | yes |
 | `f64_to_str` | yes | yes |
-| `f64_trunc` | yes | no |
+| `f64_trunc` | yes | yes |
 | `field` | yes | yes |
 | `file_size` | yes | yes |
 | `fill` | yes | yes |
@@ -224,7 +218,7 @@ implementation is broken. The evidence column says what came back.
 | `hessian` | yes | yes |
 | `hvp` | yes | yes |
 | `i64` | yes | yes |
-| `i64_of_f64` | yes | no |
+| `i64_of_f64` | yes | yes |
 | `i64_of_str` | yes | yes |
 | `int` | yes | yes |
 | `is_same` | yes | no |

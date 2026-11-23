@@ -2945,6 +2945,7 @@ let REDUCTIONS: Str = "sum mean max min prod median"
 let SCANS: Str = "cumsum cumprod cummax cummin"
 let LAST_AXIS: Str = "argmax argmin flip diff"
 let ELEM_ROUND: Str = "floor ceil round"
+let F64_OPS: Str = "f64_sqrt f64_exp f64_log f64_log1p f64_expm1 f64_sin f64_cos f64_tanh f64_floor f64_trunc f64_ceil f64_round f64_mod f64_pow f64_of_i64 i64_of_f64 f64_bits f64_bits_hi f64_bits_lo f64_from_bits f64_from_halves f64_signbit"
 let DERIVATIVES: Str = "grad grads value_and_grad jacobian hessian jvp vjp hvp"
 let DERIVED: Str = "grad(fn) grads(fn) value_and_grad(fn) jacobian(fn) hessian(fn) jvp(fn) vjp(fn) hvp(fn)"
 let TREE_OPS: Str = "map zip fold append enumerate map_leaves zip_leaves"
@@ -3007,6 +3008,7 @@ fn call_builtin(b: BuiltinVal, args: Arr[Value], line: I64) -> Res[Value, Runtim
   if bytes.equal(name, "split") { return bi_split(args, line) }
   if in_words(SCANS, name) { return bi_scan(name, args, line) }
   if in_words(ELEM_ROUND, name) { return bi_elem_round(name, args, line) }
+  if in_words(F64_OPS, name) { return bi_f64(name, args, line) }
   if in_words(DERIVATIVES, name) { return bi_derivative(name, args, line) }
   if in_words(DERIVED, name) { return bi_derived(b, args, line) }
   if in_words(TREE_OPS, name) { return bi_tree(name, args, line) }
@@ -3960,6 +3962,47 @@ fn bi_elem_round(name: Str, args: Arr[Value], line: I64) -> Res[Value, RuntimeEr
     i = i + 1
   }
   Ok(VTensor(tensor.mk(tensor.copy_shape(t.shape), out, t.dtype)))
+}
+
+# The scalar f64 intrinsics of the systems dialect: one scalar in (two for
+# f64_mod, f64_pow and f64_from_halves), a rank-0 tensor out, which is what the
+# bootstrap's tensor.Scalar is. This evaluator runs on the bootstrap, so each is
+# the host's own builtin applied to the unwrapped argument; the two cannot
+# disagree on a bit, which is the point for f64_bits and its halves.
+#
+# Two answer something other than the host call's own type. f64_signbit is a
+# Bool. i64_of_f64 is typed I64 by the checker, but the bootstrap hands back a
+# truncated float scalar rather than an exact integer, and it is the runtime
+# value the harness compares.
+fn bi_f64(name: Str, args: Arr[Value], line: I64) -> Res[Value, RuntimeError] {
+  let x: F64 = scalar_of(args[0], name, line)?
+  if bytes.equal(name, "f64_signbit") { return Ok(VBool(f64_signbit(x))) }
+  if in_words("f64_mod f64_pow f64_from_halves", name) {
+    let y: F64 = scalar_of(args[1], name, line)?
+    if bytes.equal(name, "f64_mod") { return Ok(VTensor(tensor.scalar(f64_mod(x, y)))) }
+    if bytes.equal(name, "f64_pow") { return Ok(VTensor(tensor.scalar(f64_pow(x, y)))) }
+    return Ok(VTensor(tensor.scalar(f64_from_halves(x, y))))
+  }
+  let r: F64 = 0.0
+  if bytes.equal(name, "f64_sqrt") { r = f64_sqrt(x) }
+  if bytes.equal(name, "f64_exp") { r = f64_exp(x) }
+  if bytes.equal(name, "f64_log") { r = f64_log(x) }
+  if bytes.equal(name, "f64_log1p") { r = f64_log1p(x) }
+  if bytes.equal(name, "f64_expm1") { r = f64_expm1(x) }
+  if bytes.equal(name, "f64_sin") { r = f64_sin(x) }
+  if bytes.equal(name, "f64_cos") { r = f64_cos(x) }
+  if bytes.equal(name, "f64_tanh") { r = f64_tanh(x) }
+  if bytes.equal(name, "f64_floor") { r = f64_floor(x) }
+  if bytes.equal(name, "f64_trunc") { r = f64_trunc(x) }
+  if bytes.equal(name, "f64_ceil") { r = f64_ceil(x) }
+  if bytes.equal(name, "f64_round") { r = f64_round(x) }
+  if bytes.equal(name, "f64_of_i64") { r = f64_of_i64(x) }
+  if bytes.equal(name, "i64_of_f64") { r = f64_trunc(x) }
+  if bytes.equal(name, "f64_bits") { r = f64_bits(x) }
+  if bytes.equal(name, "f64_bits_hi") { r = f64_bits_hi(x) }
+  if bytes.equal(name, "f64_bits_lo") { r = f64_bits_lo(x) }
+  if bytes.equal(name, "f64_from_bits") { r = f64_from_bits(x) }
+  Ok(VTensor(tensor.scalar(r)))
 }
 
 fn rest(args: Arr[Value], from: I64) -> Arr[Value] {

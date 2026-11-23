@@ -127,7 +127,12 @@ fn wr_le(b: Buf, off: I64, w: I64, bits: I64) {
 # in src/tensor.tw survives the round trip.
 fn get(b: Buf, dt: I64, i: I64) -> F64 {
   let off: I64 = i * elem_bytes(dt)
-  if dt == DT_F64 { return f64_from_bits(rd_le(b, off, 8)) }
+  # The two 32-bit halves rather than one 64-bit pattern. On the bootstrap a
+  # pattern travels as an F64, so f64_bits and f64_from_bits drop every bit
+  # past 2^53 and 0.1 came back as 0x1.9999999999ap-04: twelve bits short in
+  # every list and tensor the self-hosted evaluator built. Each half is under
+  # 2^32 and exact. The bytes on the buffer are the same little-endian eight.
+  if dt == DT_F64 { return f64_from_halves(rd_le(b, off + 4, 4), rd_le(b, off, 4)) }
   if dt == DT_F32 { return flt.f64_of_f32_bits(rd_le(b, off, 4)) }
   if dt == DT_BF16 { return flt.f64_of_bf16_bits(rd_le(b, off, 2)) }
   if dt == DT_F16 { return flt.f64_of_f16_bits(rd_le(b, off, 2)) }
@@ -162,7 +167,8 @@ fn trunc_toward_zero(x: F64) -> F64 {
 fn set(b: Buf, dt: I64, i: I64, x: F64) {
   let off: I64 = i * elem_bytes(dt)
   if dt == DT_F64 {
-    wr_le(b, off, 8, f64_bits(x))
+    wr_le(b, off, 4, f64_bits_lo(x))
+    wr_le(b, off + 4, 4, f64_bits_hi(x))
     return
   }
   if dt == DT_F32 {

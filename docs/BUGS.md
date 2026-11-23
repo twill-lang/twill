@@ -595,37 +595,70 @@ first.
 
 ---
 
+## 14. Every self-hosted list and tensor element was rounded to about 40 bits
+
+**Symptom.** Nothing errored. `gradcheck_test.tw` passed 19 of 19 on the
+bootstrap and 17 of 19 self-hosted, with `numeric_grad(fn(v) = sum(v * v),
+[1.0, -3.0, 0.5], 1e-5)` off by 5.05e-8 against the bootstrap's 3.93e-11. It
+sat on the conformance allow-list as the one "returns a different number" line.
+The smallest reproduction is a list literal:
+
+```
+let xs = [0.1]
+print(f64_hex(xs[0]))
+# bootstrap    0x1.999999999999ap-04
+# self-hosted  0x1.9999999999ap-04
+```
+
+A scalar was exact. Anything that went into a list or a tensor lost about twelve
+bits of mantissa, and the six-figure `print` hid it everywhere but in an exact
+comparison.
+
+**Root cause.** `src/buf.tw` stored an `F64` element as `f64_bits(x)` and read
+it back with `f64_from_bits`. On the bootstrap a bit pattern travels as a
+float64, so both calls drop every bit past 2^53 -- the limit the Go source
+already writes down beside `f64_bits` and the reason `f64_bits_hi`,
+`f64_bits_lo` and `f64_from_halves` exist. The buffer used the one call that
+comment warns about.
+
+It was found while porting the `f64_*` intrinsics. A differential run of the new
+dispatch disagreed in the low half of `0.1`, and the disagreement was in the
+input the test built through a list, not in the intrinsic.
+
+**Fix.** `get` and `set` for `DT_F64` move the two exact 32-bit halves, low half
+at the element's offset and high half four bytes on, which is the same eight
+little-endian bytes as before. The same change dispatched the 22 scalar
+intrinsics -- `f64_sqrt` through `f64_signbit`, plus `i64_of_f64` -- in
+`src/eval.tw` as calls to the host's own builtins, so the two implementations
+cannot disagree on a bit. `i64_of_f64` answers a truncated float scalar rather
+than an exact integer, because that is what the Go body returns, whatever the
+checker types it as.
+
+**Regression test.** `testdata/conformance/cases/f64_scalar.tw` prints every
+intrinsic through `f64_hex` over values on the edge -- a long decimal mantissa,
+a signed zero, a subnormal, the largest finite value, both infinities and a
+NaN -- and a tensor sum. It diverges on the parent commit and agrees here. The
+allow-list lost three lines: `gradcheck_test.tw` for the precision, and
+`linalg_test.tw` and `stats_test.tw`, which had died on `f64_of_i64`. Nothing
+replaced them.
+
+---
+
 ## Open
 
-**The self-hosted evaluator still refuses 99 of the 255 builtin names.** Entry
-12 above ported 31 of them and closed divergences 1 and 2 of the three recorded
-here. What is left is the filesystem, the clock, the process, the RNG, the
-`f64_*` scalar intrinsics, the GPU stubs and the memory counters, each of which
-still ends at "named in the builtin table but has no implementation". The count
-is measurable rather than estimated: run each remaining name through
-`src/main.tw run` and read the first stderr line, which is what
-`make conformance` does for every name at once. Measured that way on
-2026-09-04 it was 248 names, 151 dispatched, 97 refused. Re-measured on
-2026-09-05 after `ushr`, `sha256`, `sha256_bytes`, `log1p`, `expm1`,
-`f64_log1p` and `f64_expm1` landed: 255 names in `src/builtins.tw`, 155
-dispatched and answering, 1 dispatched and broken (`clip`), 99 refused. Five of
-the seven new names went into both implementations; the two that did not,
-`f64_log1p` and `f64_expm1`, joined `f64_log` and `f64_exp`, which the
-self-hosted evaluator did not dispatch either.
-**The self-hosted evaluator still refuses 57 of the 248 builtin names.** Entry
-12 ported 31 of them and closed divergences 1 and 2 of the three recorded here;
-entry 13 ported 40 more. What is left is the RNG, the `f64_*` scalar
-intrinsics, the GPU stubs, the memory counters, `is_same`, `all_finite`,
+**The self-hosted evaluator still refuses 39 of the 259 builtin names.** Entry
+12 ported the lists, dictionaries and strings, entry 13 the filesystem, clock
+and process, and entry 14 the 22 scalar `f64_*` intrinsics. What is left is the
+RNG, the GPU stubs, the memory counters, `read_line`, `is_same`, `all_finite`,
 `gbm_describe` and `quantize`, each of which still ends at "named in the
 builtin table but has no implementation". The count is measured rather than
 estimated -- `make conformance` calls every name on both implementations and
-writes `docs/conformance.md` from what came back -- and the number above is
-this branch's generated file, not a claim beside it.
+writes `docs/conformance.md` from what came back -- and that generated file is
+the place to read it, not this sentence.
 
-The next tranche to take is the `f64_*` intrinsics, and the reason is on the
-allow-list rather than in the count: `linalg_test.tw` and `stats_test.tw` are
-excused there for dying on `f64_of_i64`, and they are the only two lines whose
-cause is a single name.
+The next tranche to take is the RNG, and the reason is on the allow-list:
+`random_test.tw` and `sample_test.tw` are excused there for dying on `rng_open`,
+and they are the two lines left whose cause is a single name.
 
 **`src/` still cannot run `src/`, and the reason moved.** Before entry 13 the
 inner CLI stopped on the first statement of its own `main`, on the builtin

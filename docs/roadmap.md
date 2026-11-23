@@ -114,8 +114,8 @@ two differences in the file are the blank lines above `fn gflops` and above
 minority of the names in `src/builtins.tw` still reach it. `docs/BUGS.md` entry
 12 records the port that closed the lists, dictionaries, byte buffers and string
 primitives, entry 13 the one that closed the filesystem, the clock and the
-process, and the Open section carries what is left -- the RNG, the `f64_*`
-scalar intrinsics, the GPU stubs and the memory counters -- with the count as
+process, entry 14 the `f64_*` scalar intrinsics, and the Open section carries
+what is left -- the RNG, the GPU stubs and the memory counters -- with the count as
 measured and the command that re-derives it. That is the place to read it: a
 split quoted in two documents goes stale in one of them.
 
