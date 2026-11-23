@@ -646,19 +646,23 @@ replaced them.
 
 ## Open
 
-**The self-hosted evaluator still refuses 39 of the 259 builtin names.** Entry
+**The self-hosted evaluator still refuses 30 of the 259 builtin names.** Entry
 12 ported the lists, dictionaries and strings, entry 13 the filesystem, clock
-and process, and entry 14 the 22 scalar `f64_*` intrinsics. What is left is the
-RNG, the GPU stubs, the memory counters, `read_line`, `is_same`, `all_finite`,
-`gbm_describe` and `quantize`, each of which still ends at "named in the
-builtin table but has no implementation". The count is measured rather than
-estimated -- `make conformance` calls every name on both implementations and
-writes `docs/conformance.md` from what came back -- and that generated file is
-the place to read it, not this sentence.
+and process, and entry 14 the 22 scalar `f64_*` intrinsics. The nine `rng_*`
+generators followed, delegated to the host's own streams so the draws are the
+bootstrap's draws. What is left is the GPU stubs, the memory counters,
+`read_line`, `is_same`, `all_finite`, `gbm_describe` and `quantize`, each of
+which still ends at "named in the builtin table but has no implementation".
+The count is measured rather than estimated -- `make conformance` calls every
+name on both implementations and writes `docs/conformance.md` from what came
+back -- and that generated file is the place to read it, not this sentence.
 
-The next tranche to take is the RNG, and the reason is on the allow-list:
-`random_test.tw` and `sample_test.tw` are excused there for dying on `rng_open`,
-and they are the two lines left whose cause is a single name.
+No line on the suite allow-list is caused by a missing name any more. Of the
+six left, two are `clip` handing `lift` the wrong thing, and four complete on
+the bootstrap in under a second and run out of the five-minute budget
+self-hosted while agreeing on everything they printed. `random_test.tw` and
+`sample_test.tw` joined that group when the generators landed. The next gap is
+the evaluator's speed, not its coverage.
 
 **`src/` still cannot run `src/`, and the reason moved.** Before entry 13 the
 inner CLI stopped on the first statement of its own `main`, on the builtin
