@@ -1,0 +1,28 @@
+mode systems
+
+# A tensor from an Arr[I64] whose elements came from typed I64 bindings.
+#
+# A systems-mode `let i: I64` binds an Int, while a bare literal is a Num, so
+# `[1, 2]` and the same array filled with `push(a, i)` hold different values
+# underneath. tensor() converted the first and refused the second with "cannot
+# convert value to a tensor", which made std/random's permutation unusable as a
+# tensor index. The mixed array covers both kinds in one list.
+
+let lit: Arr[I64] = [3, 1, 2]
+print(tensor(lit))
+
+let typed: Arr[I64] = arr_new()
+let i: I64 = 0
+while i < 4 {
+  push(typed, 3 - i)
+  i = i + 1
+}
+print(tensor(typed))
+
+let mixed: Arr[I64] = [7]
+let k: I64 = 9
+push(mixed, k)
+print(tensor(mixed))
+
+let rows: Arr[Arr[I64]] = [typed, typed]
+print(shape(tensor(rows)))

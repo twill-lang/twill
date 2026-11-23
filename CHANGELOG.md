@@ -4,6 +4,13 @@
 
 ### Fixed
 
+- **`tensor()` takes an `Arr[I64]` whose elements came from typed variables.**
+  A systems-mode `let i: I64` binds an integer value where a literal binds a
+  plain number, and the conversion behind `tensor()` only knew the second, so
+  `push(a, i)` followed by `tensor(a)` failed with "cannot convert value to a
+  tensor" on both implementations. That included every `std/random`
+  permutation. `docs/BUGS.md` entry 15;
+  `testdata/conformance/cases/tensor_of_i64.tw` pins it.
 - **The self-hosted evaluator no longer rounds list and tensor elements.**
   `src/buf.tw` stored each f64 element through `f64_bits`, whose pattern
   travels as a float64 on the bootstrap and loses every bit past 2^53, so

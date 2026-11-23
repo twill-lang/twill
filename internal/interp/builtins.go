@@ -3807,6 +3807,11 @@ func valueToNested(v value.Value) (any, error) {
 	switch t := v.(type) {
 	case value.Num:
 		return float64(t), nil
+	// A systems-mode `let i: I64` binds an Int, not a Num, so an Arr[I64]
+	// filled from typed variables holds Ints where one built from literals holds
+	// Nums. Both are numbers to a tensor.
+	case value.Int:
+		return float64(t), nil
 	case *tensor.Tensor:
 		return t.ToNested(), nil
 	case *value.List:

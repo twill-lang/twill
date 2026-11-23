@@ -5612,6 +5612,9 @@ fn maker_dtype(dt: I64) -> I64 {
 fn value_to_nested(v: Value, line: I64) -> Res[tensor.Nested, RuntimeError] {
   match v {
     VNum(x) => Ok(tensor.NLeaf(x)),
+    # A typed `let i: I64` binds a VInt, so an Arr[I64] filled from variables
+    # holds them where one built from literals holds VNums.
+    VInt(i) => Ok(tensor.NLeaf(f64(i))),
     VTensor(t) => Ok(tensor.to_nested(t)),
     VList(l) => {
       let out: Arr[tensor.Nested] = arr_new()
