@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.19.1] - 2026-11-23
+
 ### Fixed
 
 - **`tensor()` takes an `Arr[I64]` whose elements came from typed variables.**
